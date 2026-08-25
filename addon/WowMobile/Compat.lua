@@ -17,7 +17,11 @@ local _, WM = ...
 --------------------------------------------------------------------------------
 -- Gossip
 -- Normalized entry shape handed to the UI:
---   option:   { name, icon, key }              key feeds SelectOption
+--   option:   { name, icon, key, index }       key (may be nil) is the real
+--                                              gossipOptionID; index is the
+--                                              1-based list position fallback.
+--                                              Pass the whole entry back to
+--                                              SelectOption.
 --   available:{ title, isTrivial, key }        key feeds SelectAvailableQuest
 --   active:   { title, isComplete, key }       key feeds SelectActiveQuest
 --------------------------------------------------------------------------------
@@ -40,16 +44,32 @@ if C_GossipInfo and C_GossipInfo.GetOptions then
 			out[i] = {
 				name = o.name or "",
 				icon = (type(o.icon) == "number" and o.icon) or ICON_GOSSIP,
-				-- Newer builds select by gossipOptionID; older C_GossipInfo
-				-- builds selected by list index. Store whichever this build
-				-- gave us; SelectOption accepts the same value back.
-				key  = o.gossipOptionID or o.orderIndex or i,
+				-- Newer builds select by gossipOptionID. It can be nil (and
+				-- orderIndex is a 0-BASED position, not an ID — feeding it to
+				-- SelectOption selects nothing or the wrong option), so the
+				-- fallback is selection by 1-based list position, kept
+				-- separately in `index`.
+				key   = o.gossipOptionID,
+				index = i,
 			}
 		end
 		return out
 	end
 
-	Gossip.SelectOption = function(entry) C_GossipInfo.SelectOption(entry.key) end
+	-- 1.15 ships C_GossipInfo.SelectOptionByIndex for position-based
+	-- selection; feature-detected so pre-ByIndex C_GossipInfo builds (where
+	-- SelectOption itself took the list index) keep working.
+	local SelectByIndex = C_GossipInfo.SelectOptionByIndex
+
+	Gossip.SelectOption = function(entry)
+		if entry.key then
+			C_GossipInfo.SelectOption(entry.key)
+		elseif SelectByIndex then
+			SelectByIndex(entry.index)
+		else
+			C_GossipInfo.SelectOption(entry.index)
+		end
+	end
 
 	Gossip.GetAvailableQuests = function()
 		local out = {}

@@ -44,12 +44,11 @@ local function OnTalentUILoaded()
 	closeButton:SetScript("OnClick", Talents.Close)
 
 	-- Runs after Blizzard's own UIPanel positioning for the frame, so our
-	-- anchors win; queued because the reflow may be requested mid-combat.
+	-- anchors win. TalentFrame is insecure — SetScale/SetPoint are legal in
+	-- combat — so the reflow runs immediately instead of waiting out a fight.
 	f:HookScript("OnShow", function()
 		WM.Deck.YieldTo("talents")
-		WM.OutOfCombat("talents", function()
-			if f:IsShown() then Reflow() end
-		end)
+		Reflow()
 	end)
 end
 

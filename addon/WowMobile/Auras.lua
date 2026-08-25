@@ -1,6 +1,8 @@
 --------------------------------------------------------------------------------
 -- WowMobile · Auras
--- Player buffs/debuffs as large rows along the top edge of the world square.
+-- Player buffs/debuffs as large rows near the top of the world square: the
+-- buff row hugs the top edge; the debuff row sits below it, indented right of
+-- the left-edge secure columns (budget math at the row anchors in OnInit).
 -- Buffs are tap-cancelable through a transparent overlay of secure
 -- type="cancelaura" buttons. Constraints handled here:
 --   * cancelaura indices are secure attributes, so they can only be re-synced
@@ -15,11 +17,22 @@
 local _, WM = ...
 
 local MAX_BUFFS = 9
-local MAX_DEBUFFS = 9
+-- Debuffs get fewer cells than buffs: their row is indented to x=210 to stay
+-- clear of the left-edge stance/pet buttons (anchor comments in OnInit), so
+-- only 6 cells + badge fit before the minimap's right-edge budget.
+local MAX_DEBUFFS = 6
 local ICON = 84
 local GAP = 6
+-- Overflow badge ("+N") appended after the last cell, at row-local
+-- x = maxCells*(ICON+GAP); the per-row screen budgets are recomputed at the
+-- row anchors in OnInit.
+local BADGE_W = 56
+-- Scan ceiling for the overflow count/tooltip; the 1.15 client exposes at
+-- most 32 buffs / 16 debuffs per unit, so 40 always terminates via nil.
+local MAX_SCAN = 40
 
 local buffCells, debuffCells, cancelButtons = {}, {}, {}
+local buffOverflow, debuffOverflow
 local cancelHeader
 
 --------------------------------------------------------------------------------
@@ -58,7 +71,7 @@ local function CreateCell(parent, index, isDebuff)
 	return cell
 end
 
-local function UpdateCellRow(cells, filter, maxCells)
+local function UpdateCellRow(cells, filter, maxCells, badge)
 	local shown = 0
 	for i = 1, maxCells do
 		local name, icon, count, dispelType, duration, expirationTime = WM.GetAura("player", i, filter)
@@ -84,7 +97,45 @@ local function UpdateCellRow(cells, filter, maxCells)
 		cells[i]:Hide()
 		cells[i].expirationTime = nil
 	end
+	-- Auras past the visible cells would otherwise be invisible anywhere in
+	-- the touch UI (BuffFrame is banished): surface them as a "+N" badge.
+	local extra = 0
+	if shown == maxCells then
+		for i = maxCells + 1, MAX_SCAN do
+			if not WM.GetAura("player", i, filter) then break end
+			extra = extra + 1
+		end
+	end
+	if extra > 0 then
+		badge.label:SetText("+" .. extra)
+		badge:Show()
+	else
+		badge:Hide()
+	end
 	return shown
+end
+
+-- Overflow badge: insecure, tooltip-only (lists the hidden auras). Cancel by
+-- tap is intentionally not offered past the secure overlay's 9 slots.
+local function CreateOverflowBadge(parent, filter, maxCells, title)
+	local badge = CreateFrame("Button", nil, parent)
+	badge:SetSize(WM.Px(BADGE_W), WM.Px(ICON))
+	badge:SetPoint("TOPLEFT", WM.Px(maxCells * (ICON + GAP)), 0)
+	WM.SkinFrame(badge, { 0.07, 0.07, 0.09, 0.92 })
+	badge.label = WM.CreateText(badge, 26, "OUTLINE")
+	badge.label:SetPoint("CENTER")
+	badge.label:SetTextColor(1, 0.85, 0.1)
+	WM.AttachTooltip(badge, function(tt)
+		tt:SetText(title)
+		for i = maxCells + 1, MAX_SCAN do
+			local name, _, count = WM.GetAura("player", i, filter)
+			if not name then break end
+			tt:AddLine(count and count > 1 and (name .. " (" .. count .. ")") or name,
+				0.9, 0.9, 0.9)
+		end
+	end)
+	badge:Hide()
+	return badge
 end
 
 --------------------------------------------------------------------------------
@@ -107,8 +158,8 @@ local function SyncCancelButtons()
 end
 
 local function Refresh()
-	UpdateCellRow(buffCells, "HELPFUL", MAX_BUFFS)
-	UpdateCellRow(debuffCells, "HARMFUL", MAX_DEBUFFS)
+	UpdateCellRow(buffCells, "HELPFUL", MAX_BUFFS, buffOverflow)
+	UpdateCellRow(debuffCells, "HARMFUL", MAX_DEBUFFS, debuffOverflow)
 	-- Insecure visuals updated above are combat-safe; the secure index sync
 	-- coalesces until the fight ends.
 	WM.OutOfCombat("aura-cancel-sync", SyncCancelButtons)
@@ -119,15 +170,27 @@ end
 --------------------------------------------------------------------------------
 
 WM.OnInit(function()
-	-- Rows are width-limited so they never collide with the minimap in the
-	-- top-right corner of the world square.
+	-- Buff row along the square's top edge (y 10..94), width-limited so it
+	-- never collides with the minimap in the top-right corner: 9 cells span
+	-- screen x 10..814 (10 inset + 8*90 + 84), the badge x 820..876
+	-- (10 + 9*90 .. +56), and the minimap holder starts at x=880 (budget
+	-- table in Minimap.lua).
 	local buffRow = CreateFrame("Frame", "WowMobileBuffRow", WM.WorldSquare)
 	buffRow:SetPoint("TOPLEFT", WM.Px(10), -WM.Px(10))
-	buffRow:SetSize(WM.Px(MAX_BUFFS * (ICON + GAP)), WM.Px(ICON))
+	buffRow:SetSize(WM.Px(MAX_BUFFS * (ICON + GAP) + BADGE_W), WM.Px(ICON))
 
+	-- Debuff row at y 124..208 (buff-row bottom 94 + 30 gap). That y band is
+	-- shared with the tap-critical left-edge secure columns — the stance
+	-- column (ActionBars.lua, x 8..96) and the 2x5 pet action block (Pet.lua,
+	-- x 8..190), both topped at y=124 — so the row starts at x=210, past the
+	-- pet block (the same clearance lane the quest tracker uses,
+	-- QuestLog.lua). Width: 6 cells end at screen x 744 (210 + 5*90 + 84),
+	-- the badge at 750..806 (210 + 6*90 .. +56) — clear of the minimap zoom
+	-- buttons (x>=844, y 206..298) and holder (x>=880); debuffs past 6 fold
+	-- into the "+N" badge.
 	local debuffRow = CreateFrame("Frame", "WowMobileDebuffRow", WM.WorldSquare)
-	debuffRow:SetPoint("TOPLEFT", buffRow, "BOTTOMLEFT", 0, -WM.Px(30))
-	debuffRow:SetSize(WM.Px(MAX_DEBUFFS * (ICON + GAP)), WM.Px(ICON))
+	debuffRow:SetPoint("TOPLEFT", WM.Px(210), -WM.Px(124))
+	debuffRow:SetSize(WM.Px(MAX_DEBUFFS * (ICON + GAP) + BADGE_W), WM.Px(ICON))
 
 	for i = 1, MAX_BUFFS do
 		buffCells[i] = CreateCell(buffRow, i, false)
@@ -135,6 +198,8 @@ WM.OnInit(function()
 	for i = 1, MAX_DEBUFFS do
 		debuffCells[i] = CreateCell(debuffRow, i, true)
 	end
+	buffOverflow = CreateOverflowBadge(buffRow, "HELPFUL", MAX_BUFFS, "More buffs")
+	debuffOverflow = CreateOverflowBadge(debuffRow, "HARMFUL", MAX_DEBUFFS, "More debuffs")
 
 	-- Overlay host whose visibility a secure driver flips: shown out of
 	-- combat, hidden in combat. Hiding the parent hides every cancel button

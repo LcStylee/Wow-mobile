@@ -32,6 +32,12 @@ const (
 // this much validity left, so it never expires mid-session.
 const renewBefore = 7 * 24 * time.Hour
 
+// userConfigDir is swapped in tests to isolate cert persistence. An
+// XDG_CONFIG_HOME override is not enough: os.UserConfigDir only honors it on
+// Unix, so tests relying on it would clobber the real persisted key pair on
+// Windows/macOS.
+var userConfigDir = os.UserConfigDir
+
 // serverCertificate returns the TLS certificate to serve: the persisted one
 // when it is still valid and covers every current LAN IP, otherwise a freshly
 // generated one that is persisted for next time. If the config dir is
@@ -59,7 +65,7 @@ func serverCertificate(lanIPs []net.IP, log *slog.Logger) (tls.Certificate, erro
 }
 
 func certDir() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}

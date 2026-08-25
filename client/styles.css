@@ -193,6 +193,13 @@ button {
   color: var(--accent);
 }
 
+/* Collapsed HUD: hud.js toggles this with the hudVisible setting. Everything
+ * but the HUD chip goes away so the world square's top edge underneath stays
+ * tappable (the addon's buff/target row sits there on exact 9:16 screens). */
+#hud.collapsed #hud-actions button:not(#btn-hud) {
+  display: none;
+}
+
 #btn-audio.active {
   color: var(--accent);
 }

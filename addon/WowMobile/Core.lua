@@ -373,5 +373,15 @@ function WM.UnitColor(unit)
 end
 
 function WM.Print(msg)
-	DEFAULT_CHAT_FRAME:AddMessage("|cff33ccffWowMobile|r " .. tostring(msg))
+	local line = "|cff33ccffWowMobile|r " .. tostring(msg)
+	-- Chat.lua banishes the default chat windows, so AddMessage on
+	-- DEFAULT_CHAT_FRAME (ChatFrame1) renders nothing once it runs. Route
+	-- through the addon's own chat strip (WM.ChatDeliver, published by
+	-- Chat.lua at init); the default frame is only the fallback for prints
+	-- that happen before Chat initializes, while it is still visible.
+	if WM.ChatDeliver then
+		WM.ChatDeliver(line, 0.92, 0.92, 0.92)
+	else
+		DEFAULT_CHAT_FRAME:AddMessage(line)
+	end
 end

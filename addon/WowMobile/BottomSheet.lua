@@ -435,6 +435,7 @@ end
 
 local function CollectSellableItems()
 	local items = {}
+	merchantPending = false
 	for bag = 0, NUM_BAG_SLOTS or 4 do
 		for slot = 1, WM.Container.GetNumSlots(bag) do
 			local icon, count, _, quality = WM.Container.GetItemInfo(bag, slot)
@@ -444,6 +445,11 @@ local function CollectSellableItems()
 				-- needs the (possibly uncached) item-info record.
 				local name = link and link:match("%[(.-)%]") or RETRIEVING_ITEM_INFO
 				local sellPrice = link and select(11, GetItemInfo(link)) or nil
+				if link and sellPrice == nil then
+					-- Item record not cached yet: GET_ITEM_INFO_RECEIVED
+					-- re-renders this tab so the price line fills in.
+					merchantPending = true
+				end
 				local label = QualityColoredName(name, quality)
 				local disabled
 				if sellPrice and sellPrice > 0 then

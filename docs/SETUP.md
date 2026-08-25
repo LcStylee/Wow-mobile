@@ -163,8 +163,11 @@ addon's commands:
 ```
 
 If your phone is taller or shorter than 9:19.5, nudge `/wm viewport` until the
-deck fills your thumb zone comfortably — the bounds are printed by `/wm`.
-**Then enter the same number on the phone** (HUD **Set** → *World viewport*):
+deck fills your thumb zone comfortably — the bounds are printed by `/wm`. The
+addon clamps out-of-range values and prints the height it actually applied
+(`world viewport height set to <px>`).
+**Then enter that printed number on the phone** (HUD **Set** → *World
+viewport*) — the printed value, not what you typed, is what the addon uses:
 the stream carries no viewport information, so the client splits its gesture
 zones (joystick and camera drag vs. tap-through deck) by this setting. If the
 two values disagree, taps near the world/deck boundary start the joystick or

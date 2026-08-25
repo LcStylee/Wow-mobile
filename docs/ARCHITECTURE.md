@@ -133,7 +133,7 @@ for the addon's `/wm viewport`).
 |---|---|---|
 | `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`) | luaparse syntax check + critic review |
 | `server/` | Go streaming host for Windows | `GOOS=windows go build ./...`, `go test ./...` (portable packages) |
-| `client/` | Zero-build PWA touch client | `node --check`, critic review |
+| `client/` | Zero-build PWA touch client | `node --check`, `node --test tests/`, critic review |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |
 | `docs/` | This document, setup guide | — |
 

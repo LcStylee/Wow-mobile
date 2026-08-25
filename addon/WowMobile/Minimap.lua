@@ -5,16 +5,26 @@
 -- zone label stacked beneath it. Pinch over the map maps to mouse wheel on the
 -- client, so wheel zoom is wired too.
 --
--- Right-edge budget of the world square (design px from the square's top).
--- Everything except the zone label is an interactive touch target, so these
--- y-ranges MUST stay disjoint — QuickBar.lua and the party-frame re-home in
--- Blizzard.lua anchor against this table:
+-- Right-edge budget of the world square (design px from the square's top, at
+-- the default 1080-px square height). Everything except the zone label is an
+-- interactive touch target, so these y-ranges MUST stay disjoint —
+-- QuickBar.lua and the party-frame re-home in Blizzard.lua anchor against
+-- this table:
 --   y  10..200  minimap holder   (x 880..1070; the round map's mouse-hit area
 --                                 is the full holder square)
 --   y 206..298  zoom buttons     (x 844..1070)
 --   y 302..330  zone label       (x 800..1070 — text only, never interactive)
---   y 330..     party frames     (x ..960, Blizzard.lua)
+--   y 330..1050 party frames     (x ..960, Blizzard.lua)
 --   y 336..952  quick-bar column (x 976..1072, QuickBar.lua)
+-- The two open-ended rows are viewport-aware: on a reduced viewport.height
+-- (Config bounds 648..~1130) the party frames rescale and the quick bar hides
+-- tail slots so neither ever crosses the square's bottom into the control
+-- deck (both re-solve via WM.Viewport.OnApply). This cluster's fixed rows all
+-- end by y=330, inside even the 648 minimum.
+-- The aura rows approach from the left and must end left of these columns:
+--   y  10..94   buff row ends at x=876  (Auras.lua — clear of the holder)
+--   y 124..208  debuff row ends at x=806 (Auras.lua — clear of the zoom
+--                                 buttons)
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -75,4 +85,31 @@ WM.OnInit(function()
 	WM.On("ZONE_CHANGED", UpdateZone)
 	WM.On("ZONE_CHANGED_INDOORS", UpdateZone)
 	WM.On("ZONE_CHANGED_NEW_AREA", UpdateZone)
+
+	-- New-mail indicator: MiniMapMailFrame was banished with MinimapCluster,
+	-- so a flat badge on the holder takes over. It occupies the holder's
+	-- top-left corner deadspace outside the round map — 64x36 px at holder
+	-- TOPLEFT = screen x 880..944, y 10..46, inside the holder's own budget
+	-- cell (x 880..1070, y 10..200 in the table above), so no other
+	-- right-edge range is touched. Plain Frame, mouse-disabled by default:
+	-- taps pass through to the map ping. The reparented Minimap keeps its
+	-- Blizzard strata, so the badge is lifted above it explicitly.
+	local mail = CreateFrame("Frame", "WowMobileMailBadge", holder)
+	mail:SetSize(WM.Px(64), WM.Px(36))
+	mail:SetPoint("TOPLEFT")
+	mail:SetFrameStrata("MEDIUM")
+	WM.SkinFrame(mail, { 0.09, 0.09, 0.11, 0.92 }, WM.Colors.accent)
+	local mailText = WM.CreateText(mail, 22, "OUTLINE")
+	mailText:SetPoint("CENTER")
+	mailText:SetText("Mail")
+	mailText:SetTextColor(1, 0.82, 0)
+	mail:Hide()
+
+	local function UpdateMail()
+		if HasNewMail() then mail:Show() else mail:Hide() end
+	end
+	UpdateMail()
+	WM.On("UPDATE_PENDING_MAIL", UpdateMail)
+	WM.On("MAIL_CLOSED", UpdateMail) -- HasNewMail flips as inbox mail is read
+	WM.On("PLAYER_ENTERING_WORLD", UpdateMail)
 end)

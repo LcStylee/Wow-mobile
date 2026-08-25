@@ -48,13 +48,33 @@ local function UpdateXP()
 	end
 end
 
+-- Watched-faction reader, feature-detected once at load (Compat.lua pattern).
+-- Both branches return the classic five-value shape:
+-- name, standingID, barMin, barMax, value (nil when nothing is watched).
+-- The 1.15.5 C_Reputation rework REMOVED GetWatchedFactionInfo from Classic
+-- Era, so on the targeted 1.15.7 client the data comes from
+-- C_Reputation.GetWatchedFactionData's table (reaction = standingID,
+-- current/nextReactionThreshold = the bar bounds, currentStanding = value);
+-- the global stays as the path for older builds.
+local GetWatchedFaction
+if C_Reputation and C_Reputation.GetWatchedFactionData then
+	GetWatchedFaction = function()
+		local d = C_Reputation.GetWatchedFactionData()
+		if not d then return nil end
+		return d.name, d.reaction, d.currentReactionThreshold,
+			d.nextReactionThreshold, d.currentStanding
+	end
+elseif GetWatchedFactionInfo then
+	GetWatchedFaction = GetWatchedFactionInfo
+end
+
 local function UpdateRep()
-	if not GetWatchedFactionInfo then
-		-- Clients without the classic watched-faction API: no rep bar.
+	if not GetWatchedFaction then
+		-- Clients with neither watched-faction API: no rep bar.
 		repBar:Hide()
 		return
 	end
-	local name, standing, barMin, barMax, value = GetWatchedFactionInfo()
+	local name, standing, barMin, barMax, value = GetWatchedFaction()
 	if not name then
 		repBar:Hide()
 		return

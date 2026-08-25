@@ -165,7 +165,12 @@ WM.OnInit(function()
 		bg:SetColorTexture(0.05, 0.05, 0.06, 1)
 
 		WM.AttachTooltip(cell, function(tt, self)
-			if not tt:SetInventoryItem("player", self.slotID) then
+			-- Classic Era 1.15 runs the 10.0.2 tooltip-data engine, where
+			-- GameTooltip:SetInventoryItem no longer returns hasItem — decide
+			-- emptiness from the data API, never from the setter's return.
+			if GetInventoryItemLink("player", self.slotID) then
+				tt:SetInventoryItem("player", self.slotID)
+			else
 				tt:SetText(label)
 			end
 		end)

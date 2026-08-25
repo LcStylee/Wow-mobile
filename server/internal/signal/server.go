@@ -41,6 +41,7 @@ type Server struct {
 	log       *slog.Logger
 
 	httpServer *http.Server
+	listener   net.Listener // bound by Listen, consumed by Serve
 
 	// Single-session auth state, replaced wholesale on each pairing.
 	authMu   sync.Mutex
@@ -87,8 +88,10 @@ func resolveClientDir(flagValue string, log *slog.Logger) string {
 	return ""
 }
 
-// Run serves until ctx is cancelled, then shuts down gracefully.
-func (s *Server) Run(ctx context.Context) error {
+// Listen binds the address and prepares TLS without serving yet, so callers
+// print the "ready" banner only after a successful bind — a port already in
+// use fails here, before any ready message could mislead.
+func (s *Server) Listen() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/session", s.handleCreateSession)
 	mux.HandleFunc("POST /api/session/{id}/offer", s.handleOffer)
@@ -106,11 +109,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	errCh := make(chan error, 1)
-	if s.noTLS {
-		go func() { errCh <- s.httpServer.ListenAndServe() }()
-	} else {
+	if !s.noTLS {
 		cert, err := serverCertificate(LANIPs(), s.log)
 		if err != nil {
 			return err
@@ -119,7 +118,24 @@ func (s *Server) Run(ctx context.Context) error {
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		}
-		go func() { errCh <- s.httpServer.ListenAndServeTLS("", "") }()
+	}
+
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
+	s.listener = ln
+	return nil
+}
+
+// Serve serves on the listener bound by Listen until ctx is cancelled, then
+// shuts down gracefully. Listen must have returned nil first.
+func (s *Server) Serve(ctx context.Context) error {
+	errCh := make(chan error, 1)
+	if s.noTLS {
+		go func() { errCh <- s.httpServer.Serve(s.listener) }()
+	} else {
+		go func() { errCh <- s.httpServer.ServeTLS(s.listener, "", "") }()
 	}
 
 	select {

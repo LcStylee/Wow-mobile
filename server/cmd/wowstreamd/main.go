@@ -164,6 +164,11 @@ func run() error {
 	}
 
 	server := sig.New(cfg.Addr, cfg.Token, cfg.NoTLS, cfg.ClientDir, mgr, log)
+	// Bind before the banner: a port-in-use failure must surface as the error,
+	// never after a full "ready" message.
+	if err := server.Listen(); err != nil {
+		return err
+	}
 	server.PrintBanner(os.Stdout, cfg.Token, cfg.TokenIsGenerated)
 
 	// Ctrl+C / SIGTERM: release inputs, close the peer, kill ffmpeg — in
@@ -177,7 +182,7 @@ func run() error {
 			audioSup.Stop()
 		}
 	}()
-	return server.Run(ctx)
+	return server.Serve(ctx)
 }
 
 // resolveEncoder turns --encoder=auto into a concrete choice via ffmpeg probe.

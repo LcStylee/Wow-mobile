@@ -16,8 +16,13 @@
 
 local _, WM = ...
 
--- 53px-tall party frames scaled to ~93px touch targets.
-local PARTY_SCALE = 1.75
+-- PartyMemberFrame is 120x53 UI UNITS, not px: at ~2.5 physical px per UI
+-- unit (1080 px window / ~432-unit UIParent at the addon's uiScale) that is
+-- already ~300x133 px unscaled. 0.9 yields ~270x119 px frames — inside the
+-- ~120-145 px touch band. This is the scale CEILING: the re-home below
+-- shrinks it further when a reduced viewport.height can't fit the full chain
+-- (arithmetic at the re-home).
+local PARTY_SCALE = 0.9
 
 WM.OnInit(function()
 	-- Unit frames: unregistering events first stops their protected OnEvent
@@ -71,23 +76,45 @@ WM.OnInit(function()
 	-- column at x>=976). Only PartyMemberFrame1
 	-- needs re-anchoring — 2..4 chain-anchor to it in Blizzard's XML — but
 	-- every frame needs its own SetScale (scale does not travel via anchors).
-	WM.OutOfCombat(function()
+	--
+	-- y-budget (physical px from the square's top, at 2.5 px/UI-unit): each
+	-- member's vertical pitch is <=80 UI units (53-unit frame + the <=27-unit
+	-- chain gap that holds the pet frame) -> 80 * 2.5 = 200 px at scale 1.0,
+	-- so a full party chained from y=330 ends by 330 + 4*200*scale px, pet
+	-- frames included. The square's height is configurable (viewport.height,
+	-- Config bounds 648..~1130), so the scale is solved per height:
+	-- 330 + 800*scale <= height - 6  =>  scale = (height - 336) / 800, capped
+	-- at PARTY_SCALE. Default 1080 -> 0.93 -> capped 0.9 (chain ends 1050,
+	-- matching the budget table in Minimap.lua); the 648 floor -> 0.39 (chain
+	-- ends 642). Either way the secure unit buttons never overhang the control
+	-- deck and steal its taps. Registered as a Viewport reflower so /wm
+	-- viewport re-solves it; the reflow closure is guaranteed out of combat.
+	local function ReflowParty(heightPx)
 		local first = PartyMemberFrame1
-		if first then
-			for i = 1, MAX_PARTY_MEMBERS or 4 do
-				local f = _G["PartyMemberFrame" .. i]
-				if f then
-					f:SetScale(PARTY_SCALE)
-					f.ignoreFramePositionManager = true -- keep any manager pass off our anchor
-				end
+		if not first then return end
+		local scale = (heightPx - 336) / 800
+		if scale > PARTY_SCALE then scale = PARTY_SCALE end
+		-- Unreachable through Config (bounds floor 648 -> 0.39); guards a
+		-- hand-edited SavedVariables height, where SetScale(<=0) would error.
+		if scale < 0.1 then scale = 0.1 end
+		for i = 1, MAX_PARTY_MEMBERS or 4 do
+			local f = _G["PartyMemberFrame" .. i]
+			if f then
+				f:SetScale(scale)
+				f.ignoreFramePositionManager = true -- keep any manager pass off our anchor
 			end
-			first:ClearAllPoints()
-			-- SetPoint offsets are in the frame's own (scaled) space; divide
-			-- so the offsets stay 120/330 physical px.
-			first:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
-				-WM.Px(120) / PARTY_SCALE, -WM.Px(330) / PARTY_SCALE)
 		end
-	end)
+		first:ClearAllPoints()
+		-- SetPoint offsets are in the frame's own (scaled) space; divide
+		-- so the offsets stay 120/330 physical px (right edge fixed at x=960,
+		-- left of the quick-bar column, at every scale).
+		first:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
+			-WM.Px(120) / scale, -WM.Px(330) / scale)
+	end
+	WM.Viewport.OnApply(ReflowParty)
+	-- This OnInit runs before Viewport's (toc order), i.e. before the first
+	-- Apply — do the initial re-home directly.
+	WM.OutOfCombat(function() ReflowParty(WM.Viewport.HeightPx()) end)
 
 	-- The client edge rail's Esc opens GameMenuFrame (Logout/Quit are
 	-- protected flows we must not rebuild). Scale it to thumb size and center
@@ -106,7 +133,10 @@ WM.OnInit(function()
 	-- — no lockdown queue needed. They are UIPanels, and ShowUIPanel
 	-- re-anchors a UIPanel to the screen edge on every open, so the fit runs
 	-- from an OnShow hook instead of once at init.
-	local PANEL_SCALE = 1.75 -- same touch boost as the party frames above
+	-- Boost mouse-scale panels toward touch size (same factor as POPUP_SCALE
+	-- below). The party frames reach touch size at PARTY_SCALE = 0.9 because
+	-- they are natively larger (120x53 UI units).
+	local PANEL_SCALE = 1.75
 	local function FitPanelToSquare(frame)
 		if not frame then return end
 		frame:HookScript("OnShow", function(f)

@@ -215,19 +215,45 @@ end
 --------------------------------------------------------------------------------
 
 WM.OnInit(function()
-	-- The unit popup opened by "togglemenu" renders in the shared dropdown
-	-- lists at mouse size; scale them up for touch. Re-applied on every toggle
-	-- because the lists are recycled by all dropdown users. SetScale on the
-	-- list frame touches no UIDropDownMenu globals, so it cannot taint the
-	-- menu code paths.
-	hooksecurefunc("ToggleDropDownMenu", function()
-		for i = 1, UIDROPDOWNMENU_MAXLEVELS or 3 do
-			local list = _G["DropDownList" .. i]
-			if list and list:GetScale() ~= 1.6 then
-				list:SetScale(1.6)
+	-- The unit popup opened by "togglemenu" renders at mouse size; scale it
+	-- up for touch. Two menu backends exist across builds, and 1.15.5+ ships
+	-- BOTH, so each is hooked independently (not either/or):
+	--   * Reworked Menu system (retail 10.2.5+, Classic Era 1.15.5+): unit
+	--     popups open through Menu.GetManager() into pooled menu frames — NOT
+	--     the legacy DropDownListN frames, which a togglemenu tap never
+	--     touches there. The open is hooked on the manager (OpenMenu and
+	--     OpenContextMenu both, since the unit-popup path enters via the
+	--     context variant) and the live frame fetched via GetOpenMenu(). This
+	--     scales every context menu, deliberately: all menus on this UI are
+	--     touch-operated.
+	--   * Legacy UIDropDownMenu: shared DropDownList1..N frames, re-scaled on
+	--     every toggle because all dropdown users recycle them.
+	-- SetScale touches no UIDropDownMenu/Menu globals or menu internals, so
+	-- neither hook can taint the menu code paths.
+	local manager = Menu and Menu.GetManager and Menu.GetManager()
+	if manager then
+		local function ScaleOpenMenu(mgr)
+			local menu = mgr.GetOpenMenu and mgr:GetOpenMenu()
+			if menu and menu:GetScale() ~= 1.6 then
+				menu:SetScale(1.6)
 			end
 		end
-	end)
+		for _, method in next, { "OpenMenu", "OpenContextMenu" } do
+			if type(manager[method]) == "function" then
+				hooksecurefunc(manager, method, ScaleOpenMenu)
+			end
+		end
+	end
+	if ToggleDropDownMenu then
+		hooksecurefunc("ToggleDropDownMenu", function()
+			for i = 1, UIDROPDOWNMENU_MAXLEVELS or 3 do
+				local list = _G["DropDownList" .. i]
+				if list and list:GetScale() ~= 1.6 then
+					list:SetScale(1.6)
+				end
+			end
+		end)
+	end
 
 	local m = WM.DeckMetrics
 	local row = CreateFrame("Frame", "WowMobileUnitRow", WM.Deck)

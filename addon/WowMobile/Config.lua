@@ -28,11 +28,13 @@ local DESIGN_WIDTH = 1080
 -- The control deck's fixed stack — bottom margin(8) + bottom row(92) + second
 -- bar(84) + main bar(286) + XP block(70) + unit row(180) + 4 inter-row
 -- gaps(24) — is 744 design px (values mirror WM.DeckMetrics / Deck.lua);
--- DECK_FIXED_PX adds a 46 px minimum chat strip on top. Ratios above the
--- dynamic maximum would push that stack off-screen. 0.60 keeps at least a
--- usable world strip.
+-- DECK_FIXED_PX adds a 46 px minimum chat band on top: the strip anchors
+-- 6 px below the deck top and 6 px above the unit row (Chat.lua), so the
+-- band is 12 px of gaps around a 34 px visible strip — one 24 px text line
+-- plus its padding. Ratios above the dynamic maximum would push that stack
+-- off-screen. 0.60 keeps at least a usable world strip.
 local RATIO_MIN = 0.60
-local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 minimum chat strip
+local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band (34 px visible strip + 12 px gaps)
 
 local function RatioMax()
 	-- Window aspect in design px: height/width of UIParent (uniform scale).
@@ -90,7 +92,13 @@ end)
 
 function Config.SetHeight(px)
 	px = tonumber(px)
-	if not px then return end
+	if not px then
+		-- Mistyped/missing argument: silence would be invisible on the phone —
+		-- every /wm path must produce visible feedback.
+		local lo, hi = Config.HeightBounds()
+		WM.Print(string.format("usage: /wm viewport <%d..%d> — world-square height in design px", lo, hi))
+		return
+	end
 	local lo, hi = Config.HeightBounds()
 	WM.db.viewport.height = Clamp(px, lo, hi)
 	if WM.Viewport then
@@ -105,7 +113,11 @@ end
 
 function Config.SetScale(v)
 	v = tonumber(v)
-	if not v then return end
+	if not v then
+		-- Same visible-feedback rule as SetHeight above.
+		WM.Print("usage: /wm scale <0.64..1.0> — uiScale cvar override")
+		return
+	end
 	-- The uiScale cvar only accepts 0.64..1.0; touch-target sizes stay
 	-- physically constant either way (see WM.Px), so scale mainly affects
 	-- Blizzard-rendered text.

@@ -41,6 +41,18 @@ func TestTerminalQRTooLongIsEmptyNotPanic(t *testing.T) {
 	}
 }
 
+// isolateCertDir points cert persistence at a per-test directory by swapping
+// the userConfigDir seam — never via XDG_CONFIG_HOME, which os.UserConfigDir
+// ignores on Windows/macOS, where the test would overwrite the user's real
+// persisted tls-cert.pem/tls-key.pem.
+func isolateCertDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	orig := userConfigDir
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = orig })
+}
+
 // leafDER extracts the DER of the leaf for identity comparison.
 func leafDER(t *testing.T, lanIPs []net.IP) []byte {
 	t.Helper()
@@ -52,7 +64,7 @@ func leafDER(t *testing.T, lanIPs []net.IP) []byte {
 }
 
 func TestServerCertificatePersistsAcrossRestarts(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // isolate os.UserConfigDir
+	isolateCertDir(t)
 	ips := []net.IP{net.IPv4(192, 168, 1, 10)}
 
 	first := leafDER(t, ips)
@@ -79,7 +91,7 @@ func TestServerCertificatePersistsAcrossRestarts(t *testing.T) {
 }
 
 func TestServerCertificateRegeneratedOnNewLANIP(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateCertDir(t)
 	old := leafDER(t, []net.IP{net.IPv4(192, 168, 1, 10)})
 	// DHCP moved the host: the persisted cert no longer covers the address,
 	// which would be a hard (unbypassable) name-mismatch — must regenerate.

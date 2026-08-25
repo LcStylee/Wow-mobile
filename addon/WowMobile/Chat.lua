@@ -174,5 +174,11 @@ WM.OnInit(function()
 	for event in pairs(EVENTS) do
 		WM.TryOn(event, OnChat)
 	end
+
+	-- With the default chat windows banished, this strip is the only visible
+	-- chat surface — publish delivery so WM.Print lands here (Core.lua falls
+	-- back to DEFAULT_CHAT_FRAME only before this point).
+	WM.ChatDeliver = Deliver
+
 	Deliver("WowMobile chat ready — tap this strip to expand.", 0.4, 0.8, 1.0)
 end)

@@ -21,18 +21,20 @@ local closeButton
 
 -- Blizzard's pin art is mouse-sized (~30 physical px after the deck fit) and
 -- each pin's hit rect matches its art. The art cannot grow without drowning
--- the map, but the hit rect can: pad every pin by 10 units per side (~40
--- extra physical px of touch area at the ~0.6 deck scale) so POIs and flight
--- masters land under a thumb — the same trick Blizzard.lua uses for taxi
--- nodes. Classic Era 1.15 ships the retail-lineage MapCanvas map, so pins
--- enumerate via MapCanvasMixin:EnumerateAllPins; guarded in case a future
--- build changes the mixin.
+-- the map, but the hit rect can: pad every pin by 14 units per side — 28
+-- units per axis x ~0.6 deck scale x ~2.5 px/unit ≈ 42 extra physical px —
+-- for a ~70 px effective target so POIs and flight masters land under a
+-- thumb (still short of the 90 px touch bar; padding further makes adjacent
+-- pins' invisible rects swallow each other) — the same trick Blizzard.lua
+-- uses for taxi nodes. Classic Era 1.15 ships the retail-lineage MapCanvas
+-- map, so pins enumerate via MapCanvasMixin:EnumerateAllPins; guarded in
+-- case a future build changes the mixin.
 local function PadPinHitRects()
 	local map = WorldMapFrame
 	if not map.EnumerateAllPins then return end
 	for pin in map:EnumerateAllPins() do
 		if pin.SetHitRectInsets then
-			pin:SetHitRectInsets(-10, -10, -10, -10)
+			pin:SetHitRectInsets(-14, -14, -14, -14)
 		end
 	end
 end
@@ -81,16 +83,14 @@ WM.OnInit(function()
 	closeButton:SetScript("OnClick", WorldMap.Close)
 
 	-- Runs after Blizzard's own UIPanel positioning for the frame, so our
-	-- anchors win; queued because the reflow happens while the panel system
-	-- may be mid-combat-restricted.
+	-- anchors win. WorldMapFrame is NOT protected — SetScale/SetPoint/
+	-- SetHitRectInsets are legal in combat — so the reflow runs immediately:
+	-- deferring it would leave a mid-fight map at Blizzard's default
+	-- position/scale until combat ended.
 	WorldMapFrame:HookScript("OnShow", function()
 		WM.Deck.YieldTo("worldmap")
-		WM.OutOfCombat("worldmap", function()
-			if WorldMapFrame:IsShown() then
-				Reflow()
-				PadPinHitRects()
-			end
-		end)
+		Reflow()
+		PadPinHitRects()
 	end)
 
 	-- Pins are re-acquired from pools whenever the displayed map changes;

@@ -267,7 +267,8 @@ func (inj *Injector) absoluteCoords(nx, ny uint16) (int32, int32, error) {
 	if rc.W < 2 || rc.H < 2 {
 		return 0, 0, fmt.Errorf("wininput: degenerate client rect %+v", rc)
 	}
-	// Inverse of the client's x = round(px/(clientWidth-1)*65535).
+	// Pixel-index convention per PROTOCOL.md: px = round(x/65535*(W-1)).
+	// The client sends continuous fractions; the difference is sub-pixel.
 	px := rc.X + int(uint32(nx)*uint32(rc.W-1)+32767)/65535
 	py := rc.Y + int(uint32(ny)*uint32(rc.H-1)+32767)/65535
 

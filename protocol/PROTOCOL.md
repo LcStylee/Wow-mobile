@@ -40,9 +40,14 @@ offset 1  ...  type-specific body
 ```
 
 Coordinates are **normalized to the captured window's client area** as
-`u16` in `0..65535` (`x = round(px / (clientWidth - 1) * 65535)`). The server
-maps them back to screen pixels for `SendInput`. Normalized coordinates make
-the client independent of capture resolution.
+`u16` in `0..65535`: the sender expresses a position as a continuous fraction
+of the client area (0 = left/top edge, 1 = right/bottom edge) and encodes it
+as `x = round(frac * 65535)`. The server maps wire values back to screen
+pixels for `SendInput` using the pixel-index convention
+`px = round(x / 65535 * (clientWidth - 1))`; the difference between the two
+conventions is below one capture pixel at every position, so senders may
+compute the fraction either way. Normalized coordinates make the client
+independent of capture resolution.
 
 ### 0x01 POINTER_DOWN — 8 bytes
 ```

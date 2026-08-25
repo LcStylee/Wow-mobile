@@ -26,7 +26,9 @@
   <!-- Quick rail: floating edge keys (Space/Esc/chat/M/B). -->
   <aside id="rail" hidden></aside>
 
-  <!-- HUD strip -->
+  <!-- HUD strip. The HUD chip collapses stats AND the other action chips to
+       itself, keeping the top edge of the world square (addon buff/target tap
+       region) reachable on exact 9:16 screens where the strip overlaps it. -->
   <header id="hud">
     <div id="hud-stats">
       <span id="st-state" data-state="idle">offline</span>
@@ -37,7 +39,7 @@
     </div>
     <div id="hud-actions">
       <button id="btn-audio" type="button">Snd off</button>
-      <button id="btn-hud" type="button" title="Toggle stats">HUD</button>
+      <button id="btn-hud" type="button" title="Toggle HUD">HUD</button>
       <button id="btn-settings" type="button" title="Settings">Set</button>
       <button id="btn-disconnect" type="button" title="Disconnect">End</button>
     </div>
@@ -59,9 +61,12 @@
     <label>
       World viewport (px)
       <!-- Must match the addon's `/wm viewport` value; min/max mirror the
-           addon's bounds (0.60..1.20 x the 1080 design width). -->
+           addon's bounds at the standard 1080x1920 window (0.60 x design
+           width up to the deck-preserving RatioMax, ~1130 px). The addon
+           prints the clamped value it applied — enter that printed number
+           here (SETUP.md §6). -->
       <input id="set-viewport" type="number" inputmode="numeric"
-             min="648" max="1296" step="1">
+             min="648" max="1130" step="1">
     </label>
     <label>
       Stream quality

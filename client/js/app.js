@@ -193,7 +193,10 @@ class App {
     const onChannelClose = () => {
       if (this.#pc === pc) this.#scheduleReconnect('data channel closed');
     };
+    // All three channels: a move-only close would silently degrade camera
+    // motion with no reconnect if it went unhandled.
     input.onclose = onChannelClose;
+    move.onclose = onChannelClose;
     ctrl.onclose = onChannelClose;
     ctrl.onopen = () => {
       // First ctrl message must be our hello.

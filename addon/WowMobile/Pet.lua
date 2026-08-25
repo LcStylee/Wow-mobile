@@ -5,8 +5,12 @@
 --   * action block — the 10 pet action slots (attack/follow/stay, abilities,
 --     autocast modes) as secure type="pet" buttons in a 2x5 block on the left
 --     edge of the world square. It occupies the stance column's spot: no
---     Classic Era class has both a combat pet and shapeshift forms, so the
---     two never coexist. All 10 buttons stay laid out while a pet exists
+--     Classic Era class natively has both a combat pet and shapeshift forms.
+--     The one overlap is possession while a stance column is populated (e.g.
+--     shadow-priest Mind Control with Shadowform known): both surfaces show
+--     at the same anchor and the pet block — created later, higher frame
+--     level — intentionally wins taps for the duration of the possession.
+--     All 10 buttons stay laid out while a pet exists
 --     (empty slots render as sockets) because per-slot Show/Hide on protected
 --     buttons would be blocked in combat.
 --   * status strip — compact secure unit button over the free bottom band of
@@ -148,7 +152,9 @@ WM.OnInit(function()
 	-- begins the joystick, never a click). Interactive frames on the left edge
 	-- must therefore end above y = 594. This 2x5 block is 182x464; anchoring
 	-- its top at y = 124 puts it in the exact band the stance column uses
-	-- (ActionBars.lua, 124..588), clearing the joystick zone by 6 px. A
+	-- (ActionBars.lua, 124..588), clearing the joystick zone by 6 px. The
+	-- debuff aura row shares y 124..208 but starts at x=210 (Auras.lua), so
+	-- the block's x 8..190 is uncontested. A
 	-- reduced /wm viewport raises the boundary (0.55 x viewport height) toward
 	-- the lower slots — the trade-off SETUP.md documents next to the command.
 	column:SetPoint("TOPLEFT", WM.WorldSquare, "TOPLEFT", WM.Px(8), -WM.Px(124))

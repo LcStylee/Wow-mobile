@@ -24,9 +24,19 @@ WM.ActionBars = ActionBars
 local buttons = {} -- every WowMobile action button, for event fan-out
 
 -- Classic Era page driver: bars 2-6 via ActionBarPage, bonus bars 7-10 for
--- stances/shapeshift/stealth. Evaluated by the restricted environment, so
--- paging works in combat.
-local PAGE_DRIVER = "[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; " ..
+-- stances/shapeshift/stealth, and page 11 while possessing (priest Mind
+-- Control, hunter Eyes of the Beast, possess-style quest items — all live on
+-- Era). Possession sets bonus-bar offset 5, which the default UI has mapped
+-- to page NUM_ACTIONBAR_PAGES(6) + 5 = 11 since vanilla (same arithmetic as
+-- the offset 1-4 -> page 7-10 rows below); [possessbar] 11 is the mapping
+-- LibActionButton/Bartender4 ship on Era. Without this condition the main bar
+-- would never remap while possessed — and the default possess UI is banished
+-- with MainMenuBar (Blizzard.lua), so the possessed unit's actions would be
+-- unreachable. [possessbar] is listed first so it beats any stance/page state
+-- the possessed player still carries. Evaluated by the restricted
+-- environment, so paging works in combat.
+local PAGE_DRIVER = "[possessbar] 11; " ..
+	"[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; " ..
 	"[bonusbar:1] 7; [bonusbar:2] 8; [bonusbar:3] 9; [bonusbar:4] 10; 1"
 
 --------------------------------------------------------------------------------
@@ -319,6 +329,8 @@ WM.OnInit(function()
 	-- 500..588 — 6 px clear. Rows 6..8 of this frame would breach the zone,
 	-- but no Classic Era class exceeds 5 forms (druid: bear/aquatic/cat/
 	-- travel/moonkin); re-check before porting to a client with more.
+	-- The debuff aura row shares this band's top (y 124..208) but starts at
+	-- x=210 (Auras.lua), so the column's x 8..96 is uncontested.
 	stanceColumn:SetPoint("TOPLEFT", WM.WorldSquare, "TOPLEFT", WM.Px(8), -WM.Px(124))
 	stanceColumn:SetSize(WM.Px(88), WM.Px(94 * 8))
 	stanceColumn:Hide()

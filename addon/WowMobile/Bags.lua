@@ -14,7 +14,12 @@ local _, WM = ...
 
 local NUM_BAGS = 4 -- bags 1..4 plus the backpack (bag 0)
 local COLS = 8
-local CELL = 118
+-- Cell size is budgeted against the SCROLLER viewport, not the full panel:
+-- panel content is 1064 (1080 deck − 2*8 inset) and Deck.CreateScroller
+-- reserves a 92 px button column + 6 px gap on the right, leaving 966 px.
+-- 8 columns at 114+6 pitch span 8*120 − 6 = 954 ≤ 966 (12 px slack); 118
+-- would span 986 and clip the 8th column under the Up/Down buttons.
+local CELL = 114
 local GAP = 6
 
 local panel, scroller

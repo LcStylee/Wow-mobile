@@ -83,7 +83,12 @@ export class Hud {
     rail.addEventListener('change', () => settings.set('showRail', rail.checked));
 
     const applyVisibility = () => {
-      this.#els.stats.hidden = !settings.get('hudVisible');
+      const visible = settings.get('hudVisible');
+      this.#els.stats.hidden = !visible;
+      // Collapsed: only the HUD chip remains, so the top edge of the world
+      // square (the addon's buff/target tap region, which the strip overlaps
+      // on exact 9:16 screens) stays tappable.
+      this.#els.hud.classList.toggle('collapsed', !visible);
     };
     settings.onChange((key) => {
       if (key === 'hudVisible') applyVisibility();
