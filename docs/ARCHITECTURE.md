@@ -47,7 +47,11 @@ Why:
   portrait 3D would give.
 
 The world viewport is configurable (`WowMobile` saved variable
-`viewport.height`, default 1080) for phones with different aspect ratios.
+`viewport.height`, default 1080) for phones with different aspect ratios. The
+wire protocol carries no viewport field, so the phone client mirrors the value
+in its own **World viewport** setting (`worldViewportPx`, settings sheet,
+default 1080); the two must be changed together (see SETUP.md §6) or the
+client's world/deck gesture split desyncs from the addon's actual layout.
 
 ### 2. Streaming: WebRTC, not a custom transport
 
@@ -57,9 +61,15 @@ zero-install client (browser/PWA). Pipeline:
 
 ```
 ddagrab (Desktop Duplication, GPU) → h264_nvenc (zerolatency, no B-frames,
-intra-refresh, CBR) → Annex-B NALU splitter → pion TrackLocalStaticSample
+periodic IDR, CBR) → Annex-B NALU splitter → pion TrackLocalStaticSample
 → SRTP → phone <video> with playoutDelayHint = 0
 ```
+
+Recovery points are periodic IDRs (2 s GOP) plus keyframe-on-demand: a PLI
+from the client triggers an encoder restart, whose first frame is a fresh
+IDR + SPS/PPS. Intra-refresh was deliberately rejected — a browser (re)joining
+mid-stream cannot decode a rolling refresh wavefront at all; it needs a full
+IDR, so intra-refresh would break mid-join and PLI recovery outright.
 
 Fallbacks: `gdigrab + libx264 -tune zerolatency` when no NVIDIA GPU;
 AMF/QSV selectable via `--encoder`. Target: ≤ 3 ms capture + ~5 ms encode +
@@ -104,19 +114,24 @@ tap-passthrough so every addon button is pressed by simply tapping it:
 | world square | two-finger pinch | mouse wheel (camera zoom) |
 | control deck (anywhere) | tap | left click at position |
 | control deck | long-press | right click at position |
-| client edge rail (floating, client-rendered) | tap | quick keys: Space (jump), Esc, Enter (chat), M, B |
+| client edge rail (floating, client-rendered) | tap | quick keys: Space (jump), Esc, chat keyboard (Aa), M, B |
 
 Consequences for the addon: the control deck owns all critical UI; anything
 the addon places inside the world square (target frame, buffs at the very
-top) must be tap/long-press operable only. Consequence for the client: it
-computes the world-square rect from the `hello` video geometry
-(`square = video content width, anchored top`) after object-fit letterboxing.
+top) must be tap/long-press operable only — and left-edge frames must end
+above the joystick's capture zone (bottom-left 45% of the square; budget
+comments in `Pet.lua`/`ActionBars.lua`). Consequence for the client: it
+computes the world-square rect from the `hello` video geometry after
+object-fit letterboxing (`square height = (worldViewportPx / 1080) × video
+content width, anchored top` — width times height fraction, since the hello
+carries no viewport field and the client's World viewport setting stands in
+for the addon's `/wm viewport`).
 
 ## Repository layout
 
 | Path | What | Validated by |
 |---|---|---|
-| `addon/WowMobile/` | WoW Classic Era addon (Lua/XML, `## Interface: 11507`) | luaparse syntax check + critic review |
+| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`) | luaparse syntax check + critic review |
 | `server/` | Go streaming host for Windows | `GOOS=windows go build ./...`, `go test ./...` (portable packages) |
 | `client/` | Zero-build PWA touch client | `node --check`, critic review |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |

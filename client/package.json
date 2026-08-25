@@ -1,0 +1,9 @@
+{
+  "name": "wowmobile-client",
+  "private": true,
+  "description": "Zero-build PWA touch client for WoW Mobile. No dependencies, no bundler; this manifest only marks the tree as ESM so node --check / node --test parse the browser modules as written.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

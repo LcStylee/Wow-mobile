@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WoW Mobile</title>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a10">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <!-- iOS ignores manifest icons and does not accept SVG here: raster only.
+       180x180 PNG rendered from icon-maskable.svg's full-bleed artwork. -->
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- The stream. Muted for autoplay policy; the HUD sound button unmutes. -->
+  <video id="video" autoplay playsinline muted></video>
+
+  <!-- Gesture layer: exactly covers the video; the joystick renders inside. -->
+  <div id="touch"></div>
+
+  <!-- Quick rail: floating edge keys (Space/Esc/chat/M/B). -->
+  <aside id="rail" hidden></aside>
+
+  <!-- HUD strip -->
+  <header id="hud">
+    <div id="hud-stats">
+      <span id="st-state" data-state="idle">offline</span>
+      <span id="st-rtt">– ms</span>
+      <span id="st-bitrate">– kbps</span>
+      <span id="st-fps">– fps</span>
+      <span id="st-enc">enc –</span>
+    </div>
+    <div id="hud-actions">
+      <button id="btn-audio" type="button">Snd off</button>
+      <button id="btn-hud" type="button" title="Toggle stats">HUD</button>
+      <button id="btn-settings" type="button" title="Settings">Set</button>
+      <button id="btn-disconnect" type="button" title="Disconnect">End</button>
+    </div>
+  </header>
+
+  <!-- Settings sheet -->
+  <section id="sheet" hidden>
+    <h2>Settings</h2>
+    <label>
+      Camera sensitivity
+      <input id="set-sensitivity" type="range" min="0.5" max="3" step="0.1">
+      <output for="set-sensitivity"></output>
+    </label>
+    <label>
+      Joystick size
+      <input id="set-joystick" type="range" min="0.7" max="1.6" step="0.05">
+      <output for="set-joystick"></output>
+    </label>
+    <label>
+      World viewport (px)
+      <!-- Must match the addon's `/wm viewport` value; min/max mirror the
+           addon's bounds (0.60..1.20 x the 1080 design width). -->
+      <input id="set-viewport" type="number" inputmode="numeric"
+             min="648" max="1296" step="1">
+    </label>
+    <label>
+      Stream quality
+      <select id="set-bitrate">
+        <option value="0">Auto</option>
+        <option value="4000">Low — 4 Mbps</option>
+        <option value="8000">Medium — 8 Mbps</option>
+        <option value="16000">High — 16 Mbps</option>
+      </select>
+    </label>
+    <label class="row">
+      <input id="set-rail" type="checkbox">
+      Show quick keys
+    </label>
+    <button id="sheet-close" type="button">Close</button>
+  </section>
+
+  <!-- Chat keyboard overlay -->
+  <div id="kb" hidden>
+    <form id="kb-form" autocomplete="off">
+      <input id="kb-input" type="text" enterkeyhint="send" autocapitalize="off"
+             spellcheck="false" placeholder="Say something…">
+      <button type="submit">Send</button>
+      <button id="kb-cancel" type="button">Esc</button>
+    </form>
+  </div>
+
+  <!-- Pairing screen -->
+  <div id="overlay-connect" class="overlay" hidden>
+    <form id="connect-form">
+      <h1>WoW Mobile</h1>
+      <p>Enter the pairing token shown by <code>wowstreamd</code> on your PC,
+         or scan its QR code.</p>
+      <p id="connect-note" class="note" hidden></p>
+      <input id="connect-token" type="text" autocomplete="off" autocapitalize="off"
+             spellcheck="false" placeholder="pairing token" required>
+      <button id="connect-submit" type="submit">Connect</button>
+    </form>
+  </div>
+
+  <!-- Autoplay unlock -->
+  <div id="overlay-start" class="overlay" hidden>
+    <div class="start-card">
+      <h1>Ready</h1>
+      <p>Tap to play — goes fullscreen and locks portrait.</p>
+    </div>
+  </div>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

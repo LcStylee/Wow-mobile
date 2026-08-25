@@ -1,0 +1,41 @@
+## Interface: 11507
+# ^ Tracks the WoW Classic Era client patch (1.15.07). Bump this number when
+#   the client patches; nothing inside the addon keys off it.
+## Title: WoW Mobile
+## Notes: Portrait touch UI overhaul for streaming WoW Classic Era to a phone (1080x1920 window, 1080x1080 world viewport + control deck).
+## Author: WoW Mobile project
+## Version: 1.0.0
+## SavedVariables: WowMobileDB
+
+# Load order is the dependency order: Core provides the namespace/bus/queue,
+# Compat the API shims, Config the saved variables, Viewport the world square
+# and deck rect, Deck the panel/scroller/menu infrastructure. Bar and HUD
+# modules then stack bottom-up inside the deck (each anchors to the frame the
+# previous module published in WM.Layout; Pet also anchors its status strip
+# to the unit row UnitFrames publishes), and the panel modules only depend on
+# Deck. WorldMap reflows Blizzard's map over the deck (ARCHITECTURE §4);
+# Talents reflows Blizzard_TalentUI into the world square.
+# Settings loads last because its panel drives Config + Viewport.
+Core.lua
+Compat.lua
+Config.lua
+Blizzard.lua
+Viewport.lua
+Deck.lua
+ActionBars.lua
+QuickBar.lua
+XPBar.lua
+UnitFrames.lua
+CastBar.lua
+Auras.lua
+Pet.lua
+Minimap.lua
+Chat.lua
+BottomSheet.lua
+Spellbook.lua
+CharacterPanel.lua
+QuestLog.lua
+Bags.lua
+WorldMap.lua
+Talents.lua
+Settings.lua

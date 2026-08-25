@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0c454"/>
+      <stop offset="1" stop-color="#a87c10"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#0a0a10"/>
+  <!-- world-square viewport frame -->
+  <rect x="88" y="72" width="336" height="336" rx="18" fill="none"
+        stroke="#2c2b3a" stroke-width="14"/>
+  <!-- control deck bar -->
+  <rect x="88" y="432" width="336" height="26" rx="13" fill="#2c2b3a"/>
+  <!-- W mark -->
+  <path d="M136 148 L192 344 L256 200 L320 344 L376 148"
+        fill="none" stroke="url(#gold)" stroke-width="42"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

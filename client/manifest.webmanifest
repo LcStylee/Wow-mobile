@@ -1,0 +1,26 @@
+{
+  "name": "WoW Mobile",
+  "short_name": "WoW Mobile",
+  "description": "Stream WoW Classic from your PC with a portrait touch UI.",
+  "id": "wowmobile",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0a0a10",
+  "theme_color": "#0a0a10",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
