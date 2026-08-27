@@ -53,27 +53,35 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
 ## Quickstart
 
-1. Set WoW Classic Era to a windowed 1080x1920 portrait window
-   (`wowstreamd --setup` prints the exact `Config.wtf` lines).
-2. Copy `addon/WowMobile/` into WoW's `Interface\AddOns\` folder and enable it.
-3. Install [FFmpeg](https://ffmpeg.org/download.html) and make sure `ffmpeg` is
-   in your `PATH`.
-4. Build and start the host from the repo root:
-   `cd server && go build -o ..\wowstreamd.exe .\cmd\wowstreamd && cd .. && .\wowstreamd.exe`
-5. On your phone (same Wi-Fi), scan the QR code the server prints, accept the
-   self-signed certificate, and tap to play.
+1. **Download** the latest `wowstreamd.exe` from
+   [GitHub Releases](https://github.com/LcStylee/Wow-mobile/releases) onto your
+   Windows gaming PC.
+2. **Double-click it** and follow the first-run wizard. It finds your WoW
+   Classic Era install (or asks for the path), installs the bundled WowMobile
+   addon, sets the portrait window in `Config.wtf`, finds or installs FFmpeg,
+   and offers to launch the game — the phone client is built into the exe, so
+   there is nothing else to download.
 
-Full walkthrough with troubleshooting: [docs/SETUP.md](docs/SETUP.md).
+   *Windows SmartScreen note:* the binary is unsigned, so SmartScreen may warn
+   about an unknown publisher. Click **More info → Run anyway**, or build from
+   source ([docs/SETUP.md](docs/SETUP.md#manual-setup-advanced)).
+3. **Scan the QR code** with your phone (same Wi-Fi), accept the self-signed
+   certificate, and tap to play.
+
+Full walkthrough (wizard details, phone pairing, manual setup, and
+troubleshooting): [docs/SETUP.md](docs/SETUP.md).
 
 ## Requirements
 
 - **Windows 10 or later** on the gaming PC (Desktop Duplication capture and
   `SendInput` injection are Windows APIs).
-- **FFmpeg in `PATH`** (or point at it with `--ffmpeg`).
+- **FFmpeg** — the wizard installs it via winget if it is missing (or point at
+  an existing one with `--ffmpeg`).
 - **A hardware H.264 encoder is strongly recommended** — NVIDIA NVENC gets the
   premium zero-copy path; AMF/QSV work; software x264 is the fallback and costs
   CPU and latency.
-- **Go 1.24+** to build `wowstreamd` (no prebuilt binaries yet).
+- **Go 1.24+** only if you build `wowstreamd` from source instead of using the
+  [Releases](https://github.com/LcStylee/Wow-mobile/releases) binary.
 - **5 GHz Wi-Fi** (or better) with phone and PC on the same LAN. There is no
   STUN/TURN — this is deliberately LAN-only.
 - **WoW Classic Era** (the addon targets Interface `11507`).
@@ -143,12 +151,18 @@ cleanly replaces the first, never mirrors it.
 
 ## Repository layout
 
+The repo root is the Go module (`github.com/LcStylee/Wow-mobile`); build with
+`go build ./server/cmd/wowstreamd` from the root. `client/` and
+`addon/WowMobile/` are embedded into the binary at build time (`embed.go`), so
+the released exe is fully self-contained.
+
 | Path | What |
 |---|---|
-| `addon/WowMobile/` | WoW Classic Era addon (Lua): portrait UI overhaul, control deck, touch panels |
-| `server/` | `wowstreamd` — Go streaming host for Windows: capture, WebRTC, input injection, signaling |
-| `client/` | Zero-build PWA phone client: video, gesture layer, joystick, HUD, chat keyboard |
+| `addon/WowMobile/` | WoW Classic Era addon (Lua): portrait UI overhaul, control deck, touch panels — embedded in the exe, installed by the wizard |
+| `server/` | `wowstreamd` — Go streaming host for Windows: capture, WebRTC, input injection, signaling, first-run wizard |
+| `client/` | Zero-build PWA phone client: video, gesture layer, joystick, HUD, chat keyboard — embedded in the exe and served by it |
 | `protocol/` | Binding wire-protocol spec for the client⇄server data channels |
+| `embed.go` | Root embed package: `go:embed` of `client/` and `addon/WowMobile/` |
 | `docs/` | [Architecture](docs/ARCHITECTURE.md) and [setup guide](docs/SETUP.md) |
 
 ## License

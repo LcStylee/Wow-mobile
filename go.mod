@@ -1,4 +1,4 @@
-module github.com/LcStylee/Wow-mobile/server
+module github.com/LcStylee/Wow-mobile
 
 go 1.24.0
 

@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -31,13 +33,31 @@ import (
 // PROTOCOL.md allows cookie or bearer; both are accepted.
 const authCookie = "wowstreamd_session"
 
+// init pins the MIME types the PWA depends on: on Windows (where the exe
+// runs) mime.TypeByExtension consults per-machine registry values that
+// third-party installers are known to corrupt (e.g. .js or .css mapped to
+// text/plain). Browsers hard-reject module scripts, service workers, and
+// standards-mode stylesheets served with a wrong type, which would brick the
+// client on that PC with no server-side error — so the exe must not trust
+// the registry for anything it serves. .webmanifest additionally has no
+// entry in Go's built-in table at all.
+func init() {
+	// AddExtensionType only errors on an extension without a leading dot.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
+	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
+	_ = mime.AddExtensionType(".svg", "image/svg+xml")
+	_ = mime.AddExtensionType(".html", "text/html; charset=utf-8")
+	_ = mime.AddExtensionType(".png", "image/png")
+}
+
 // Server owns the HTTP listener and the session auth state.
 type Server struct {
 	addr      string
 	tokenHash [32]byte
 	noTLS     bool
 	mgr       *rtc.Manager
-	clientDir string // resolved absolute path, or "" when no client dir exists
+	clientFS  fs.FS // filesystem the phone client PWA is served from
 	log       *slog.Logger
 
 	httpServer *http.Server
@@ -54,38 +74,36 @@ type sessionAuth struct {
 	secretHash [32]byte
 }
 
-// New creates the signaling server. clientDirFlag is the raw --client-dir
-// value ("" = try ./client then ../client).
-func New(addr, token string, noTLS bool, clientDirFlag string, mgr *rtc.Manager, log *slog.Logger) *Server {
+// New creates the signaling server. embeddedClient is the client PWA built
+// into the binary (already rooted at the PWA's index.html); clientDirFlag is
+// the raw --client-dir value — when set, it overrides the embedded files with
+// a disk directory (development).
+func New(addr, token string, noTLS bool, embeddedClient fs.FS, clientDirFlag string, mgr *rtc.Manager, log *slog.Logger) *Server {
 	return &Server{
 		addr:      addr,
 		tokenHash: sha256.Sum256([]byte(token)),
 		noTLS:     noTLS,
 		mgr:       mgr,
-		clientDir: resolveClientDir(clientDirFlag, log),
+		clientFS:  resolveClientFS(embeddedClient, clientDirFlag, log),
 		log:       log,
 	}
 }
 
-// resolveClientDir applies the documented fallback: an explicit flag is used
-// as-is (missing dir is a hard warning), otherwise ./client then ../client.
-func resolveClientDir(flagValue string, log *slog.Logger) string {
-	candidates := []string{"./client", "../client"}
+// resolveClientFS picks the filesystem the PWA is served from: the embedded
+// copy by default (the binary does not care what directory it is started
+// from), or the --client-dir override when it names an existing directory.
+func resolveClientFS(embeddedClient fs.FS, flagValue string, log *slog.Logger) fs.FS {
 	if flagValue != "" {
-		candidates = []string{flagValue}
-	}
-	for _, c := range candidates {
-		abs, err := filepath.Abs(c)
-		if err != nil {
-			continue
+		abs, err := filepath.Abs(flagValue)
+		if err == nil {
+			if st, statErr := os.Stat(abs); statErr == nil && st.IsDir() {
+				log.Info("serving phone client from disk (--client-dir override)", "dir", abs)
+				return os.DirFS(abs)
+			}
 		}
-		if st, err := os.Stat(abs); err == nil && st.IsDir() {
-			log.Info("serving phone client", "dir", abs)
-			return abs
-		}
+		log.Warn("--client-dir is not an existing directory; serving the embedded client instead", "client-dir", flagValue)
 	}
-	log.Warn("phone client directory not found; only /api endpoints will work", "tried", candidates)
-	return ""
+	return embeddedClient
 }
 
 // Listen binds the address and prepares TLS without serving yet, so callers
@@ -96,13 +114,7 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /api/session", s.handleCreateSession)
 	mux.HandleFunc("POST /api/session/{id}/offer", s.handleOffer)
 	mux.HandleFunc("DELETE /api/session/{id}", s.handleDelete)
-	if s.clientDir != "" {
-		mux.Handle("/", http.FileServer(http.Dir(s.clientDir)))
-	} else {
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "wowstreamd: phone client files not found; run from the repo root or pass --client-dir", http.StatusNotFound)
-		})
-	}
+	mux.Handle("/", http.FileServerFS(s.clientFS))
 
 	s.httpServer = &http.Server{
 		Addr:              s.addr,

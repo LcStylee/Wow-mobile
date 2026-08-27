@@ -1,0 +1,98 @@
+# Release: on a v* tag, run the full test job, cross-build the single-file
+# wowstreamd.exe (client PWA + addon embedded via go:embed), and attach it to
+# a GitHub Release. workflow_dispatch runs the test half for dry runs.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Keep these steps identical to ci.yml's test job — ci.yml's header
+      # promises "the same test job as release.yml", so a tag can never be
+      # released from a commit that CI would have failed.
+      - name: gofmt
+        run: |
+          out="$(gofmt -l server *.go)"
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          GOOS=windows GOARCH=amd64 go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: cross-build wowstreamd.exe
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath ./server/cmd/wowstreamd
+
+      - name: client tests
+        working-directory: client
+        run: node --test tests/
+
+      - name: addon Lua syntax check
+        run: |
+          npm install --no-save luaparse
+          node -e '
+            const luaparse = require("luaparse");
+            const fs = require("fs");
+            const files = process.argv.slice(1);
+            let failed = false;
+            for (const f of files) {
+              try {
+                luaparse.parse(fs.readFileSync(f, "utf8"), { luaVersion: "5.1" });
+              } catch (e) {
+                failed = true;
+                console.error(`${f}: ${e.message}`);
+              }
+            }
+            if (failed) process.exit(1);
+            console.log(`${files.length} Lua files parse cleanly`);
+          ' $(find addon -name '*.lua')
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: build wowstreamd.exe
+        run: >
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0
+          go build -trimpath
+          -ldflags "-s -w -X main.version=$GITHUB_REF_NAME"
+          -o wowstreamd.exe ./server/cmd/wowstreamd
+
+      - name: create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wowstreamd.exe
+          generate_release_notes: true

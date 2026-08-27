@@ -16,6 +16,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"io/fs"
+
+	embedded "github.com/LcStylee/Wow-mobile"
 	"github.com/LcStylee/Wow-mobile/server/internal/capture"
 	"github.com/LcStylee/Wow-mobile/server/internal/config"
 	"github.com/LcStylee/Wow-mobile/server/internal/input"
@@ -23,6 +26,10 @@ import (
 	sig "github.com/LcStylee/Wow-mobile/server/internal/signal"
 	"github.com/LcStylee/Wow-mobile/server/internal/window"
 )
+
+// version identifies this build in the startup banner and --version. Releases
+// stamp it via -ldflags "-X main.version=v1.2.3" (.github/workflows/release.yml).
+var version = "dev"
 
 // platform is the OS seam: real on Windows, unavailable elsewhere so the
 // portable packages still build and test on any OS.
@@ -47,7 +54,8 @@ type platform struct {
 func main() {
 	if err := run(); err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stderr, "wowstreamd:", err)
+			fmt.Fprintln(os.Stderr, "\nwowstreamd: error:", err)
+			holdConsoleOnFatal()
 		}
 		os.Exit(1)
 	}
@@ -58,13 +66,28 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if cfg.Version {
+		fmt.Println("wowstreamd", version)
+		return nil
+	}
 	if cfg.Setup {
 		window.PrintSetup(os.Stdout, cfg.Width, cfg.Height)
 		return nil
 	}
 
+	setupConsole() // Windows: enable ANSI/VT output processing (no-op elsewhere)
+	fmt.Printf("wowstreamd %s — WoW Mobile streaming host\n", version)
+
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
+
+	// First-run wizard (Windows): locate WoW, install the embedded addon,
+	// fix Config.wtf, find/install ffmpeg, make sure the game is running.
+	// --skip-setup restores the pre-wizard behavior; every step is
+	// idempotent and near-instant when already satisfied.
+	if err := runFirstRunWizard(cfg, log); err != nil {
+		return err
+	}
 
 	plat, err := newPlatform(cfg, log)
 	if err != nil {
@@ -163,7 +186,14 @@ func run() error {
 		audioSup = capture.NewSupervisor("audio", capCfg, capture.Config.AudioArgs, mgr.ConsumeOgg, log)
 	}
 
-	server := sig.New(cfg.Addr, cfg.Token, cfg.NoTLS, cfg.ClientDir, mgr, log)
+	// The phone client PWA ships inside the binary; --client-dir overrides it
+	// with a disk directory for development. Either way the binary no longer
+	// cares what directory it is started from.
+	clientFS, err := fs.Sub(embedded.ClientFS, "client")
+	if err != nil {
+		return fmt.Errorf("embedded client missing: %w", err)
+	}
+	server := sig.New(cfg.Addr, cfg.Token, cfg.NoTLS, clientFS, cfg.ClientDir, mgr, log)
 	// Bind before the banner: a port-in-use failure must surface as the error,
 	// never after a full "ready" message.
 	if err := server.Listen(); err != nil {

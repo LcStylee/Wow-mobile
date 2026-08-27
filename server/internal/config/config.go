@@ -38,7 +38,11 @@ type Config struct {
 	NoTLS            bool
 	FFmpegPath       string // empty = look up "ffmpeg" in PATH
 	Audio            bool
-	Setup            bool // --setup: print WoW configuration help and exit
+	Setup            bool   // --setup: print WoW configuration help and exit
+	WowDir           string // --wow-dir: WoW _classic_era_ directory (skips wizard auto-detection)
+	Yes              bool   // --yes: first-run wizard accepts every default without prompting
+	SkipSetup        bool   // --skip-setup: skip the first-run wizard entirely
+	Version          bool   // --version: print the version and exit
 }
 
 // Parse parses argv (without the program name). Usage/errors go to errOut.
@@ -55,7 +59,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")
 	fs.StringVar(&cfg.WindowTitle, "window-title", "World of Warcraft", "substring of the game window title to capture")
-	fs.StringVar(&cfg.ClientDir, "client-dir", "", "directory with the phone client PWA (default: ./client, falling back to ../client)")
+	fs.StringVar(&cfg.ClientDir, "client-dir", "", "serve the phone client PWA from this disk directory instead of the copy embedded in the binary (development)")
 	fs.BoolVar(&cfg.NoTLS, "no-tls", false, "serve plain HTTP instead of HTTPS with a self-signed certificate")
 	fs.StringVar(&cfg.FFmpegPath, "ffmpeg", "", "path to the ffmpeg executable (default: find \"ffmpeg\" in PATH)")
 	// Opt-in, not default-on: robust WASAPI loopback needs the third-party
@@ -63,6 +67,10 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	// project) — ffmpeg alone cannot tap WASAPI loopback on stock Windows.
 	fs.BoolVar(&cfg.Audio, "audio", false, "capture desktop audio via the DirectShow device \"virtual-audio-capturer\" (requires screen-capture-recorder to be installed)")
 	fs.BoolVar(&cfg.Setup, "setup", false, "print WoW Config.wtf and addon setup instructions, then exit")
+	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW Classic Era directory (the one containing WowClassic.exe); skips the wizard's auto-detection")
+	fs.BoolVar(&cfg.Yes, "yes", false, "first-run wizard: accept every default without prompting (non-interactive)")
+	fs.BoolVar(&cfg.SkipSetup, "skip-setup", false, "skip the first-run setup wizard entirely")
+	fs.BoolVar(&cfg.Version, "version", false, "print the wowstreamd version and exit")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

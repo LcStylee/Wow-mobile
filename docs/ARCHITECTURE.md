@@ -13,7 +13,7 @@ UI rebuilt for portrait touch. Three components, one repo:
 │  ├─ capture:  FFmpeg subprocess (ddagrab → h264_nvenc, zero-latency)    │
 │  ├─ webrtc:   pion/webrtc — H.264 video track + input data channels     │
 │  ├─ input:    SendInput injection (mouse/keyboard) into the WoW window  │
-│  └─ signal:   HTTPS server — WHEP-style signaling + serves client PWA   │
+│  └─ signal:   HTTPS server — WHEP signaling + embedded client PWA       │
 │                                                                         │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │  LAN Wi-Fi (WebRTC: SRTP + SCTP)
@@ -129,12 +129,23 @@ for the addon's `/wm viewport`).
 
 ## Repository layout
 
+The repo root is the Go module (`github.com/LcStylee/Wow-mobile`, `go.mod` at
+the root); `go build ./server/cmd/wowstreamd` from the root produces the
+single distributable exe. `client/` and `addon/WowMobile/` stay the canonical
+sources on disk and are additionally embedded into the binary by the root
+`embed.go` (`go:embed`): the signal server serves the PWA from the embedded FS
+(`--client-dir` overrides with a disk directory for development) and the
+first-run wizard (`server/internal/install`) installs the addon from it, so
+the released `wowstreamd.exe` is fully self-contained.
+
 | Path | What | Validated by |
 |---|---|---|
-| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`) | luaparse syntax check + critic review |
-| `server/` | Go streaming host for Windows | `GOOS=windows go build ./...`, `go test ./...` (portable packages) |
-| `client/` | Zero-build PWA touch client | `node --check`, `node --test tests/`, critic review |
+| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`); embedded, wizard-installed | luaparse syntax check (CI) + critic review |
+| `server/` | Go streaming host for Windows + first-run wizard | `GOOS=windows go vet ./...`, `go test ./...` (portable packages), CI |
+| `client/` | Zero-build PWA touch client; embedded, served by the exe | `node --test tests/` (CI), critic review |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |
+| `embed.go` | Root embed package (`ClientFS`, `AddonFS`) | `embed_test.go` drift guard: embedded trees == disk trees byte-for-byte |
+| `.github/workflows/` | CI on every push/PR; tag-triggered release build of `wowstreamd.exe` | workflow runs on GitHub Actions |
 | `docs/` | This document, setup guide | — |
 
 ## Trust & security model

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"crypto/x509"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func testLogger() *slog.Logger {
@@ -38,6 +42,36 @@ func TestTerminalQRTooLongIsEmptyNotPanic(t *testing.T) {
 	// Byte-mode capacity at level M tops out well below 3 KB.
 	if qr := terminalQR(strings.Repeat("x", 4000)); qr != "" {
 		t.Fatal("oversized content must yield no QR, not a truncated one")
+	}
+}
+
+// The PWA is served from the embedded copy by default; --client-dir only
+// overrides it when it names an existing directory (development), so the
+// binary works no matter where it is started from.
+func TestResolveClientFS(t *testing.T) {
+	embedded := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("embedded")}}
+	servedIndex := func(fsys fs.FS) string {
+		t.Helper()
+		data, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
+			t.Fatalf("reading index.html: %v", err)
+		}
+		return string(data)
+	}
+
+	if got := servedIndex(resolveClientFS(embedded, "", testLogger())); got != "embedded" {
+		t.Fatalf("no flag: expected the embedded FS, got %q", got)
+	}
+	if got := servedIndex(resolveClientFS(embedded, filepath.Join(t.TempDir(), "missing"), testLogger())); got != "embedded" {
+		t.Fatalf("missing --client-dir must fall back to the embedded FS, got %q", got)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := servedIndex(resolveClientFS(embedded, dir, testLogger())); got != "disk" {
+		t.Fatalf("--client-dir override not served from disk: %q", got)
 	}
 }
 
