@@ -177,7 +177,9 @@ WM.OnInit(function()
 		-- item; while a carry is active a tap drops here (equip / swap).
 		cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 		cell:SetScript("OnClick", function()
-			if WM.MoveMode.IsActive() then
+			-- CursorForeign: an un-adopted Blizzard-loaded cursor (bank
+			-- withdraw) drops/equips here too; DropOnInventory adopts it.
+			if WM.MoveMode.IsActive() or WM.MoveMode.CursorForeign() then
 				WM.MoveMode.DropOnInventory(this.slotID)
 			elseif arg1 == "RightButton" then
 				WM.MoveMode.BeginFromInventory(this.slotID)

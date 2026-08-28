@@ -63,7 +63,11 @@ local function CreateCell(bag, slot)
 	-- drop on this cell (place / swap / merge).
 	cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	cell:SetScript("OnClick", function()
-		if WM.MoveMode.IsActive() then
+		-- CursorForeign: a Blizzard-loaded cursor (bank withdraw) not yet
+		-- adopted must still take the drop path — the non-carry branch's
+		-- UseContainerItem would DEPOSIT this cell's item while the bank is
+		-- open. DropOnBag adopts it before placing.
+		if WM.MoveMode.IsActive() or WM.MoveMode.CursorForeign() then
 			WM.MoveMode.DropOnBag(this.bag, this.slot)
 		elseif arg1 == "RightButton" then
 			WM.MoveMode.BeginFromBag(this.bag, this.slot)

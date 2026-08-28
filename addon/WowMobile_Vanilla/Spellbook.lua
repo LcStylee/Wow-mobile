@@ -47,7 +47,10 @@ local function GetCell(i)
 	-- The spellbook takes no drops, so a tap while carrying cancels.
 	cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	cell:SetScript("OnClick", function()
-		if WM.MoveMode.IsActive() then
+		-- CursorForeign: an un-adopted Blizzard-loaded cursor cancels here
+		-- like any carry would (Cancel's ClearCursor returns the item home)
+		-- instead of casting under a loaded cursor.
+		if WM.MoveMode.IsActive() or WM.MoveMode.CursorForeign() then
 			WM.MoveMode.Cancel()
 		elseif arg1 == "RightButton" then
 			if this.bookSlot and not this.passive then

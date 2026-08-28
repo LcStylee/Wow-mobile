@@ -51,13 +51,20 @@
 -- Drop targets: bag cells (Bags.lua), character slots (CharacterPanel.lua,
 -- equip-location filtered), action buttons (ActionBars.lua / QuickBar.lua),
 -- and — while the bank is open — the boosted Blizzard BankFrame item buttons.
--- Those stay Blizzard-driven in BOTH directions: deposit taps their OnClick
--- to place the carried item (MoveMode only paints its highlight and lets the
--- item reconcile fold the carry bar), and withdraw taps their OnClick to
--- Pickup the bank item — which the reconcile then ADOPTS as a carry (see
--- above), so it can be dropped on any addon bag/character/action target or
--- Canceled. The purchasable bank BAG slots are left alone (equipping bags is
--- a rare flow; Blizzard's buttons work).
+-- Those stay Blizzard-driven in BOTH directions, with a thin OnClick wrap
+-- (WrapBankButton below) that reconciles IMMEDIATELY after Blizzard's click:
+--   * deposit into an EMPTY bank slot: cursor empties, the wrap folds the
+--     carry bar;
+--   * deposit onto an OCCUPIED bank slot: Blizzard's click SWAPS — the
+--     carried item lands in the bank and the displaced bank item rides the
+--     cursor, so CursorHasItem() stays true and a fold would never fire. The
+--     wrap detects this (carry active + cursor still loaded) and DEGRADES the
+--     payload to a generic no-origin "Held item", because the old icon/name/
+--     invType now describe the deposited item, not what the cursor holds;
+--   * withdraw with no carry active: Blizzard's click Pickups the bank item
+--     and the wrap adopts it on the spot (no event latency).
+-- The purchasable bank BAG slots are left alone (equipping bags is a rare
+-- flow; Blizzard's buttons work).
 --
 -- Stack split: long-pressing a stack (count > 1) opens a quantity stepper
 -- sheet FIRST ("Take how many?"); confirming runs SplitContainerItem for
@@ -213,6 +220,16 @@ function Move.IsActive()
 	return payload ~= nil
 end
 
+-- True when a tap should take the DROP path even though no payload is
+-- tracked yet: Blizzard-side code loaded the cursor (mainline: a bank
+-- withdraw) and the adopting reconcile hasn't run for it yet. Cell tap
+-- handlers use IsActive() OR this, so a foreign cursor is never mistaken
+-- for "no carry" (which would UseContainerItem = DEPOSIT with the bank
+-- open, or UseAction, instead of placing).
+function Move.CursorForeign()
+	return payload == nil and CursorHasItem()
+end
+
 local function SetBarItem(icon, name, quality, countText)
 	bar.icon:SetTexture(icon or WM.TEX_QUESTION)
 	bar.name:SetText(name or "")
@@ -250,6 +267,22 @@ function Move.Cancel()
 	-- default UI's drag-off-the-bar removal.
 	ClearCursor()
 	EndCarry()
+end
+
+-- Reverse reconciliation (see header): a cursor loaded by Blizzard-side code
+-- while NO carry is active is adopted as a generic no-origin "Held item"
+-- carry — the carry bar, highlights, drop handlers and Cancel all engage.
+-- 1.12 has no GetCursorInfo, so the identity is honestly unknown (question-
+-- mark icon, generic name); the item itself still places/swaps correctly
+-- because every drop goes through the real Pickup* APIs. Returns true when a
+-- payload is active afterwards (false only pre-init, when the bar doesn't
+-- exist yet and Move.Begin no-ops).
+local function AdoptForeignCursor()
+	if payload then return true end
+	if not CursorHasItem() then return false end
+	Move.Begin({ kind = "container", icon = WM.TEX_QUESTION,
+		name = "Held item" })
+	return payload ~= nil
 end
 
 --------------------------------------------------------------------------------
@@ -321,7 +354,9 @@ end
 --------------------------------------------------------------------------------
 
 function Move.DropOnBag(bag, slot)
-	if not payload then return end
+	-- Adopt a Blizzard-loaded cursor first (belt-and-braces: the cell tap
+	-- handlers route here on Move.CursorForeign() before any reconcile ran).
+	if not AdoptForeignCursor() then return end
 	if not IsItemPayload() then
 		Move.Cancel() -- spells/actions can't enter bags: invalid tap cancels
 		return
@@ -367,7 +402,7 @@ function Move.DropOnBag(bag, slot)
 end
 
 function Move.DropOnInventory(invSlot)
-	if not payload then return end
+	if not AdoptForeignCursor() then return end
 	if not IsItemPayload() then
 		Move.Cancel()
 		return
@@ -381,22 +416,28 @@ function Move.DropOnInventory(invSlot)
 	PickupInventoryItem(invSlot)
 	if not CursorHasItem() then
 		EndCarry() -- equipped clean
-	elseif GetInventoryItemTexture("player", invSlot) ~= dTexture then
-		-- Swap: the displaced equipped item rides the cursor now.
+	elseif GetInventoryItemLink("player", invSlot) ~= dLink then
+		-- Swap: the displaced equipped item rides the cursor now. Compared by
+		-- LINK, not texture — two different items sharing one icon (same-model
+		-- weapons/rings) are still distinguished. Only a swap of two items
+		-- with the IDENTICAL link is misread as a refusal below; the end
+		-- state is the same item in the slot either way, so the misread is
+		-- harmless.
 		local quality, invType = LinkItemData(dLink)
 		Move.Begin({ kind = "inventory", icon = dTexture,
 			name = LinkName(dLink) or "Item", count = 1,
 			quality = quality, invType = invType })
 	else
-		-- The client refused the equip (wrong slot type etc. — the UI error
-		-- already fired): treat as an invalid drop; ClearCursor sends the
-		-- item back home.
+		-- Slot unchanged: the client refused the equip (wrong slot type
+		-- etc. — the UI error fired) or the identical-link swap above.
+		-- Treat as an invalid drop; ClearCursor sends the item back home.
 		Move.Cancel()
 	end
 end
 
 function Move.DropOnAction(slot)
-	if not payload then return end
+	-- Foreign item cursors adopt too: PlaceAction happily takes an item.
+	if not AdoptForeignCursor() then return end
 	if IsItemPayload() and not CursorHasItem() then
 		EndCarry()
 		return
@@ -406,7 +447,8 @@ function Move.DropOnAction(slot)
 	local dText = hadAction and GetActionText(slot)
 	PlaceAction(slot)
 	if hadAction then
-		if payload.icon and payload.icon ~= dIcon
+		if payload.icon and payload.icon ~= WM.TEX_QUESTION
+				and payload.icon ~= dIcon
 				and GetActionTexture(slot) == dIcon then
 			-- The slot's icon did not change even though our payload's icon
 			-- differs: PlaceAction no-opped, i.e. the cursor was actually
@@ -414,6 +456,14 @@ function Move.DropOnAction(slot)
 			-- no cursor query for those, see header). Fold the stale carry
 			-- instead of inventing a phantom "displaced action" payload.
 			-- A same-icon pair is indistinguishable and treated as a swap.
+			-- Adopted/degraded payloads (icon == TEX_QUESTION placeholder,
+			-- never the item's real icon) BYPASS this heuristic entirely:
+			-- comparing the placeholder against dIcon says nothing, and the
+			-- adoption path already verified CursorHasItem() (and the
+			-- empty-cursor early-out above folded any cleared carry), so
+			-- PlaceAction genuinely swapped — err toward the visible,
+			-- cancelable "Previous action" carry below rather than silently
+			-- discarding the displaced action on an invisible cursor.
 			EndCarry()
 			return
 		end
@@ -433,7 +483,15 @@ end
 --------------------------------------------------------------------------------
 
 local function Reconcile()
-	if not payload then return end
+	if not payload then
+		-- REVERSE direction (see header): no carry active but the cursor is
+		-- loaded — Blizzard-side code picked an item up (mainline: tapping a
+		-- boosted BankFrame item runs BankFrameItemButtonGeneric_OnClick ->
+		-- PickupContainerItem(BANK_CONTAINER, slot)). Adopt it as a generic
+		-- Held-item carry so the bar, highlights and Cancel all engage.
+		AdoptForeignCursor()
+		return
+	end
 	if IsItemPayload() and not CursorHasItem() then
 		-- Placed or cleared by a Blizzard-driven surface (boosted BankFrame,
 		-- trade window, Esc): fold the carry UI without touching the cursor.
@@ -477,7 +535,20 @@ local function ConfirmSplit(n)
 	local p = splitPending
 	if not p then return end
 	CloseSplit()
-	if n >= p.count then
+	-- Revalidate against the live bag: the stepper holds no lock, so between
+	-- opening it and pressing Take the slot's contents can change (stack
+	-- consumed by a macro, bag reshuffle on BAG_UPDATE, item sold or locked by
+	-- a transaction). Picking up blind would lift whatever occupies the slot
+	-- NOW while the carry bar still shows the stepper's stale icon/name. Bail
+	-- when the slot no longer holds the same unlocked item (link-compared —
+	-- GetContainerItemLink exists on 1.12); clamp n to the live count.
+	local _, count, locked = GetContainerItemInfo(p.bag, p.slot)
+	if not count or count < 1 or locked
+			or GetContainerItemLink(p.bag, p.slot) ~= p.link then
+		return
+	end
+	if n > count then n = count end
+	if n >= count then
 		PickupContainerItem(p.bag, p.slot) -- whole stack: plain pickup
 	else
 		SplitContainerItem(p.bag, p.slot, n)
@@ -615,28 +686,59 @@ WM.OnInit(function()
 	splitCancel:SetScript("OnClick", function() EndCarry() end)
 
 	-- While the bank is open, the boosted Blizzard BankFrame's 24 item
-	-- buttons become highlighted drop targets. Their own OnClick performs the
-	-- placement (PickupContainerItem on BANK_CONTAINER); the item reconcile
-	-- below folds the carry bar afterwards.
+	-- buttons become highlighted drop targets. Their own OnClick performs
+	-- every placement/pickup (PickupContainerItem on BANK_CONTAINER); the
+	-- wrap reconciles right after it runs (see the bank note in the header):
+	-- fold on a clean placement, DEGRADE the payload to a generic Held item
+	-- whenever ANY carry is active and an item rides the cursor afterwards:
+	--   · item carry, occupied-slot tap: the tap swapped — the old identity
+	--     now describes the deposited item, not the cursor (also fires on a
+	--     refused/no-op tap, where losing the name/count text but keeping a
+	--     working carry is the conservative outcome);
+	--   · spell/action carry: Blizzard's click ran PickupContainerItem
+	--     regardless, loading the BANK item onto the cursor — a stale
+	--     spell/action label would invert every later drop tap into a
+	--     Cancel, so it degrades to a working item carry too. (If the click
+	--     was instead a no-op and the spell stayed held, CursorHasItem() is
+	--     false — item-only — and the carry stays accurate as-is.)
+	-- With no payload it falls through to Reconcile: fold, or ADOPT a fresh
+	-- withdraw.
+	local function WrapBankButton(b)
+		local orig = b:GetScript("OnClick")
+		b:SetScript("OnClick", function()
+			if orig then orig() end -- 1.12: `this` still set for the call
+			if payload and CursorHasItem() then
+				Move.Begin({ kind = "container", icon = WM.TEX_QUESTION,
+					name = "Held item" })
+			else
+				Reconcile() -- fold (cursor emptied) or adopt (withdraw)
+			end
+		end)
+	end
 	local bankTargetsMade = false
 	WM.On("BANKFRAME_OPENED", function()
 		if bankTargetsMade then return end
 		bankTargetsMade = true
 		for i = 1, 24 do
 			local b = getglobal("BankFrameItem" .. i)
-			if b then Move.MakeTarget(b, "bag") end
+			if b then
+				Move.MakeTarget(b, "bag")
+				WrapBankButton(b)
+			end
 		end
 	end)
 
-	-- Item-payload reconciliation (see header): CURSOR_UPDATE is TryOn'd —
-	-- it exists on 1.12 but nothing depends on it; the same reconcile also
-	-- rides ITEM_LOCK_CHANGED / BAG_UPDATE and a carry-gated coarse tick.
+	-- Item-payload reconciliation, BOTH directions (see header): fold a stale
+	-- carry when the cursor emptied Blizzard-side, ADOPT a foreign cursor
+	-- when Blizzard-side code loaded it with no carry active. CURSOR_UPDATE
+	-- is TryOn'd — it exists on 1.12 but nothing depends on it; the same
+	-- reconcile also rides ITEM_LOCK_CHANGED / BAG_UPDATE and a coarse tick
+	-- (UNgated, so adoption runs even with no payload; one CursorHasItem()
+	-- C-call per 0.5 s, no allocations).
 	WM.TryOn("CURSOR_UPDATE", Reconcile)
 	WM.On("ITEM_LOCK_CHANGED", Reconcile)
 	WM.On("BAG_UPDATE", Reconcile)
-	WM.Ticker(0.5, function()
-		if payload then Reconcile() end
-	end)
+	WM.Ticker(0.5, Reconcile)
 	-- Zoning clears the cursor wholesale; drop any carry/split state with it.
 	WM.On("PLAYER_ENTERING_WORLD", function()
 		if payload or splitPending then EndCarry() end

@@ -63,7 +63,7 @@ WM.OnInit(function()
 	-- default frame would end the loot session — with its events unregistered
 	-- it simply never opens and that OnHide can never fire mid-loot.
 	-- LootSheet.lua takes over the flows the frame drove (auto-loot pass,
-	-- LOOT_BIND_CONFIRM popup).
+	-- LOOT_BIND_CONFIRM popup, master-looter assignment picker).
 	WM.BanishFrame(LootFrame)
 	-- Group-loot roll popups are replaced by RollFrames.lua. The container
 	-- keeps its events (UIParent-side code may still route rolls into it);

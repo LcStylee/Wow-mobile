@@ -73,11 +73,23 @@ WM.OnInit(function()
 	-- banish matters doubly here — LootFrame's OnHide handler calls
 	-- CloseLoot(), so a merely-hidden LootFrame that Blizzard code Show()s
 	-- and re-Hide()s would kill the loot session server-side; with its
-	-- events gone it never shows at all. (This frame previously went through
-	-- FitPanelToSquare below; the sheet replaces that boost.)
+	-- events gone it never shows at all. Unregistering also drops its
+	-- OPEN_MASTER_LOOT_LIST / UPDATE_MASTER_LOOT_LIST handling (the
+	-- GroupLootDropDown) — LootSheet.lua re-implements master-loot
+	-- assignment with its own touch candidate picker. (This frame previously
+	-- went through FitPanelToSquare below; the sheet replaces that boost.)
 	WM.BanishFrame(LootFrame)
-	-- Group need/greed rolls: RollFrames.lua replaces GroupLootFrame1..4
-	-- (each registers START_LOOT_ROLL/CANCEL_LOOT_ROLL in its own OnLoad).
+	-- Group need/greed rolls: RollFrames.lua replaces GroupLootFrame1..4.
+	-- On the 1.12 client the frames themselves only register CANCEL_LOOT_ROLL
+	-- in GroupLootFrame_OnLoad; START_LOOT_ROLL is registered and handled by
+	-- UIParent.lua, whose handler calls GroupLootFrame_OpenNewFrame(arg1,
+	-- arg2) directly — so the banish's UnregisterAllEvents alone would not
+	-- stop new rolls from being driven into the (hidden) frames. Unregister
+	-- START_LOOT_ROLL on UIParent too (safe: RollFrames.lua listens on the
+	-- addon dispatcher, and nothing else in 1.12 UIParent_OnEvent keys off
+	-- it); the reparent under WM.Hider then keeps the frames invisible even
+	-- if some other code Show()s them.
+	UIParent:UnregisterEvent("START_LOOT_ROLL")
 	for i = 1, NUM_GROUP_LOOT_FRAMES or 4 do
 		WM.BanishFrame(getglobal("GroupLootFrame" .. i))
 	end

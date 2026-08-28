@@ -17,16 +17,21 @@
 -- Blizzard code is adopted into the same carry bar so it always has a visible
 -- Cancel. ALL move mutations are out-of-combat: Begin() in combat shows a
 -- notice and does nothing, and entering combat cancels the carry outright —
--- no silent queueing of item moves, by design.
+-- no silent queueing of item moves, by design. (The one queued mutation is
+-- the PlaceAction that RESTORES an action-origin carry to its home slot once
+-- combat ends — a rollback of the pickup, never a new placement.)
 --
 -- Integration contract (Bags / Spellbook / ActionBars / CharacterPanel):
 --   AttachSecureSource(btn, getPayload) — right-click enters move mode; the
 --       button's "type2" becomes a secure no-op so the right-click never also
 --       fires the secure action (surfaces whose right-click already meant
 --       something, e.g. the pet strip's togglemenu, simply don't attach).
---   SecureDrop(btn, accepts, place) — tap while carrying places (or cancels,
---       when the payload doesn't fit), swallowing the button's secure action
---       for exactly that click: PreClick nils "type", PostClick restores it.
+--   SecureDrop(btn, accepts, place, isActionTarget) — tap while carrying
+--       places (or cancels, when the payload doesn't fit), swallowing the
+--       button's secure action for exactly that click: PreClick nils "type",
+--       PostClick restores it. PlaceAction targets (the action bars) pass
+--       isActionTarget = true so a payload their placement displaces gets
+--       action-origin cancel handling (carryIsAction / PlaceAction restore).
 --       Legal and taint-free — attribute writes from addon code are how every
 --       secure button here is configured — because move mode guarantees the
 --       write happens out of combat.
@@ -69,6 +74,14 @@ local carryCount        -- known quantity on the cursor (split/full-stack pickup
 local carryHomeAction   -- action slot Begin() lifted the carried action from
                         -- (that slot is empty while the carry lives); nil for
                         -- non-action carries and Blizzard-adopted ones
+local carryIsAction     -- true while the cursor payload came OFF an action
+                        -- slot (Begin kind=="action", or a payload PlaceAction
+                        -- displaced from an occupied slot). Tracked as addon
+                        -- state because the cursor can't tell us: GetCursorInfo()
+                        -- never reports an "action" kind — after PickupAction
+                        -- the cursor carries the underlying payload kind
+                        -- ("spell"/"item"/"macro"/"petaction"), the same kinds
+                        -- Blizzard's own ActionButton code branches on.
 local lastCursorKey     -- "type:id" of the last rendered cursor payload
 local pendingSplit      -- { bag, slot, count, n } while the stepper is up
 local ticker            -- reconcile fallback, alive only while carrying
@@ -168,7 +181,7 @@ end
 
 local function EndCarry()
 	active = false
-	carryCount, lastCursorKey, carryHomeAction = nil, nil, nil
+	carryCount, lastCursorKey, carryHomeAction, carryIsAction = nil, nil, nil, nil
 	if ticker then
 		ticker:Cancel()
 		ticker = nil
@@ -212,54 +225,87 @@ local function NotifySplitToggle()
 	if MoveMode.onSplitToggle then MoveMode.onSplitToggle() end
 end
 
+local OnCursorChanged -- defined under "Cursor reconciliation" below
+
 local function HideSplit()
+	local wasOpen = pendingSplit ~= nil
 	pendingSplit = nil
 	if splitSheet and splitSheet:IsShown() then
 		splitSheet:Hide()
 		NotifySplitToggle()
 	end
+	-- Adoption is suppressed while the stepper is up (OnCursorChanged bails on
+	-- pendingSplit): a pickup made through some other surface meanwhile — a
+	-- boosted Blizzard frame's bank/mail slot, say — left a full cursor with
+	-- no carry bar and no Cancel. Re-run adoption now so it gets both.
+	if wasOpen and not active and GetCursorInfo() then
+		OnCursorChanged()
+	end
 end
 
--- On this engine ClearCursor() on an "action" payload DESTROYS the action —
--- it is the client's drag-off-the-bar removal gesture, and PickupAction()
--- already emptied the source slot. Cancelling a carried action must therefore
--- PlaceAction it back into its home slot, never bare-ClearCursor it.
--- `home` may be nil (adopted carry): GetCursorInfo() for an "action" payload
--- returns the slot it was picked up from as its first data value (10.x cursor
--- API, which Era 1.15 runs), so that serves as the fallback.
-local function RestoreOrDiscardAction(home)
-	local t, cursorSlot = GetCursorInfo()
-	if t ~= "action" then return end -- resolved some other way meanwhile
-	home = home or cursorSlot
+-- The cancel asymmetry that makes action-origin carries special: ClearCursor()
+-- on a bag-item pickup returns the item to its bag slot and on a spellbook
+-- pickup just drops the spell (it never left the book) — but PickupAction()
+-- already EMPTIED the source action slot, so ClearCursor() on an action-origin
+-- payload permanently vacates that bar slot (the drag-off-the-bar removal
+-- gesture). Cancelling one must therefore PlaceAction the payload back into
+-- its home slot. Since the cursor kind alone can't identify these carries
+-- (see carryIsAction above), callers pass the tracked home slot in.
+local PLACEABLE = { spell = true, item = true, macro = true, petaction = true }
+
+-- `key` is the cursor identity ("type:id", same key SecureDrop compares)
+-- captured when the restore was decided on. The combat-queued path can run
+-- SECONDS after Cancel: if Blizzard-side code (macro frame drag, a boosted
+-- default frame) replaced the cursor payload mid-combat, the original
+-- action-origin payload is already gone — and PlaceAction here would slam
+-- the unrelated new payload into the old home slot. Bail on a mismatch and
+-- leave the foreign payload alone; the PLAYER_REGEN_ENABLED adoption gives
+-- it a carry bar of its own.
+local function RestoreOrDiscardAction(home, key)
+	local t, a = GetCursorInfo()
+	if not t then return end -- resolved some other way meanwhile
+	if key and (t .. ":" .. tostring(a)) ~= key then return end
+	if not PLACEABLE[t] then
+		ClearCursor() -- can't live in an action slot; plain drop is all there is
+		return
+	end
 	if home and not HasAction(home) then
-		-- The home slot is still empty: put the carried action back. (After a
-		-- swap this is the DISPLACED action landing in the original's old
-		-- slot — completing the swap instead of destroying the displaced one.)
+		-- The home slot is still empty: put the payload back. (After a swap
+		-- this is the DISPLACED action landing in the original's vacated
+		-- slot — completing the swap instead of stranding the displaced one.)
 		PlaceAction(home)
 	else
-		-- No empty home slot (the payload is a displaced action whose slot now
-		-- holds what we placed there): nowhere safe to restore to. Discard —
-		-- loudly — matching the default UI's drag-off-the-bar removal.
-		UIErrorsFrame:AddMessage("No empty home slot - action removed from the bar.", 1, 0.3, 0.3)
+		-- No empty home slot (adopted/displaced payload with no known origin,
+		-- or the home got refilled meanwhile): nowhere safe to restore to.
+		-- Discard — loudly — matching the default UI's drag-off-the-bar
+		-- removal. Only the bar placement is lost; the spell/macro itself
+		-- still exists in the spellbook / macro list.
+		UIErrorsFrame:AddMessage("No free home slot - removed from the action bar.", 1, 0.3, 0.3)
 		ClearCursor()
 	end
 end
 
 function MoveMode.Cancel()
 	HideSplit()
-	local t = GetCursorInfo()
-	local home = carryHomeAction -- EndCarry clears it; capture first
+	local t, a = GetCursorInfo()
+	-- EndCarry clears the carry bookkeeping; capture first.
+	local home, isAction = carryHomeAction, carryIsAction
+	local key = t and (t .. ":" .. tostring(a)) or nil -- payload identity at
+	                 -- Cancel time, for the (possibly deferred) restore below
 	EndCarry() -- flip state first: the cursor calls below re-enter via CURSOR_CHANGED
-	if t == "action" then
+	if t == nil then return end
+	if isAction then
 		if InCombatLockdown() then
-			-- PlaceAction is lockdown-blocked and ClearCursor would destroy
-			-- the action: fold the UI now, leave the payload on the Blizzard
-			-- cursor, and restore it the moment combat ends.
+			-- PlaceAction is lockdown-blocked and ClearCursor would strip the
+			-- payload off the bar for good: fold the UI now, leave the payload
+			-- on the Blizzard cursor, and restore it the moment combat ends.
+			-- The key makes the deferred restore a no-op if the cursor payload
+			-- was replaced meanwhile (see RestoreOrDiscardAction).
 			WM.OutOfCombat("movemode-restore-action", function()
-				RestoreOrDiscardAction(home)
+				RestoreOrDiscardAction(home, key)
 			end)
 		else
-			RestoreOrDiscardAction(home)
+			RestoreOrDiscardAction(home, key)
 		end
 		return
 	end
@@ -281,7 +327,7 @@ end
 
 local function OpenSplit(bag, slot, count)
 	local link = WM.Container.GetItemLink(bag, slot)
-	pendingSplit = { bag = bag, slot = slot, count = count, n = 1 }
+	pendingSplit = { bag = bag, slot = slot, count = count, n = 1, link = link }
 	splitNameText:SetText((link and link:match("%[(.-)%]")) or "Stack")
 	RefreshSplit()
 	splitSheet:Show()
@@ -296,14 +342,35 @@ local function TakeSplit(n)
 		CombatNotice()
 		return
 	end
-	if n >= p.count then
+	if GetCursorInfo() then
+		-- A pickup elsewhere filled the cursor while the stepper was open
+		-- (HideSplit above just adopted it into the carry bar): Pickup on the
+		-- stepper's slot now would swap that foreign payload into it. Drop
+		-- the split; the adopted carry is the live interaction.
+		return
+	end
+	-- Revalidate against the live bag: the stepper holds no lock, so between
+	-- opening it and pressing Take the stack can shrink, merge, move, lock
+	-- (mid-sale/mail transaction) or be sold. Bail when the slot no longer
+	-- holds the same unlocked item; clamp n to the count it holds now.
+	local _, count, locked = WM.Container.GetItemInfo(p.bag, p.slot)
+	if not count or count < 1 or locked
+			or WM.Container.GetItemLink(p.bag, p.slot) ~= p.link then
+		return
+	end
+	if n > count then n = count end
+	if n >= count then
 		WM.Container.Pickup(p.bag, p.slot) -- whole stack: plain pickup
-		carryCount = p.count
 	else
 		WM.Container.Split(p.bag, p.slot, n)
-		carryCount = n
 	end
-	if GetCursorInfo() then Activate() end
+	-- Set carryCount only once the cursor confirms the pickup landed — a
+	-- no-opped Pickup/Split must not leave a stale count behind for the next
+	-- carry's bar to render.
+	if GetCursorInfo() then
+		carryCount = n
+		Activate()
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -320,6 +387,15 @@ function MoveMode.Begin(payload)
 		return
 	end
 	HideSplit()
+	-- HideSplit's adoption path can Activate() a foreign cursor carry (a
+	-- Blizzard-side pickup made while the stepper was open). Beginning a NEW
+	-- pickup on top of that would misfire — e.g. a long-press on an equip
+	-- cell would PickupInventoryItem and EQUIP the foreign payload. The
+	-- adopted carry wins; the user's tap now targets it instead.
+	if active then return end
+	carryCount = nil -- no residue from a previous carry: every non-split entry
+	                 -- path starts countless (RefreshBarFromCursor only clears
+	                 -- it when it saw the previous payload render)
 	if payload.kind == "bag" then
 		local icon, count = WM.Container.GetItemInfo(payload.bag, payload.slot)
 		if not icon then return end -- empty slot: nothing to carry
@@ -328,7 +404,6 @@ function MoveMode.Begin(payload)
 			return
 		end
 		WM.Container.Pickup(payload.bag, payload.slot)
-		carryCount = nil
 	elseif payload.kind == "inv" then
 		if not GetInventoryItemLink("player", payload.slotID) then return end
 		PickupInventoryItem(payload.slotID)
@@ -337,7 +412,10 @@ function MoveMode.Begin(payload)
 	elseif payload.kind == "action" then
 		if not HasAction(payload.slot) then return end
 		PickupAction(payload.slot)
-		carryHomeAction = payload.slot -- Cancel restores here (see RestoreOrDiscardAction)
+		-- The cursor now reports the underlying spell/item/macro kind, not an
+		-- "action" kind — mark the carry ourselves so Cancel knows to
+		-- PlaceAction it back here instead of ClearCursor-ing it off the bar.
+		carryHomeAction, carryIsAction = payload.slot, true
 	end
 	if GetCursorInfo() then Activate() end
 end
@@ -367,7 +445,10 @@ end
 
 -- accepts == nil marks a surface that is never a drop target (spellbook):
 -- tapping it while carrying just cancels, so the swallowed click can't cast.
-function MoveMode.SecureDrop(button, accepts, place)
+-- isActionTarget marks drop surfaces whose `place` is PlaceAction (the action
+-- bars): a payload their placement displaces onto the cursor came OFF an
+-- action slot and needs the action-origin cancel handling (carryIsAction).
+function MoveMode.SecureDrop(button, accepts, place, isActionTarget)
 	button:SetScript("PreClick", function(self)
 		if not active then return end
 		if InCombatLockdown() then
@@ -384,9 +465,24 @@ function MoveMode.SecureDrop(button, accepts, place)
 		self:SetAttribute("type", nil) -- swallow the secure action for this click only
 		local t, a, b, c = GetCursorInfo()
 		if t and accepts and accepts(t, a, b, c) then
+			local prevKey = t .. ":" .. tostring(a)
+			local wasAction, home = carryIsAction, carryHomeAction
 			place(self)
 			carryCount = nil -- whatever rides the cursor now (a swap's displaced
 			                 -- payload, possibly the same itemID) has an unknown count
+			-- Displacement bookkeeping: a different payload on the cursor after
+			-- the place is what the target slot held. Off an action slot it is
+			-- action-origin — and when the carry that just landed was itself an
+			-- action, its vacated home slot is where a Cancel should complete
+			-- the swap; otherwise (spell straight from the book onto an
+			-- occupied slot) there is no empty home and Cancel falls back to
+			-- the loud discard. Off anything else (bag/equip swaps) ClearCursor
+			-- returns the displaced item on its own, so the flags drop.
+			local nt, na = GetCursorInfo()
+			if nt and (nt .. ":" .. tostring(na)) ~= prevKey then
+				carryIsAction = isActionTarget and true or nil
+				carryHomeAction = (isActionTarget and wasAction) and home or nil
+			end
 			Reconcile()
 		else
 			MoveMode.Cancel()
@@ -408,6 +504,17 @@ function MoveMode.DropOnInventory(slotID)
 	if MoveMode.AcceptsEquippable(t, a, b) then
 		PickupInventoryItem(slotID) -- equips/swaps; wrong slot → Blizzard error, cursor keeps item
 		carryCount = nil -- a displaced equipped item has no stack count
+		-- When the equip went through and displaced the slot's old item (the
+		-- cursor payload changed), what rides the cursor now is that displaced
+		-- equipped item: plain ClearCursor handles it, so the action-origin
+		-- flags must not survive even if the equipped payload was an item
+		-- lifted off the bar (a Cancel would otherwise PlaceAction the
+		-- displaced gear onto the action bar). On a wrong-slot tap the cursor
+		-- keeps the original payload and the flags stay valid.
+		local nt, na = GetCursorInfo()
+		if nt and (nt .. ":" .. tostring(na)) ~= (t .. ":" .. tostring(a)) then
+			carryIsAction, carryHomeAction = nil, nil
+		end
 		Reconcile()
 	else
 		MoveMode.Cancel()
@@ -418,12 +525,12 @@ end
 -- Cursor reconciliation + adoption
 --------------------------------------------------------------------------------
 
-local function OnCursorChanged()
+function OnCursorChanged() -- assigns the forward-declared local (split section)
 	if active then
 		Reconcile()
 		return
 	end
-	if pendingSplit then return end -- stepper up: nothing on the cursor yet
+	if pendingSplit then return end -- stepper up: adopted when it closes (HideSplit)
 	-- Never adopt in combat: the drop machinery (SecureDrop attribute writes)
 	-- is dead under lockdown, so a carry UI would advertise placements it
 	-- cannot service. The PLAYER_REGEN_ENABLED handler below adopts whatever
@@ -431,7 +538,11 @@ local function OnCursorChanged()
 	if InCombatLockdown() then return end
 	-- A Blizzard-side pickup (macro frame, a boosted default frame's drag)
 	-- filled the cursor without us: adopt it so the user always has a carry
-	-- bar with a Cancel, and so drop targets light up for it too.
+	-- bar with a Cancel, and so drop targets light up for it too. Known limit:
+	-- if Blizzard-side code lifted the payload off an ACTION slot, nothing
+	-- observable marks it action-origin (the cursor kind is just spell/item/
+	-- macro), so carryIsAction stays unset and Cancel ClearCursors — the same
+	-- outcome the default UI gives that drag when dropped onto the world.
 	local t = GetCursorInfo()
 	if t == "item" or t == "spell" or t == "macro" or t == "money" then
 		Activate()
@@ -451,9 +562,10 @@ WM.OnInit(function()
 	WM.SkinFrame(carryBar, WM.Colors.panel, WM.Colors.accent)
 	carryBar:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	-- The whole bar cancels; the X is the visible affordance for it. Cancel
-	-- returns items/spells to their source and PlaceAction-restores a carried
-	-- action to its home slot (see MoveMode.Cancel — a bare ClearCursor would
-	-- destroy an action payload on this engine).
+	-- returns items/spells to their source and PlaceAction-restores an
+	-- action-origin carry to its tracked home slot (see MoveMode.Cancel — the
+	-- cursor reports such a carry as plain spell/item/macro, and a bare
+	-- ClearCursor would leave its bar slot permanently empty).
 	carryBar:SetScript("OnClick", function() MoveMode.Cancel() end)
 	carryBar:Hide()
 
@@ -546,8 +658,9 @@ end)
 -- Events
 --------------------------------------------------------------------------------
 
--- CURSOR_CHANGED is the 8.0+/10.x event (Era 1.15 runs the 10.x engine);
--- CURSOR_UPDATE is the older spelling — register whichever exists.
+-- CURSOR_CHANGED is the 10.0.2+ spelling (the rename of CURSOR_UPDATE; Era
+-- 1.15 runs the 10.x engine); CURSOR_UPDATE is the pre-10.0 name — register
+-- whichever of the two this build knows.
 WM.TryOn("CURSOR_CHANGED", OnCursorChanged)
 WM.TryOn("CURSOR_UPDATE", OnCursorChanged)
 
@@ -559,9 +672,10 @@ end)
 WM.On("PLAYER_REGEN_DISABLED", function()
 	if pendingSplit then HideSplit() end
 	if active then
-		-- Cancel folds the UI; for an action payload it does NOT ClearCursor
-		-- (that would destroy the action) — it queues the PlaceAction restore
-		-- through WM.OutOfCombat for the moment combat ends.
+		-- Cancel folds the UI; for an action-origin carry it does NOT
+		-- ClearCursor (that would leave the picked-up slot empty for good) —
+		-- it queues the PlaceAction restore through WM.OutOfCombat for the
+		-- moment combat ends.
 		MoveMode.Cancel()
 		CombatNotice()
 	end

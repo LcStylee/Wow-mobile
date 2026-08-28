@@ -166,7 +166,9 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx, pageable)
 	b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	b:SetScript("OnClick", function()
 		local slot = GetSlot(this)
-		if WM.MoveMode.IsActive() then
+		-- CursorForeign: an un-adopted Blizzard-loaded cursor (bank withdraw)
+		-- must place, not UseAction; DropOnAction adopts it first.
+		if WM.MoveMode.IsActive() or WM.MoveMode.CursorForeign() then
 			WM.MoveMode.DropOnAction(slot)
 		elseif arg1 == "RightButton" then
 			WM.MoveMode.BeginFromAction(slot)

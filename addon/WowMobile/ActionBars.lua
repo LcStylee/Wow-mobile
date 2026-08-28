@@ -178,10 +178,13 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx)
 	-- (the attribute write is out-of-combat by MoveMode's contract — see
 	-- MoveMode.lua); otherwise the normal secure click runs untouched.
 	-- GetSlot follows the page driver's "action" rewrites, so the drop lands
-	-- on the page currently shown.
+	-- on the page currently shown. The `true` marks this as a PlaceAction
+	-- target: a payload the placement displaces onto the cursor came off an
+	-- action slot, and MoveMode's cancel must PlaceAction-restore it instead
+	-- of ClearCursor-ing its bar placement away.
 	WM.MoveMode.SecureDrop(b, WM.MoveMode.AcceptsActionPayload, function(self)
 		PlaceAction(GetSlot(self))
-	end)
+	end, true)
 	WM.MoveMode.RegisterTarget(b, WM.MoveMode.AcceptsActionPayload)
 
 	-- Fires when the secure page handler rewrites "action" (also mid-combat;

@@ -247,7 +247,7 @@ WM.OnInit(function()
 		-- a dead modal whose accept confirms an expired rollID — kill it.
 		-- multiple=1 means several instances can be up; walk the frames and
 		-- hide only the one(s) carrying this rollID.
-		for i = 1, STATICPOPUP_NUMBER_DIALOGS or 4 do
+		for i = 1, STATICPOPUP_NUMDIALOGS or 4 do
 			local popup = _G["StaticPopup" .. i]
 			if popup and popup:IsShown()
 					and popup.which == "WOWMOBILE_CONFIRM_LOOT_ROLL"
