@@ -1,0 +1,41 @@
+## Interface: 11200
+# ^ WoW vanilla 1.12 client (Lua 5.0). This is the vanilla port of the addon;
+#   the Classic Era 1.15 variant lives in addon/WowMobile.
+## Title: WoW Mobile (Vanilla)
+## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone (1080x1920 window, 1080x1080 world viewport + control deck).
+## Author: WoW Mobile project
+## Version: 1.0.0
+## SavedVariables: WowMobileDB
+
+# Load order is the dependency order: Core provides the namespace/bus/timers,
+# Config the saved variables, Blizzard the default-UI banishment, Viewport the
+# world square and deck rect, Deck the panel/scroller/menu infrastructure.
+# Bar and HUD modules then stack bottom-up inside the deck (each anchors to
+# the frame the previous module published in WM.Layout; Pet also anchors its
+# status strip to the unit row UnitFrames publishes), and the panel modules
+# only depend on Deck. WorldMap reflows Blizzard's map over the deck; Talents
+# reflows the FrameXML TalentFrame into the world square. Settings loads last
+# because its panel drives Config + Viewport. (No Compat.lua in this port:
+# the 1.12 API is called directly.)
+Core.lua
+Config.lua
+Blizzard.lua
+Viewport.lua
+Deck.lua
+ActionBars.lua
+QuickBar.lua
+XPBar.lua
+UnitFrames.lua
+CastBar.lua
+Auras.lua
+Pet.lua
+Minimap.lua
+Chat.lua
+BottomSheet.lua
+Spellbook.lua
+CharacterPanel.lua
+QuestLog.lua
+Bags.lua
+WorldMap.lua
+Talents.lua
+Settings.lua
