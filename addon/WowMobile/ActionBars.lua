@@ -13,7 +13,9 @@
 -- cooldown-remaining text and the range re-check, both C_Timer tickers.
 --
 -- Exposes WM.ActionBars.CreateButton for QuickBar.lua so all action buttons
--- share one visual/update pipeline.
+-- share one visual/update pipeline — including MoveMode (long-press = pick
+-- the action up, tap while carrying = PlaceAction; see MoveMode.lua), which
+-- the quick bar therefore inherits for free.
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -161,7 +163,26 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx)
 		WM.RegisterSecureClicks(b) -- CVar-selected click edge, see Core.lua
 		b:SetAttribute("type", "action")
 		b:SetAttribute("action", slot)
+		-- MoveMode source: long-press lifts the slot's action onto the cursor
+		-- (PickupAction); inside the queue because it writes "type2".
+		WM.MoveMode.AttachSecureSource(b, function(self)
+			local cur = GetSlot(self)
+			if not cur or not HasAction(cur) then return nil end
+			return { kind = "action", slot = cur }
+		end)
 	end)
+
+	-- MoveMode target: while a placeable payload (item/spell/macro) is
+	-- carried, a tap places it via PlaceAction. PreClick sees GetCursorInfo()
+	-- non-empty, places, and swallows the secure click for exactly that tap
+	-- (the attribute write is out-of-combat by MoveMode's contract — see
+	-- MoveMode.lua); otherwise the normal secure click runs untouched.
+	-- GetSlot follows the page driver's "action" rewrites, so the drop lands
+	-- on the page currently shown.
+	WM.MoveMode.SecureDrop(b, WM.MoveMode.AcceptsActionPayload, function(self)
+		PlaceAction(GetSlot(self))
+	end)
+	WM.MoveMode.RegisterTarget(b, WM.MoveMode.AcceptsActionPayload)
 
 	-- Fires when the secure page handler rewrites "action" (also mid-combat;
 	-- visual updates from insecure code are fine).

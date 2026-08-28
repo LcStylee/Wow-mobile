@@ -8,6 +8,7 @@
 --                     GetContainerItemLink, UseContainerItem & co.
 --   WM.GetAura      – UnitAura/UnitBuff positional API  vs  C_UnitAuras aura data tables
 --   WM.CastingInfo / WM.ChannelInfo – UnitCastingInfo   vs  player-only CastingInfo
+--   WM.PickupSpellBookSlot – PickupSpellBookItem        vs  PickupSpell(spellID)
 -- Detection is done once at load; each wrapper is a plain closure with no
 -- per-call branching.
 --------------------------------------------------------------------------------
@@ -169,6 +170,12 @@ if C_Container and C_Container.GetContainerNumSlots then
 	-- relies on this). Hardware-event gated, so only call from click handlers.
 	Container.UseItem = function(bag, slot) C_Container.UseContainerItem(bag, slot) end
 	Container.BagInventoryID = function(bag) return C_Container.ContainerIDToInventoryID(bag) end
+	-- Cursor carry (MoveMode.lua): Pickup lifts the slot's item onto the
+	-- cursor — or, with something already held, places/swaps it into the slot
+	-- (the one call does both, Blizzard's own container-button semantics).
+	-- Split puts n of a stack on the cursor. Neither is protected.
+	Container.Pickup = function(bag, slot) C_Container.PickupContainerItem(bag, slot) end
+	Container.Split = function(bag, slot, n) C_Container.SplitContainerItem(bag, slot, n) end
 else
 	Container.GetNumSlots = function(bag) return GetContainerNumSlots(bag) or 0 end
 	Container.GetFreeSlots = function(bag) return (GetContainerNumFreeSlots(bag)) or 0 end
@@ -180,6 +187,30 @@ else
 	Container.GetItemLink = function(bag, slot) return GetContainerItemLink(bag, slot) end
 	Container.UseItem = function(bag, slot) UseContainerItem(bag, slot) end
 	Container.BagInventoryID = function(bag) return ContainerIDToInventoryID(bag) end
+	Container.Pickup = function(bag, slot) PickupContainerItem(bag, slot) end
+	Container.Split = function(bag, slot, n) SplitContainerItem(bag, slot, n) end
+end
+
+--------------------------------------------------------------------------------
+-- Spellbook pickup (MoveMode.lua)
+-- Classic Era 1.15 ships PickupSpellBookItem(slot, bookType) — its own
+-- FrameXML SpellBookFrame drag handlers call it. Builds without it fall back
+-- to PickupSpell(spellID), resolving the ID through GetSpellBookItemInfo
+-- (second return on classic-lineage clients). Not protected, but only ever
+-- called out of combat by MoveMode.
+--------------------------------------------------------------------------------
+
+if PickupSpellBookItem then
+	WM.PickupSpellBookSlot = function(slot, bookType)
+		PickupSpellBookItem(slot, bookType)
+	end
+elseif PickupSpell then
+	WM.PickupSpellBookSlot = function(slot, bookType)
+		local _, id = GetSpellBookItemInfo(slot, bookType)
+		if id then PickupSpell(id) end
+	end
+else
+	WM.PickupSpellBookSlot = function() end
 end
 
 --------------------------------------------------------------------------------

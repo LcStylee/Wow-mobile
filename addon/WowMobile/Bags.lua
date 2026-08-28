@@ -7,7 +7,8 @@
 -- combat never needs an attribute write; tap = use/equip (the same semantics
 -- as /use bag slot), tooltip via the injected hover. Structural changes (a
 -- bag swapped for a different size) rebuild through the combat queue because
--- new cells mean new secure frames.
+-- new cells mean new secure frames. Long-press (right-click) on a cell enters
+-- MoveMode (pickup/place/swap, stack split); see MoveMode.lua.
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -56,6 +57,17 @@ local function CreateCell(bag, slot)
 		tt:SetBagItem(bag, slot)
 	end)
 	cell.bag, cell.slot = bag, slot
+	-- MoveMode wiring (MoveMode.lua; this factory already runs out of combat):
+	-- long-press picks the slot's item up (stacks ask for a quantity first);
+	-- while carrying, the cell highlights and a tap places/swaps into it
+	-- instead of using the item.
+	WM.MoveMode.AttachSecureSource(cell, function(c)
+		return { kind = "bag", bag = c.bag, slot = c.slot }
+	end)
+	WM.MoveMode.SecureDrop(cell, WM.MoveMode.AcceptsItem, function(c)
+		WM.Container.Pickup(c.bag, c.slot)
+	end)
+	WM.MoveMode.RegisterTarget(cell, WM.MoveMode.AcceptsItem)
 	return cell
 end
 

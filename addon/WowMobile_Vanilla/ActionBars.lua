@@ -160,9 +160,21 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx, pageable)
 	b.checkedTex:SetTexture(1, 0.82, 0, 0.18)
 	b.checkedTex:Hide()
 
+	-- Tap = use (unchanged); long-press (client right click) = lift the
+	-- action for MoveMode; while a carry is active every tap drops onto this
+	-- slot (PlaceAction places/swaps spells, items and carried actions).
+	b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	b:SetScript("OnClick", function()
-		UseAction(GetSlot(this))
+		local slot = GetSlot(this)
+		if WM.MoveMode.IsActive() then
+			WM.MoveMode.DropOnAction(slot)
+		elseif arg1 == "RightButton" then
+			WM.MoveMode.BeginFromAction(slot)
+		else
+			UseAction(slot)
+		end
 	end)
+	WM.MoveMode.MakeTarget(b, "action")
 
 	WM.AttachTooltip(b, function(tt, self)
 		tt:SetAction(GetSlot(self))

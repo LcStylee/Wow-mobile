@@ -69,6 +69,19 @@ WM.OnInit(function()
 	-- TBC-era split), so it can be banished directly at init.
 	WM.BanishFrame(ClassTrainerFrame)
 
+	-- Loot: LootSheet.lua rebuilds looting in the deck. The unregister-events
+	-- banish matters doubly here — LootFrame's OnHide handler calls
+	-- CloseLoot(), so a merely-hidden LootFrame that Blizzard code Show()s
+	-- and re-Hide()s would kill the loot session server-side; with its
+	-- events gone it never shows at all. (This frame previously went through
+	-- FitPanelToSquare below; the sheet replaces that boost.)
+	WM.BanishFrame(LootFrame)
+	-- Group need/greed rolls: RollFrames.lua replaces GroupLootFrame1..4
+	-- (each registers START_LOOT_ROLL/CANCEL_LOOT_ROLL in its own OnLoad).
+	for i = 1, NUM_GROUP_LOOT_FRAMES or 4 do
+		WM.BanishFrame(getglobal("GroupLootFrame" .. i))
+	end
+
 	-- Party frames stay Blizzard's, but at mouse scale/position they'd sit at
 	-- the square's top-left under the aura rows. Re-home them on the right
 	-- edge, scaled to touch size: below the minimap cluster (top at y=330,
@@ -113,11 +126,11 @@ WM.OnInit(function()
 	GameMenuFrame:ClearAllPoints()
 	GameMenuFrame:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 
-	-- Mouse-scale Blizzard windows that keep driving frequent flows (loot,
-	-- flight paths, bank, mail, trade): boost them toward touch size and
-	-- center them in the world square. All are UIPanels and 1.12's ShowUIPanel
-	-- re-anchors a UIPanel to the screen edge on every open, so the fit runs
-	-- from an OnShow hook instead of once at init.
+	-- Mouse-scale Blizzard windows that keep driving frequent flows (flight
+	-- paths, bank, mail, trade): boost them toward touch size and center them
+	-- in the world square. All are UIPanels and 1.12's ShowUIPanel re-anchors
+	-- a UIPanel to the screen edge on every open, so the fit runs from an
+	-- OnShow hook instead of once at init.
 	local PANEL_SCALE = 1.75
 	local function FitPanelToSquare(frame)
 		if not frame then return end
@@ -133,7 +146,6 @@ WM.OnInit(function()
 			f:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 		end)
 	end
-	FitPanelToSquare(LootFrame)
 	FitPanelToSquare(BankFrame)
 	FitPanelToSquare(MailFrame)
 	FitPanelToSquare(TradeFrame)

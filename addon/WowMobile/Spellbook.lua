@@ -4,8 +4,9 @@
 -- GetSpellTabInfo), a 3-column grid of big cells (icon + wrapping name + rank)
 -- from GetSpellBookItemName/GetSpellBookItemTexture, tap = cast via secure
 -- type="spell" (rank-qualified "Name(Rank N)" so downranking works). Passives
--- are dimmed, tooltip-only cells. Grid rebuilds are secure-attribute work, so
--- they run through the combat queue.
+-- are dimmed, tooltip-only cells. Long-press (right-click) lifts a spell onto
+-- the cursor for action-bar placement (MoveMode.lua). Grid rebuilds are
+-- secure-attribute work, so they run through the combat queue.
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -45,6 +46,16 @@ local function GetCell(i)
 			tt:SetSpellBookItem(self.bookSlot, BOOK)
 		end
 	end)
+	-- MoveMode wiring (MoveMode.lua; this factory already runs out of combat):
+	-- long-press lifts the spell onto the cursor for action-bar placement
+	-- (passives can't be carried). The book is never a drop target, so a tap
+	-- while carrying cancels — SecureDrop swallows the click so the swallowed
+	-- tap can't also cast the cell's spell.
+	WM.MoveMode.AttachSecureSource(cell, function(self)
+		if not self.bookSlot or IsPassiveSpell(self.bookSlot, BOOK) then return nil end
+		return { kind = "spell", bookSlot = self.bookSlot, book = BOOK }
+	end)
+	WM.MoveMode.SecureDrop(cell, nil, nil)
 	cells[i] = cell
 	return cell
 end

@@ -13,8 +13,11 @@
 # modules then stack bottom-up inside the deck (each anchors to the frame the
 # previous module published in WM.Layout; Pet also anchors its status strip
 # to the unit row UnitFrames publishes), and the panel modules only depend on
-# Deck. WorldMap reflows Blizzard's map over the deck (ARCHITECTURE §4);
-# Talents reflows Blizzard_TalentUI into the world square.
+# Deck. MoveMode sits right after Deck: ActionBars/Spellbook/CharacterPanel/
+# Bags call its file-scope API from their cell factories. WorldMap reflows
+# Blizzard's map over the deck (ARCHITECTURE §4); Talents reflows
+# Blizzard_TalentUI into the world square. LootSheet/RollFrames only need
+# Core/Deck/Viewport (they replace default frames banished in Blizzard.lua).
 # Settings loads last because its panel drives Config + Viewport.
 Core.lua
 Compat.lua
@@ -22,6 +25,7 @@ Config.lua
 Blizzard.lua
 Viewport.lua
 Deck.lua
+MoveMode.lua
 ActionBars.lua
 QuickBar.lua
 XPBar.lua
@@ -32,6 +36,8 @@ Pet.lua
 Minimap.lua
 Chat.lua
 BottomSheet.lua
+LootSheet.lua
+RollFrames.lua
 Spellbook.lua
 CharacterPanel.lua
 QuestLog.lua

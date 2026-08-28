@@ -2,7 +2,8 @@
 -- WowMobile · CharacterPanel
 -- Deck-filling character sheet: equipped item grid (tap/hover = tooltip, with
 -- per-slot durability bars) on the left, core stats on the right, overall
--- durability at the bottom of the stat column.
+-- durability at the bottom of the stat column. Long-press (right-click) on a
+-- slot unequips onto the cursor; carried equippables drop here (MoveMode.lua).
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -174,6 +175,21 @@ WM.OnInit(function()
 				tt:SetText(label)
 			end
 		end)
+
+		-- MoveMode (MoveMode.lua): long-press (right-click) unequips the slot
+		-- onto the cursor; while carrying an equippable item the cell
+		-- highlights and a tap equips/swaps it here (a tap with anything else
+		-- held cancels the carry). Insecure buttons only register LeftButtonUp
+		-- by default, so the right edge must be added for the long-press.
+		cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		cell:SetScript("OnClick", function(self, mouseButton)
+			if WM.MoveMode.IsActive() then
+				WM.MoveMode.DropOnInventory(self.slotID)
+			elseif mouseButton == "RightButton" then
+				WM.MoveMode.Begin({ kind = "inv", slotID = self.slotID })
+			end
+		end)
+		WM.MoveMode.RegisterTarget(cell, WM.MoveMode.AcceptsEquippable)
 		slotCells[i] = cell
 	end
 

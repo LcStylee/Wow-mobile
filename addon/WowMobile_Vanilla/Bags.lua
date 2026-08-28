@@ -57,9 +57,21 @@ local function CreateCell(bag, slot)
 	cell.count = WM.CreateText(cell, 26, "OUTLINE")
 	cell.count:SetPoint("BOTTOMRIGHT", cell, "BOTTOMRIGHT", -WM.Px(6), WM.Px(4))
 	cell.bag, cell.slot = bag, slot
+	-- Tap = use/equip/sell (the default 1.12 bag semantics); long-press (the
+	-- client maps long-press to a right click) = MoveMode pickup, with the
+	-- stack stepper for counts > 1; while a carry is active every tap is a
+	-- drop on this cell (place / swap / merge).
+	cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	cell:SetScript("OnClick", function()
-		UseContainerItem(this.bag, this.slot)
+		if WM.MoveMode.IsActive() then
+			WM.MoveMode.DropOnBag(this.bag, this.slot)
+		elseif arg1 == "RightButton" then
+			WM.MoveMode.BeginFromBag(this.bag, this.slot)
+		else
+			UseContainerItem(this.bag, this.slot)
+		end
 	end)
+	WM.MoveMode.MakeTarget(cell, "bag")
 	WM.AttachTooltip(cell, function(tt, self)
 		tt:SetBagItem(self.bag, self.slot)
 	end)

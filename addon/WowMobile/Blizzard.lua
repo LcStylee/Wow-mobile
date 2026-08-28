@@ -1,8 +1,8 @@
 --------------------------------------------------------------------------------
 -- WowMobile · Blizzard
 -- Hides/neuters every default UI element this addon replaces, and re-fits the
--- Blizzard frames that stay (party frames, game menu, loot/taxi/bank/mail/
--- trade windows, static popups). Banished frames are
+-- Blizzard frames that stay (party frames, game menu, taxi/bank/mail/trade
+-- windows, static popups). Banished frames are
 -- reparented under a hidden frame (WM.BanishFrame) so nothing calls Show/Hide
 -- on protected frames later, and every layout touch goes through the
 -- combat-lockdown queue.
@@ -57,6 +57,23 @@ WM.OnInit(function()
 	WM.BanishFrame(GossipFrame)
 	WM.BanishFrame(QuestFrame)
 	WM.BanishFrame(MerchantFrame)
+
+	-- Looting is rebuilt by LootSheet.lua. The same banish technique matters
+	-- doubly here: LootFrame's OnHide calls CloseLoot(), so hiding an OPEN
+	-- default frame would end the loot session — with its events unregistered
+	-- it simply never opens and that OnHide can never fire mid-loot.
+	-- LootSheet.lua takes over the flows the frame drove (auto-loot pass,
+	-- LOOT_BIND_CONFIRM popup).
+	WM.BanishFrame(LootFrame)
+	-- Group-loot roll popups are replaced by RollFrames.lua. The container
+	-- keeps its events (UIParent-side code may still route rolls into it);
+	-- parked under the hidden parent, anything it shows stays invisible.
+	if GroupLootContainer then
+		WM.BanishFrame(GroupLootContainer, true)
+	end
+	for i = 1, 4 do
+		WM.BanishFrame(_G["GroupLootFrame" .. i])
+	end
 
 	-- The trainer UI is load-on-demand (Blizzard_TrainerUI), so there is no
 	-- frame to banish at login: UIParent's own TRAINER_SHOW handler is what
@@ -126,11 +143,13 @@ WM.OnInit(function()
 		GameMenuFrame:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 	end)
 
-	-- Mouse-scale Blizzard windows that keep driving frequent flows (loot,
-	-- flight paths, bank, mail, trade): boost them toward touch size and
-	-- center them in the world square. All five are insecure frames, so
-	-- SetScale/SetPoint are legal even in combat (mid-fight looting included)
-	-- — no lockdown queue needed. They are UIPanels, and ShowUIPanel
+	-- Mouse-scale Blizzard windows that keep driving frequent flows (flight
+	-- paths, bank, mail, trade): boost them toward touch size and center them
+	-- in the world square. All four are insecure frames, so SetScale/SetPoint
+	-- are legal even in combat — no lockdown queue needed. Their item buttons
+	-- also place a MoveMode-carried item through their own insecure click
+	-- handlers, so cursor-carry works into the bank/mail/trade windows for
+	-- free. They are UIPanels, and ShowUIPanel
 	-- re-anchors a UIPanel to the screen edge on every open, so the fit runs
 	-- from an OnShow hook instead of once at init.
 	-- Boost mouse-scale panels toward touch size (same factor as POPUP_SCALE
@@ -152,7 +171,6 @@ WM.OnInit(function()
 			f:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 		end)
 	end
-	FitPanelToSquare(LootFrame)
 	FitPanelToSquare(BankFrame)
 	FitPanelToSquare(MailFrame)
 	FitPanelToSquare(TradeFrame)

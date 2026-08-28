@@ -172,6 +172,19 @@ WM.OnInit(function()
 		bg:SetAllPoints(cell.dura)
 		bg:SetTexture(0.05, 0.05, 0.06, 1)
 
+		-- Plain tap keeps its old meaning (tooltip via the injected hover);
+		-- long-press (client right click) = MoveMode pickup of the equipped
+		-- item; while a carry is active a tap drops here (equip / swap).
+		cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		cell:SetScript("OnClick", function()
+			if WM.MoveMode.IsActive() then
+				WM.MoveMode.DropOnInventory(this.slotID)
+			elseif arg1 == "RightButton" then
+				WM.MoveMode.BeginFromInventory(this.slotID)
+			end
+		end)
+		WM.MoveMode.MakeTarget(cell, "inv")
+
 		cell.slotLabel = label
 		WM.AttachTooltip(cell, function(tt, self)
 			-- Decide emptiness from the data API, not the tooltip setter.

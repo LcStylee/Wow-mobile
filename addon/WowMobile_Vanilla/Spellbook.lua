@@ -42,8 +42,18 @@ local function GetCell(i)
 	cell.rank = WM.CreateText(cell, 22)
 	cell.rank:SetPoint("BOTTOMLEFT", cell, "BOTTOMLEFT", WM.Px(120), WM.Px(14))
 	cell.rank:SetTextColor(0.65, 0.65, 0.7)
+	-- Tap = cast (unchanged); long-press (client right click) = pick the
+	-- spell up for an action slot via MoveMode (passives can't go on bars).
+	-- The spellbook takes no drops, so a tap while carrying cancels.
+	cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	cell:SetScript("OnClick", function()
-		if this.bookSlot and not this.passive then
+		if WM.MoveMode.IsActive() then
+			WM.MoveMode.Cancel()
+		elseif arg1 == "RightButton" then
+			if this.bookSlot and not this.passive then
+				WM.MoveMode.BeginFromSpell(this.bookSlot)
+			end
+		elseif this.bookSlot and not this.passive then
 			CastSpell(this.bookSlot, BOOK)
 		end
 	end)
