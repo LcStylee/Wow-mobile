@@ -312,12 +312,18 @@ func locateGameAuto(opts *Options) string {
 	return ""
 }
 
-// resolveClientType classifies the client behind exe: automatic detection
-// first, then the persisted earlier answer for this same exe, then the user.
-// Under --yes / non-interactive, Confirm returns the non-guessing default
-// (DefaultClientType: classicEra only for _classic_era_ paths, else legacy)
-// and the choice is logged either way.
+// resolveClientType classifies the client behind exe: the version stamp read
+// out of the executable itself first (rename-proof; see PEFileVersion), then
+// the name/path heuristics, then the persisted earlier answer for this same
+// exe, then the user. Under --yes / non-interactive, Confirm returns the
+// non-guessing default (DefaultClientType: classicEra only for _classic_era_
+// paths, else legacy) and the choice is logged either way.
 func resolveClientType(opts *Options, exe string) (ClientType, error) {
+	if v, ok := PEFileVersion(exe); ok {
+		if ct, ok := ClientTypeFromVersion(v); ok {
+			return ct, nil
+		}
+	}
 	if ct, ok := DetectClientType(exe); ok {
 		return ct, nil
 	}

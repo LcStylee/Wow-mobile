@@ -62,7 +62,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq nsis
-          makensis -DVERSION=v0.0.0-ci -DEXE=wowstreamd.exe installer/wowmobile.nsi
+          makensis -DVERSION=v0.0.0-ci -DEXE="$PWD/wowstreamd.exe" installer/wowmobile.nsi
 
       - name: client tests
         working-directory: client
@@ -97,6 +97,12 @@ jobs:
             console.log(`${files.length} Lua files parse cleanly`);
           ' $(find addon -name '*.lua')
 
+      # The shipped 1.12 addon must be Lua 5.0: constructs like '#', '%', or
+      # string.match parse under the 5.1 grammar above but crash at runtime
+      # on the vanilla client, so hold it to the dedicated conformance gate.
+      - name: vanilla addon Lua 5.0 conformance
+        run: node tools/lua50check.js $(find addon/WowMobile_Vanilla -name '*.lua')
+
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
@@ -125,7 +131,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq nsis
-          makensis -DVERSION="$VERSION" -DEXE=wowstreamd.exe installer/wowmobile.nsi
+          makensis -DVERSION="$VERSION" -DEXE="$PWD/wowstreamd.exe" installer/wowmobile.nsi
 
       - name: create GitHub Release
         uses: softprops/action-gh-release@v2

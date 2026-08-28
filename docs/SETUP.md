@@ -139,12 +139,16 @@ WoW Mobile also hosts 1.12-era private-server clients (launched through
   yourself" dialog / paste the exe path in the terminal / pass
   `--game-exe C:\path\to\anything.exe`. The recorded exe is what step 5
   launches; addon dir and `Config.wtf` are looked up next to it.
-- **Client type:** `WowClassic.exe` or a `_classic_era_` path means Classic
-  Era; `Wow.exe`/`VanillaFixes.exe` outside a `_classic_era_` tree means a
-  1.12 client. An unrecognized exe name makes the wizard ask ("Is this a
-  Classic Era (1.15) client?"); under `--yes` it does **not** guess — it
-  assumes Classic Era only when `_classic_era_` appears in the path,
-  otherwise a 1.12 client, and logs the choice.
+- **Client type — detected automatically:** the wizard first reads the
+  version stamp embedded in the exe itself (official clients carry it:
+  `1.12.x` means a vanilla client, `1.13`+ the Classic-Era lineage), which
+  survives any rename. Only when the stamp is missing or stripped do the
+  name/path heuristics apply (`WowClassic.exe` or a `_classic_era_` path
+  means Classic Era; `Wow.exe`/`VanillaFixes.exe` outside a `_classic_era_`
+  tree means a 1.12 client), and only when those are also inconclusive does
+  the wizard ask ("Is this a Classic Era (1.15) client?"). Under `--yes` it
+  does **not** guess — it assumes Classic Era only when `_classic_era_`
+  appears in the path, otherwise a 1.12 client, and logs the choice.
 - **Config.wtf:** 1.12 clients predate `gxWindowedResolution`, so the wizard
   writes the era-correct `SET gxResolution "1080x1920"` (plus
   `gxWindow`/`gxMaximize`), with the same backup and never-while-running

@@ -229,5 +229,8 @@ deleted:
   ; Deliberately kept: %APPDATA%\wowstreamd (remembered WoW/FFmpeg paths and
   ; the TLS certificate your phone already trusts). Delete it by hand for a
   ; truly clean slate.
-  DetailPrint "Kept your settings and certificate in $APPDATA\wowstreamd (delete manually if unwanted)."
+  ; Literal %APPDATA% text on purpose: under SetShellVarContext all, NSIS's
+  ; $APPDATA expands to C:\ProgramData, but wowstreamd stores per-user config
+  ; in the Roaming profile (os.UserConfigDir).
+  DetailPrint "Kept your settings and certificate in %APPDATA%\wowstreamd (delete manually if unwanted)."
 SectionEnd
