@@ -67,6 +67,8 @@
 
     $("encoder").textContent = st.encoder || "probing…";
     $("client-type").textContent = CLIENT_TYPE_LABELS[st.clientType] || "–";
+    // The change-game affordance only makes sense once a game was chosen.
+    $("game-hint").hidden = !st.clientType;
 
     const phone = st.phone || {};
     const phoneEl = $("phone");

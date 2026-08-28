@@ -42,6 +42,7 @@ type Config struct {
 	WowDir           string // --wow-dir: WoW game directory (skips wizard auto-detection)
 	GameExe          string // --game-exe: exact game executable (private servers); beats --wow-dir
 	Yes              bool   // --yes: first-run wizard accepts every default without prompting
+	ChooseGame       bool   // --choose-game: always show the game-install picker, even over a remembered choice
 	SkipSetup        bool   // --skip-setup: skip the first-run wizard entirely
 	Version          bool   // --version: print the version and exit
 	ForceConsole     bool   // --console: force console mode (Windows GUI builds)
@@ -73,6 +74,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW game directory (e.g. the _classic_era_ folder, or a private-server folder containing Wow.exe); skips the wizard's auto-detection")
 	fs.StringVar(&cfg.GameExe, "game-exe", "", "exact game executable to record and launch (private servers, e.g. VanillaFixes.exe); overrides --wow-dir and every auto-detection")
 	fs.BoolVar(&cfg.Yes, "yes", false, "first-run wizard: accept every default without prompting (non-interactive)")
+	fs.BoolVar(&cfg.ChooseGame, "choose-game", false, "show the game-install picker at startup (the World of Warcraft installs found, with detected versions), even when a game is already remembered")
 	fs.BoolVar(&cfg.SkipSetup, "skip-setup", false, "skip the first-run setup wizard entirely")
 	fs.BoolVar(&cfg.Version, "version", false, "print the wowstreamd version and exit")
 	// Mode overrides for the Windows GUI build (-H=windowsgui): double-click
@@ -112,6 +114,9 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	}
 	if cfg.ForceConsole && cfg.ForceGUI {
 		return nil, fmt.Errorf("--console and --gui are mutually exclusive")
+	}
+	if cfg.ChooseGame && cfg.SkipSetup {
+		return nil, fmt.Errorf("--choose-game and --skip-setup are mutually exclusive (the picker is part of setup)")
 	}
 	if cfg.Token == "" {
 		cfg.Token, err = generateToken()

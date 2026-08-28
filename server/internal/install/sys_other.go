@@ -17,6 +17,7 @@ type stubSystem struct{}
 
 func (stubSystem) RegistryWowPath() (string, bool) { return "", false }
 func (stubSystem) WellKnownWowDirs() []string      { return nil }
+func (stubSystem) WowInstallRoots() []string       { return nil }
 func (stubSystem) LookPathFFmpeg() (string, bool) {
 	path, err := exec.LookPath("ffmpeg")
 	return path, err == nil

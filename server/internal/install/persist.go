@@ -26,6 +26,15 @@ const (
 	// recorded game exe ("classicEra"/"legacy"); only trusted while it still
 	// matches KeyGameExe, so switching installs re-detects.
 	KeyClientType = "client_type"
+	// KeyGameChosen ("1") marks that KeyGameExe records an explicit choice —
+	// install picker, pasted/browsed path, --game-exe/--wow-dir, or a
+	// --yes/non-interactive sole find — rather than an auto-detection that a
+	// pre-picker release persisted without asking. The remembered fast path
+	// requires this marker: a store lacking it (an upgrade from such a
+	// release) re-runs the scan once with the remembered install as the
+	// picker's default candidate, and the confirmed pick is persisted with
+	// the marker.
+	KeyGameChosen = "game_chosen"
 	// KeyLegacyNoticeShown records that the one-time GUI notice about the
 	// 1.12 addon variant (LegacyAddonNote: WowMobile_Vanilla installed, enable
 	// it at character select) was already shown (the dashboard note and the

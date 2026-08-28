@@ -8,12 +8,18 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 
 	"github.com/LcStylee/Wow-mobile/server/internal/winui"
 )
+
+// chooseGameDialogOpen keeps the tray's "Choose game…" help dialog single-
+// instance: each modal pins an OS thread until dismissed, so repeated tray
+// clicks must not stack copies.
+var chooseGameDialogOpen atomic.Bool
 
 // Windows console/GUI mode detection. The released exe is linked with
 // -H=windowsgui, so a double-click starts it with NO console at all — the
@@ -172,6 +178,24 @@ func initUI(args []string) *appUI {
 						_ = winui.OpenURL(dashboardURL)
 					}
 				},
+				// Honest and simple: the picker runs inside the setup wizard,
+				// which only runs at startup, so this item explains the
+				// restart-with---choose-game path instead of pretending an
+				// in-place switch (which would need the whole game-dependent
+				// pipeline re-run) happened. The dialog is modal — spawn it
+				// off the tray's message-loop thread so tooltips keep
+				// updating behind it — and at most one at a time: repeated
+				// clicks must not stack identical modals (each pins an OS
+				// thread until dismissed).
+				OnChooseGame: func() {
+					if !chooseGameDialogOpen.CompareAndSwap(false, true) {
+						return
+					}
+					go func() {
+						defer chooseGameDialogOpen.Store(false)
+						winui.Info(chooseGameHelp())
+					}()
+				},
 				OnQuit: onQuit,
 			})
 			if err != nil {
@@ -180,6 +204,22 @@ func initUI(args []string) *appUI {
 			return tray.SetTooltip, tray.Close, nil
 		},
 	}
+}
+
+// chooseGameHelp is the tray "Choose game…" dialog text: how to re-open the
+// game-install picker. The picker is a setup-wizard step, so the honest path
+// is a restart with --choose-game; the exact command (with this exe's real
+// path) is included so it can be typed into Win+R or a terminal verbatim.
+func chooseGameHelp() string {
+	cmd := "wowstreamd.exe --choose-game"
+	if exe, err := os.Executable(); err == nil {
+		cmd = "\"" + exe + "\" --choose-game"
+	}
+	return "To play a different World of Warcraft install:\n\n" +
+		"1. Quit WoW Mobile (tray icon → Quit WoW Mobile).\n" +
+		"2. Start it again with the --choose-game option — press Win+R (or open a terminal) and run:\n\n" +
+		cmd + "\n\n" +
+		"Setup then lists the installs it finds (with detected versions) and remembers your new choice."
 }
 
 // consoleAppUI is the console-mode appUI (text wizard, stderr errors).

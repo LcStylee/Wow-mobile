@@ -67,6 +67,7 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		FFmpegFlag:     cfg.FFmpegPath,
 		Interactive:    interactive,
 		Yes:            cfg.Yes,
+		ChooseGame:     cfg.ChooseGame,
 		Status:         status,
 	})
 	if err != nil {
@@ -95,6 +96,63 @@ func (p guiPrompter) Ask(question string) (string, error) {
 	// The wizard's only free-form question is the game location, which goes
 	// through SelectGamePath below; anything else has no GUI affordance.
 	return "", errors.New("free-form input is not available in GUI mode")
+}
+
+// guiVisibleCandidates caps how many installs the task dialog lists as
+// command links — beyond that the "Browse for a folder…" link covers the
+// rest (the picker's content line says so).
+const guiVisibleCandidates = 8
+
+// ChooseGame shows the native install picker (winui.ChooseGameInstall, a
+// task dialog with one command link per install). The browse / pick-exe
+// escape hatches run their native dialogs right here so a cancelled
+// sub-dialog returns to the picker instead of aborting setup; if task
+// dialogs are unavailable (comctl32 without v6 — effectively never with the
+// shipped manifest) the plain folder browser is the honest fallback.
+func (p guiPrompter) ChooseGame(cands []install.GameCandidate) (install.GameSelection, error) {
+	if p.yes {
+		return install.GameSelection{Index: -1}, errors.New("--yes cannot open the game picker; pass --game-exe or --wow-dir")
+	}
+	labels := make([]string, 0, guiVisibleCandidates)
+	for i, c := range cands {
+		if i == guiVisibleCandidates {
+			break
+		}
+		labels = append(labels, c.Label)
+	}
+	for {
+		choice, err := winui.ChooseGameInstall(labels, len(cands))
+		switch {
+		case errors.Is(err, winui.ErrCancelled):
+			return install.GameSelection{Index: -1}, install.ErrGameChoiceCancelled
+		case errors.Is(err, winui.ErrTaskDialogUnavailable):
+			return install.GameSelection{Index: -1, Browse: true}, nil
+		case err != nil:
+			return install.GameSelection{Index: -1}, err
+		}
+		switch {
+		case choice.Index >= 0:
+			return install.GameSelection{Index: choice.Index}, nil
+		case choice.Browse:
+			dir, berr := winui.BrowseForFolder("Select your World of Warcraft folder")
+			if errors.Is(berr, winui.ErrCancelled) {
+				continue // back to the picker
+			}
+			if berr != nil {
+				return install.GameSelection{Index: -1}, berr
+			}
+			return install.GameSelection{Index: -1, Path: dir}, nil
+		case choice.PickExe:
+			path, perr := winui.PickExeFile("Pick your game program (.exe)")
+			if errors.Is(perr, winui.ErrCancelled) {
+				continue // back to the picker
+			}
+			if perr != nil {
+				return install.GameSelection{Index: -1}, perr
+			}
+			return install.GameSelection{Index: -1, Path: path}, nil
+		}
+	}
 }
 
 func (p guiPrompter) SelectGamePath(prevInvalid string) (string, error) {

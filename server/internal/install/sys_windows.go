@@ -51,6 +51,45 @@ func (winSystem) WellKnownWowDirs() []string {
 	return dirs
 }
 
+// WowInstallRoots finds existing "World of Warcraft*" base directories at
+// the well-known parents — both Program Files trees and the top level of
+// every fixed drive. One directory listing per parent (top-level only, never
+// recursive), so the scan stays bounded however large the drives are.
+func (winSystem) WowInstallRoots() []string {
+	var roots []string
+	for _, drive := range fixedDriveRoots() {
+		for _, parent := range []string{
+			filepath.Join(drive, `Program Files (x86)`),
+			filepath.Join(drive, `Program Files`),
+			drive,
+		} {
+			roots = append(roots, wowDirsUnder(parent)...)
+		}
+	}
+	return roots
+}
+
+// wowDirsUnder lists parent's immediate subdirectories whose names start
+// with "World of Warcraft" (case-insensitive), preserving on-disk casing.
+func wowDirsUnder(parent string) []string {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if len(name) >= len("World of Warcraft") &&
+			strings.EqualFold(name[:len("World of Warcraft")], "World of Warcraft") {
+			dirs = append(dirs, filepath.Join(parent, name))
+		}
+	}
+	return dirs
+}
+
 // fixedDriveRoots enumerates local fixed drives ("C:\", "D:\", ...), skipping
 // removable/network/optical drives — scanning those would be slow and wrong.
 func fixedDriveRoots() []string {

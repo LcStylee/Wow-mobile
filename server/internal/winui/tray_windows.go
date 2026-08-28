@@ -21,8 +21,9 @@ import (
 // window is also findable by class name ("WowMobileTray") with a plain
 // FindWindow, which the NSIS installer/uninstaller running-instance checks
 // rely on (installer/wowmobile.nsi). Left-click (or the menu's "Open
-// dashboard") opens the dashboard; "Quit" runs the same graceful shutdown as
-// the dashboard's Quit button and Ctrl+C.
+// dashboard") opens the dashboard; "Choose game…" (when wired) explains how
+// to re-open the game-install picker; "Quit" runs the same graceful shutdown
+// as the dashboard's Quit button and Ctrl+C.
 
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
@@ -79,8 +80,9 @@ const (
 
 	idiApplication = 32512
 
-	menuOpenID = 1
-	menuQuitID = 2
+	menuOpenID       = 1
+	menuQuitID       = 2
+	menuChooseGameID = 3
 )
 
 type wndClassEx struct {
@@ -130,9 +132,10 @@ type notifyIconData struct {
 // TrayOptions configures the icon and its menu actions. Callbacks run on the
 // tray's message-loop goroutine and must not block.
 type TrayOptions struct {
-	Tooltip string
-	OnOpen  func() // left-click / "Open dashboard"
-	OnQuit  func() // "Quit" menu item
+	Tooltip      string
+	OnOpen       func() // left-click / "Open dashboard"
+	OnChooseGame func() // "Choose game…" menu item; nil hides the item
+	OnQuit       func() // "Quit" menu item
 }
 
 // Tray is a live notification-area icon.
@@ -298,6 +301,10 @@ func trayWndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			if t.opts.OnOpen != nil {
 				t.opts.OnOpen()
 			}
+		case menuChooseGameID:
+			if t.opts.OnChooseGame != nil {
+				t.opts.OnChooseGame()
+			}
 		case menuQuitID:
 			t.removeIcon()
 			if t.opts.OnQuit != nil {
@@ -325,8 +332,11 @@ func (t *Tray) showMenu(hwnd uintptr) {
 	if menu == 0 {
 		return
 	}
-	defer procDestroyMenu.Call(menu)                                                                      //nolint:errcheck
-	procAppendMenu.Call(menu, mfString, menuOpenID, uintptr(unsafe.Pointer(utf16Ptr("Open dashboard"))))  //nolint:errcheck
+	defer procDestroyMenu.Call(menu)                                                                     //nolint:errcheck
+	procAppendMenu.Call(menu, mfString, menuOpenID, uintptr(unsafe.Pointer(utf16Ptr("Open dashboard")))) //nolint:errcheck
+	if t.opts.OnChooseGame != nil {
+		procAppendMenu.Call(menu, mfString, menuChooseGameID, uintptr(unsafe.Pointer(utf16Ptr("Choose game…")))) //nolint:errcheck
+	}
 	procAppendMenu.Call(menu, mfString, menuQuitID, uintptr(unsafe.Pointer(utf16Ptr("Quit WoW Mobile")))) //nolint:errcheck
 
 	var pt point
@@ -342,6 +352,10 @@ func (t *Tray) showMenu(hwnd uintptr) {
 	case menuOpenID:
 		if t.opts.OnOpen != nil {
 			t.opts.OnOpen()
+		}
+	case menuChooseGameID:
+		if t.opts.OnChooseGame != nil {
+			t.opts.OnChooseGame()
 		}
 	case menuQuitID:
 		t.removeIcon()

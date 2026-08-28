@@ -1,5 +1,7 @@
-// Package install is wowstreamd's first-run wizard: it locates the game
-// (official WoW Classic Era or a 1.12-era private-server client), installs or
+// Package install is wowstreamd's first-run wizard: it scans the machine for
+// game installs and has the user choose one (official WoW Classic Era or a
+// 1.12-era private-server client; see scan.go — a remembered explicit choice
+// skips the picker, --choose-game re-opens it), installs or
 // updates the embedded addon variant matching the client (WowMobile for
 // Classic Era, the WowMobile_Vanilla 1.12 port for legacy), fixes Config.wtf
 // for the portrait window, finds (or installs) FFmpeg, and makes sure the
@@ -70,6 +72,12 @@ type System interface {
 	// WellKnownWowDirs returns candidate `\World of Warcraft\_classic_era_`
 	// directories on fixed drives (existence not yet checked).
 	WellKnownWowDirs() []string
+	// WowInstallRoots returns existing "World of Warcraft*" base directories
+	// found at the well-known locations (Program Files trees) and the top
+	// level of every fixed drive — the scan roots whose Battle.net product
+	// subdirs the install scanner enumerates. Bounded: one directory listing
+	// per candidate parent, never a recursive walk.
+	WowInstallRoots() []string
 	// LookPathFFmpeg finds "ffmpeg" on the current process PATH.
 	LookPathFFmpeg() (string, bool)
 	// WingetFFmpeg searches %LOCALAPPDATA%\Microsoft\WinGet\Packages for
@@ -110,6 +118,12 @@ type Prompter interface {
 	// dialog, the console re-prompts. Must fail, not block, when
 	// non-interactive.
 	SelectGamePath(prevInvalid string) (string, error)
+	// ChooseGame presents the scanned game installs (at least one) and
+	// returns the user's decision: a candidate index, a manually picked
+	// folder/exe path, or the wish to browse (GameSelection). A dismissed
+	// picker returns ErrGameChoiceCancelled — the wizard then stops cleanly.
+	// Must fail, not block, when non-interactive.
+	ChooseGame(cands []GameCandidate) (GameSelection, error)
 	// Notice shows a message needing the user's attention once. The GUI shows
 	// an information dialog; the console implementation is a no-op because the
 	// wizard has already printed the same text to its output.
@@ -134,6 +148,7 @@ type Options struct {
 
 	Interactive bool // a user can answer prompts (terminal stdin, or GUI dialogs)
 	Yes         bool // --yes: accept every default
+	ChooseGame  bool // --choose-game: always show the install picker, even with a valid remembered choice
 
 	// Status receives live step states for the host dashboard; nil is fine
 	// (all hoststatus methods are nil-safe).
@@ -141,6 +156,18 @@ type Options struct {
 
 	PollInterval time.Duration // wait-loop granularity; 0 = 2s
 	WaitTimeout  time.Duration // wait-loop cap before a clear error; 0 = defaultWaitTimeout
+
+	// versionProbe overrides PEFileVersion in tests (fake exes carry no PE
+	// version resource); nil means the real PEFileVersion.
+	versionProbe func(string) (GameVersion, bool)
+}
+
+// peVersion reads the exe's PE version stamp via the test override when set.
+func (o *Options) peVersion(exe string) (GameVersion, bool) {
+	if o.versionProbe != nil {
+		return o.versionProbe(exe)
+	}
+	return PEFileVersion(exe)
 }
 
 // Result is what the rest of wowstreamd needs from a completed wizard run.
@@ -183,14 +210,15 @@ func Run(opts Options) (res *Result, err error) {
 	}()
 
 	begin(StepGame)
-	if res.GameExe, res.ClientType, err = stepLocateGame(&opts); err != nil {
+	var streamOnly bool
+	if res.GameExe, res.ClientType, streamOnly, err = stepLocateGame(&opts); err != nil {
 		return nil, err
 	}
 	res.GameDir = filepath.Dir(res.GameExe)
 	opts.Status.SetClientType(string(res.ClientType))
 
 	begin(StepAddon)
-	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType); err != nil {
+	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType, streamOnly); err != nil {
 		return nil, err
 	}
 	begin(StepConfig)
@@ -226,13 +254,20 @@ func stepLine(out io.Writer, n int, label, result string) {
 	fmt.Fprintf(out, "[%d/%d] %s %s %s\n", n, wizardSteps, label, strings.Repeat(".", dots), result)
 }
 
-// stepLocateGame finds the game executable: --game-exe, --wow-dir, persisted
-// state, the Blizzard registry, well-known paths, then a prompt (console:
-// pasted folder-or-exe path; GUI: folder browser with an exe-picker
-// fallback). It then resolves the client type and persists both.
-func stepLocateGame(opts *Options) (string, ClientType, error) {
+// stepLocateGame finds the game executable. The flags (--game-exe, --wow-dir)
+// and a valid remembered EXPLICIT choice bypass every question; otherwise the
+// machine is SCANNED for installs and the user CHOOSES one before anything
+// else happens with the game — never auto-proceed, even with a single find,
+// because multi-install machines are common and guessing picks wrong
+// (--choose-game re-opens the picker over a remembered choice). It then
+// resolves the client type and persists both. streamOnly reports a stamped
+// non-1.x client: streaming works, but no addon variant can load there.
+func stepLocateGame(opts *Options) (string, ClientType, bool, error) {
 	const label = "World of Warcraft"
 	exe := ""
+	knownType := ClientType("") // type already classified by the scanner
+	chosenFrom := 0             // >0: picked from a scan of that many installs
+	streamOnly := false
 
 	switch {
 	case opts.GameExeFlag != "":
@@ -240,76 +275,142 @@ func stepLocateGame(opts *Options) (string, ClientType, error) {
 		// error, not later at launch. Accepted verbatim otherwise — any exe
 		// name works (private servers).
 		if st, err := os.Stat(opts.GameExeFlag); err != nil || st.IsDir() {
-			return "", "", fmt.Errorf("--game-exe %q: not an existing file", opts.GameExeFlag)
+			return "", "", false, fmt.Errorf("--game-exe %q: not an existing file", opts.GameExeFlag)
 		}
 		exe = opts.GameExeFlag
 	case opts.WowDirFlag != "":
 		e, err := ResolveGameExe(opts.WowDirFlag)
 		if err != nil {
-			return "", "", fmt.Errorf("--wow-dir: %w", err)
+			return "", "", false, fmt.Errorf("--wow-dir: %w", err)
 		}
 		exe = e
 	default:
-		exe = locateGameAuto(opts)
+		if !opts.ChooseGame {
+			exe = rememberedGameExe(opts) // fast path: prior explicit choice, no questions
+		}
+		if exe == "" {
+			var err error
+			if exe, knownType, chosenFrom, err = chooseGameFromScan(opts); err != nil {
+				return "", "", false, err
+			}
+		}
 	}
 
 	if exe == "" {
 		stepLine(opts.Out, 1, label, "not found automatically")
-		prevInvalid := ""
-		for attempt := 0; attempt < 5; attempt++ {
-			answer, err := opts.Prompt.SelectGamePath(prevInvalid)
-			if err != nil {
-				return "", "", fmt.Errorf("WoW was not found; pass its folder with --wow-dir or the game program with --game-exe (%w)", err)
-			}
-			e, rerr := ResolveGameExe(answer)
-			if rerr == nil {
-				exe = e
-				break
-			}
-			prevInvalid = strings.Trim(strings.TrimSpace(answer), `"`)
-			fmt.Fprintf(opts.Out, "  %v\n", rerr)
-		}
-		if exe == "" {
-			return "", "", errors.New("no valid WoW location after 5 attempts; pass --wow-dir <folder> or --game-exe <program>")
+		var err error
+		if exe, err = selectGamePathLoop(opts, ""); err != nil {
+			return "", "", false, err
 		}
 	}
 
-	ct, err := resolveClientType(opts, exe)
-	if err != nil {
-		return "", "", err
+	ct := knownType
+	if ct == "" {
+		var err error
+		if ct, streamOnly, err = resolveClientType(opts, exe); err != nil {
+			return "", "", false, err
+		}
 	}
 	persistGame(opts, exe, ct)
-	step(opts, 1, StepGame, label, hoststatus.StateOK, fmt.Sprintf("found: %s (%s)", exe, ct))
-	return exe, ct, nil
+	result := fmt.Sprintf("found: %s (%s)", exe, ct)
+	if chosenFrom > 0 {
+		result = fmt.Sprintf("chosen: %s (%s) — from %d found", exe, ct, chosenFrom)
+	}
+	step(opts, 1, StepGame, label, hoststatus.StateOK, result)
+	return exe, ct, streamOnly, nil
 }
 
-// locateGameAuto tries the zero-question sources in order: persisted game
-// exe, persisted (pre-upgrade) wow_path, the Blizzard registry, well-known
-// install paths. Returns "" when all fail.
-func locateGameAuto(opts *Options) string {
+// rememberedGameExe returns the persisted prior choice while it is still
+// valid: the recorded game exe, or the pre-game_exe wow_path key written by
+// older versions. Only a store carrying the KeyGameChosen marker qualifies:
+// releases before the install picker persisted registry/well-known
+// auto-detections without ever asking the user, so a game_exe (or wow_path)
+// lacking the marker is treated as unchosen — the caller then runs the scan,
+// which orders the remembered install first as the picker's default, and the
+// confirmed pick is persisted with the marker. Returns "" when there is no
+// usable remembered explicit choice.
+func rememberedGameExe(opts *Options) string {
+	if opts.Store.Get(KeyGameChosen) != "1" {
+		return "" // pre-picker auto-detection (or nothing): scan and ask once
+	}
 	if exe := opts.Store.Get(KeyGameExe); exe != "" {
 		if st, err := os.Stat(exe); err == nil && !st.IsDir() {
 			return exe
 		}
 	}
-	if dir := opts.Store.Get(KeyWowPath); dir != "" { // migration from older versions
-		if exe, err := ResolveGameExe(dir); err == nil {
-			return exe
-		}
-	}
-	if base, ok := opts.Sys.RegistryWowPath(); ok {
-		for _, cand := range []string{base, filepath.Join(base, classicEraDirName)} {
-			if exe, err := ResolveGameExe(cand); err == nil {
-				return exe
-			}
-		}
-	}
-	for _, cand := range opts.Sys.WellKnownWowDirs() {
-		if exe, err := ResolveGameExe(cand); err == nil {
-			return exe
-		}
-	}
+	// No KeyWowPath fallback here: the chosen marker is only ever written
+	// together with KeyGameExe, so under the marker any surviving wow_path is
+	// a stale pre-picker auto-detection the user never confirmed. A vanished
+	// chosen exe must fall through to a fresh scan-and-ask, not silently
+	// substitute a different install.
 	return ""
+}
+
+// chooseGameFromScan scans the machine for game installs and resolves the
+// choice. Interactive sessions ALWAYS get the picker when anything was found
+// (a single candidate asks "use it?" rather than auto-proceeding);
+// --yes/non-interactive sessions use a sole candidate but refuse to guess
+// between several. Zero candidates return "" and the caller falls back to
+// the manual not-found flow. chosenFrom is the scan size when a scanned
+// candidate was picked (0 when the user browsed to a path of their own).
+func chooseGameFromScan(opts *Options) (exe string, ct ClientType, chosenFrom int, err error) {
+	cands := ScanGameCandidates(opts.Store, opts.Sys)
+	if len(cands) == 0 {
+		return "", "", 0, nil
+	}
+
+	if opts.Yes || !opts.Interactive {
+		if len(cands) == 1 {
+			return cands[0].ExePath, cands[0].Type, 1, nil
+		}
+		return "", "", 0, fmt.Errorf(
+			"found %d World of Warcraft installs but cannot ask which one to use (--yes/non-interactive):\n%s\nrun interactively to pick, or pass --game-exe <program> (or --wow-dir <folder>) — never guessing between installs",
+			len(cands), candidateListing(cands))
+	}
+
+	opts.Status.SetStep(StepGame, hoststatus.StateRunning, fmt.Sprintf("%d install(s) found — waiting for your choice", len(cands)))
+	sel, err := opts.Prompt.ChooseGame(cands)
+	if err != nil {
+		if errors.Is(err, ErrGameChoiceCancelled) {
+			return "", "", 0, errors.New("setup cancelled: no game was chosen (run again to pick, or pass --game-exe / --wow-dir)")
+		}
+		return "", "", 0, err
+	}
+	switch {
+	case sel.Index >= 0 && sel.Index < len(cands):
+		c := cands[sel.Index]
+		return c.ExePath, c.Type, len(cands), nil
+	case sel.Path != "":
+		if e, rerr := ResolveGameExe(sel.Path); rerr == nil {
+			return e, "", 0, nil
+		} else {
+			fmt.Fprintf(opts.Out, "  %v\n", rerr)
+			e, perr := selectGamePathLoop(opts, strings.Trim(strings.TrimSpace(sel.Path), `"`))
+			return e, "", 0, perr
+		}
+	default: // browse
+		e, perr := selectGamePathLoop(opts, "")
+		return e, "", 0, perr
+	}
+}
+
+// selectGamePathLoop runs the manual location flow (console: pasted
+// folder-or-exe path; GUI: folder browser with an exe-picker fallback) with
+// up to five validation retries.
+func selectGamePathLoop(opts *Options, prevInvalid string) (string, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		answer, err := opts.Prompt.SelectGamePath(prevInvalid)
+		if err != nil {
+			return "", fmt.Errorf("WoW was not found; pass its folder with --wow-dir or the game program with --game-exe (%w)", err)
+		}
+		if exe, rerr := ResolveGameExe(answer); rerr == nil {
+			return exe, nil
+		} else {
+			prevInvalid = strings.Trim(strings.TrimSpace(answer), `"`)
+			fmt.Fprintf(opts.Out, "  %v\n", rerr)
+		}
+	}
+	return "", errors.New("no valid WoW location after 5 attempts; pass --wow-dir <folder> or --game-exe <program>")
 }
 
 // resolveClientType classifies the client behind exe: the version stamp read
@@ -317,41 +418,61 @@ func locateGameAuto(opts *Options) string {
 // the name/path heuristics, then the persisted earlier answer for this same
 // exe, then the user. Under --yes / non-interactive, Confirm returns the
 // non-guessing default (DefaultClientType: classicEra only for _classic_era_
-// paths, else legacy) and the choice is logged either way.
-func resolveClientType(opts *Options, exe string) (ClientType, error) {
-	if v, ok := PEFileVersion(exe); ok {
+// paths, else legacy) and the choice is logged either way. streamOnly is
+// true for a stamped non-1.x client (expansion/retail): the returned type is
+// only the nearer window-settings family — no addon variant can load there.
+func resolveClientType(opts *Options, exe string) (ClientType, bool, error) {
+	if v, ok := opts.peVersion(exe); ok {
 		if ct, ok := ClientTypeFromVersion(v); ok {
-			return ct, nil
+			return ct, false, nil
+		}
+		if v.Major != 1 {
+			// A stamped non-1.x client (expansion/retail, or a 0.x-stamped
+			// custom launcher): the 1.x name heuristics below would misread
+			// its Wow.exe as a vanilla client, so pick the nearer supported
+			// settings family by version instead (clientTypeForModernMajor)
+			// and say so — matching the picker's stream-only label for the
+			// same exe. Streaming works; the touch UI addon needs a Classic
+			// Era (1.15) or 1.12 client.
+			ct := clientTypeForModernMajor(v)
+			fmt.Fprintf(opts.Out, "  %s is a %d.%d client — streaming works, but the touch UI addon needs Classic Era (1.15) or 1.12; using %s window settings.\n",
+				filepath.Base(exe), v.Major, v.Minor, ct)
+			return ct, true, nil
 		}
 	}
 	if ct, ok := DetectClientType(exe); ok {
-		return ct, nil
+		return ct, false, nil
 	}
 	if opts.Store.Get(KeyGameExe) == exe {
 		if ct := ClientType(opts.Store.Get(KeyClientType)); ct.valid() {
-			return ct, nil
+			return ct, false, nil
 		}
 	}
 	def := DefaultClientType(exe) == ClientTypeClassicEra
 	isClassic, err := opts.Prompt.Confirm(
 		"Is "+filepath.Base(exe)+" a WoW Classic Era (1.15) client? Choose No for a 1.12-era private-server client.", def)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	ct := ClientTypeLegacy
 	if isClassic {
 		ct = ClientTypeClassicEra
 	}
 	fmt.Fprintf(opts.Out, "  Unrecognized game program %s — treating it as a %s client.\n", filepath.Base(exe), ct)
-	return ct, nil
+	return ct, false, nil
 }
 
 // persistGame stores the resolved exe and client type together (the type is
-// only trusted while it matches the exe).
+// only trusted while it matches the exe), plus the KeyGameChosen marker:
+// every call site follows an explicit resolution — a flag, a picker pick, a
+// pasted/browsed path, a --yes/non-interactive sole find, or a fast path
+// that itself required the marker — never a silent auto-detection.
 func persistGame(opts *Options, exe string, ct ClientType) {
-	if opts.Store.Get(KeyGameExe) != exe || opts.Store.Get(KeyClientType) != string(ct) {
+	if opts.Store.Get(KeyGameExe) != exe || opts.Store.Get(KeyClientType) != string(ct) ||
+		opts.Store.Get(KeyGameChosen) != "1" {
 		opts.Store.Set(KeyGameExe, exe)
 		opts.Store.Set(KeyClientType, string(ct))
+		opts.Store.Set(KeyGameChosen, "1")
 		saveStore(opts)
 	}
 }
@@ -369,8 +490,20 @@ func saveStore(opts *Options) {
 // are missing or changed; nothing else in AddOns is ever touched. Legacy
 // clients additionally get a visible note (dashboard + console + one-time GUI
 // dialog) that the Vanilla variant is the one to enable at character select.
-func stepInstallAddon(opts *Options, gameDir string, ct ClientType) error {
+// A streamOnly client (stamped non-1.x — the picker labeled it "stream only:
+// touch UI addon unavailable") gets NO addon: its ClientType is only the
+// nearer window-settings family, and copying either variant into a 2.x+
+// client would plant an addon that cannot load there — so the step reports
+// skipped instead. The skip also keeps LegacyAddonNote honest: the legacy
+// branch below then only ever fires for an actual 1.12-era client, never for
+// a 2.x–7.x expansion client that merely shares the legacy settings family.
+func stepInstallAddon(opts *Options, gameDir string, ct ClientType, streamOnly bool) error {
 	const label = "WowMobile addon"
+	if streamOnly {
+		step(opts, 2, StepAddon, label, hoststatus.StateSkipped,
+			"skipped — stream only: the touch UI addon needs a Classic Era (1.15) or 1.12 client")
+		return nil
+	}
 	src, folder := opts.AddonFS, "WowMobile"
 	if ct == ClientTypeLegacy {
 		src, folder = opts.VanillaAddonFS, "WowMobile_Vanilla"

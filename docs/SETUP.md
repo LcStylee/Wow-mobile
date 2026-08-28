@@ -31,8 +31,12 @@ strongly recommended).
 
 While WoW Mobile is running you'll find its icon in the **system tray**
 (notification area): left-click opens the dashboard, right-click offers
-**Open dashboard** and **Quit**. The dashboard's Quit button does the same as
-the tray's — a clean stop that releases every held key.
+**Open dashboard**, **Choose game…** and **Quit**. **Choose game…** shows the
+exact restart command for picking a different WoW install (the picker runs
+during setup, so switching means a restart with `--choose-game` — see
+[step 1](#what-the-setup-does)); the dashboard carries the same hint. The
+dashboard's Quit button does the same as the tray's — a clean stop that
+releases every held key.
 
 *Portable alternative:* the same Releases page also carries the bare
 `wowstreamd.exe`. Double-clicking it gives the identical dialogs-and-dashboard
@@ -51,31 +55,49 @@ near-instant when already satisfied. In a terminal it prints the classic
 checklist; in windowed mode the same checklist appears on the dashboard:
 
 ```
-[1/5] World of Warcraft ..... found: C:\...\_classic_era_\WowClassic.exe (Classic Era)
+[1/5] World of Warcraft ..... chosen: C:\...\_classic_era_\WowClassic.exe (Classic Era) — from 4 found
 [2/5] WowMobile addon ....... installed (24 files, up to date)
 [3/5] Portrait resolution ... Config.wtf OK (1080x1920 windowed)
 [4/5] FFmpeg ................ found: h264_nvenc available
 [5/5] Game running .......... window found
 ```
 
-1. **Locates the game** — remembered choice
-   (`%APPDATA%\wowstreamd\config.json`), then the Blizzard registry key, then
-   well-known paths on fixed drives. If none work, windowed mode shows a
-   **folder picker** ("Select your World of Warcraft folder") — the
-   `_classic_era_` folder, its parent `World of Warcraft` folder, or any
-   folder containing a known game exe (`WowClassic.exe`, `VanillaFixes.exe`,
-   `Wow.exe`) all work — with a fallback dialog to **pick the game program
-   (.exe) yourself** for private servers. In a terminal you paste the path (a
-   folder or the `.exe` itself). Command line: `--wow-dir <folder>` or
-   `--game-exe <program>`. The chosen executable is recorded and every later
-   step derives from its folder.
+1. **Scans for game installs and lets you choose.** A choice you already
+   confirmed (remembered in `%APPDATA%\wowstreamd\config.json`) is reused
+   silently — an install that an older WoW Mobile version auto-detected
+   without asking does not count: after upgrading, it only becomes the
+   picker's pre-selected default and you confirm it once. Otherwise the
+   wizard **scans** the Blizzard registry key, the well-known locations, and
+   every Battle.net product folder (`_classic_era_`, `_classic_`, `_retail_`,
+   and their `_ptr_`/`_beta_` variants) under each `World of Warcraft` folder
+   at the root of a fixed drive or in either Program Files folder — then
+   **you pick**. Machines with several WoW installs are first-class: the
+   picker lists the installs found with their detected versions
+   ("WoW Classic Era (1.15) — C:\…\_classic_era_",
+   "Vanilla 1.12 private client — D:\Games\TurtleWoW",
+   "Retail 11.x — … (stream only: touch UI addon unavailable)") and never
+   auto-proceeds — even a single find asks "use it?" first. Windowed mode
+   shows the list as a native dialog with **Browse for a folder…** and **Pick
+   the game program (.exe)…** escape hatches (private servers: any exe) — the
+   dialog shows up to 8 installs; any beyond that are reachable through
+   **Browse for a folder…**. A terminal shows a numbered menu listing every
+   install (`B` to paste a path, `X` to cancel, Enter takes the first entry).
+   `--choose-game` re-opens the picker over a remembered choice;
+   `--wow-dir <folder>` / `--game-exe <program>` bypass it entirely, and
+   under `--yes` (non-interactive) a sole find is used while several installs
+   abort with a list and a request for `--game-exe` — it never guesses
+   between installs. The chosen executable is recorded and every later step
+   derives from its folder.
 2. **Installs/updates the WowMobile addon** from the copy embedded in the exe
    into `<game>\Interface\AddOns\WowMobile`, writing only files that are
    missing or changed. Nothing else in `AddOns` is ever touched. (Your addon
    settings are safe — they live in `WTF\`, not in the addon folder.) On a
    1.12-era private-server client the wizard installs `WowMobile_Vanilla`
    (the 1.12/Lua 5.0 port of the same touch UI) instead — see
-   [Private servers](#private-servers-112-clients).
+   [Private servers](#private-servers-112-clients). If you chose a "stream
+   only" install (a client that is neither Classic Era 1.15 nor 1.12 —
+   retail, an expansion client), this step is skipped: no addon variant can
+   load there, so nothing is copied into its `AddOns` folder.
 3. **Sets the portrait window** in `<game>\WTF\Config.wtf`
    (`SET gxWindow "1"`, `SET gxMaximize "0"`, and
    `SET gxWindowedResolution "1080x1920"` — following `--resolution`; 1.12
@@ -133,10 +155,11 @@ and skips the browser auto-open instead of advertising an unreachable URL
 WoW Mobile also hosts 1.12-era private-server clients (launched through
 `Wow.exe` or `VanillaFixes.exe`, or any custom exe you pick):
 
-- **Selecting the game:** the folder picker accepts any folder containing
-  `WowClassic.exe`, `VanillaFixes.exe`, or `Wow.exe` (preference in that
-  order, case-insensitive) — or use the "pick the game program (.exe)
-  yourself" dialog / paste the exe path in the terminal / pass
+- **Selecting the game:** the install picker lists private-server folders it
+  can see, and its **Browse for a folder…** hatch accepts any folder
+  containing `WowClassic.exe`, `VanillaFixes.exe`, or `Wow.exe` (preference
+  in that order, case-insensitive) — or use the "Pick the game program (.exe)
+  …" dialog / paste the exe path in the terminal / pass
   `--game-exe C:\path\to\anything.exe`. The recorded exe is what step 5
   launches; addon dir and `Config.wtf` are looked up next to it.
 - **Client type — detected automatically:** the wizard first reads the
@@ -306,9 +329,10 @@ The defaults are right for most setups. All flags:
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
 | `--window-title` | `World of Warcraft` | Substring of the game window title to capture |
 | `--client-dir` | embedded client | Serve the phone client PWA from a disk directory (development) |
-| `--wow-dir` | auto-detect | Game directory — `_classic_era_`, its parent, or any folder containing a known game exe; skips wizard detection |
-| `--game-exe` | auto-detect | Exact game executable to record and launch (private servers, any name); overrides `--wow-dir` |
-| `--yes` | off | Wizard: accept every default without prompting (non-interactive) |
+| `--wow-dir` | scan & choose | Game directory — `_classic_era_`, its parent, or any folder containing a known game exe; bypasses the wizard's install picker |
+| `--game-exe` | scan & choose | Exact game executable to record and launch (private servers, any name); overrides `--wow-dir` and bypasses the picker |
+| `--choose-game` | off | Show the install picker at startup (the WoW installs found, with detected versions) even when a game is already remembered |
+| `--yes` | off | Wizard: accept every default without prompting (non-interactive). One found install is used; several abort with a list — pass `--game-exe` to pick |
 | `--skip-setup` | off | Skip the first-run wizard entirely |
 | `--console` | auto | Force console mode: the interactive text wizard, never dialogs; from a shell it opens its own console window so prompts are not raced by the shell (Windows) |
 | `--gui` | auto | Force windowed mode (dialogs + dashboard + tray) even from a terminal (Windows) |
@@ -361,7 +385,8 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 |---|---|
 | Windows SmartScreen blocks `WowMobile-Setup.exe` / `wowstreamd.exe` | The release binaries are unsigned. Click **More info → Run anyway**, or build from source ([step 4](#4-build-and-run-wowstreamd)). |
 | Nothing seems to happen after launching / where did it go? | WoW Mobile runs windowed with no terminal: look for the **tray icon** (left-click opens the dashboard) and the dashboard tab at `https://127.0.0.1:8443/host/`. Quit via the tray menu or the dashboard's **Quit** button. `--console` from a terminal gets you the full text log. |
-| Wizard: `[1/5] World of Warcraft ..... not found automatically` | Non-standard install location. Use the **folder picker** that appears (the `World of Warcraft` or `_classic_era_` folder both work, as does any folder with `Wow.exe`/`VanillaFixes.exe`), choose "pick the game program (.exe) yourself", or pass `--wow-dir`/`--game-exe` — the choice is remembered in `%APPDATA%\wowstreamd\config.json`. |
+| Wizard: `[1/5] World of Warcraft ..... not found automatically` | Non-standard install location the scan can't see. Use the **folder picker** that appears (the `World of Warcraft` or `_classic_era_` folder both work, as does any folder with `Wow.exe`/`VanillaFixes.exe`), choose "Pick the game program (.exe)…", or pass `--wow-dir`/`--game-exe` — the choice is remembered in `%APPDATA%\wowstreamd\config.json`. |
+| WoW Mobile is set up against the **wrong WoW install** (several on this PC) | Restart with `--choose-game`: the picker lists the installs found (with detected versions) and your new choice replaces the remembered one. The tray icon's **Choose game…** item shows the exact command; `--game-exe`/`--wow-dir` pin an install permanently. |
 | Dashboard shows 403 / unreachable from another device | By design: `/host` is served **only to the PC itself** (it contains the pairing token). Open it on the gaming PC; phones use the pairing URL/QR instead. |
 | Addon step says `... (WowMobile_Vanilla, 1.12 port)` | Normal on a 1.12 private-server client: the wizard installed the 1.12 port of the addon instead of the Classic Era one. Enable **WoW Mobile (Vanilla)** at character select — see [Private servers](#private-servers-112-clients). |
 | Wizard: winget is not available | The wizard prints manual instructions: install FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) or [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), then add its `bin` to `PATH` or pass `--ffmpeg C:\path\to\ffmpeg.exe`. |

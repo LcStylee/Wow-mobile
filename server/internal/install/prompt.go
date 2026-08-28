@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -76,6 +77,55 @@ func (p *ConsolePrompter) SelectGamePath(prevInvalid string) (string, error) {
 	return p.Ask(`Paste the path to your World of Warcraft folder — or to the game program (.exe) itself.
 Examples: C:\Program Files (x86)\World of Warcraft\_classic_era_
           D:\Games\TurtleWoW\VanillaFixes.exe`)
+}
+
+// ChooseGame renders the numbered install menu: 1..N picks a candidate, B
+// switches to the paste-a-path flow, X cancels setup, and plain Enter takes
+// the default — the first candidate, which the scanner orders to be the
+// remembered or best install. EOF (Ctrl+Z/Ctrl+D, a dying terminal, piped
+// stdin running dry) CANCELS like X: silently selecting and permanently
+// persisting candidate #1 without an affirmative keypress would break the
+// never-auto-proceeds contract, and cancelling never blocks either.
+func (p *ConsolePrompter) ChooseGame(cands []GameCandidate) (GameSelection, error) {
+	if p.yes || !p.interactive {
+		// Defensive: the wizard resolves --yes/non-interactive before ever
+		// prompting; never block here regardless.
+		return GameSelection{Index: -1}, fmt.Errorf("input required but the session is non-interactive")
+	}
+	if len(cands) == 1 {
+		fmt.Fprintln(p.out, "Found this World of Warcraft install:")
+	} else {
+		fmt.Fprintf(p.out, "Found %d World of Warcraft installs. Which one should WoW Mobile use?\n", len(cands))
+	}
+	for i, c := range cands {
+		fmt.Fprintf(p.out, "  %d. %s\n", i+1, c.Label)
+	}
+	fmt.Fprintln(p.out, "  B. Somewhere else — enter a folder or game .exe path")
+	fmt.Fprintln(p.out, "  X. Cancel setup")
+	rangeHint := "1"
+	if len(cands) > 1 {
+		rangeHint = fmt.Sprintf("1-%d", len(cands))
+	}
+	for {
+		fmt.Fprintf(p.out, "Choose [%s, B, X] (Enter = 1): ", rangeHint)
+		line, err := p.in.ReadString('\n')
+		if err != nil && line == "" {
+			return GameSelection{Index: -1}, ErrGameChoiceCancelled // EOF mid-menu: cancel, never pick
+		}
+		switch ans := strings.ToLower(strings.TrimSpace(line)); ans {
+		case "":
+			return GameSelection{Index: 0}, nil
+		case "b":
+			return GameSelection{Index: -1, Browse: true}, nil
+		case "x":
+			return GameSelection{Index: -1}, ErrGameChoiceCancelled
+		default:
+			if n, aerr := strconv.Atoi(ans); aerr == nil && n >= 1 && n <= len(cands) {
+				return GameSelection{Index: n - 1}, nil
+			}
+			fmt.Fprintf(p.out, "Please answer %s, B, or X (or press Enter for 1).\n", rangeHint)
+		}
+	}
 }
 
 // Notice is a no-op on the console: the wizard has already printed the same

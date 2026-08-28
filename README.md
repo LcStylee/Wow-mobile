@@ -41,9 +41,11 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
   addon button is simply tapped.
 - **Consumer-grade host app.** A real Windows installer (`WowMobile-Setup.exe`,
   Start Menu + Add/Remove Programs), no terminal window: setup runs in native
-  dialogs (with a folder picker when WoW isn't found), a dark status dashboard
-  opens in your browser with a big scannable QR code and live stream stats, and
-  a tray icon offers Open dashboard / Quit. Terminal users keep the classic
+  dialogs — it scans for every WoW install on the PC and lets you choose the
+  right one (multiple installs are first-class; `--choose-game` re-opens the
+  picker any time) — a dark status dashboard opens in your browser with a big
+  scannable QR code and live stream stats, and a tray icon offers Open
+  dashboard / Choose game… / Quit. Terminal users keep the classic
   text wizard (`--console`). Private-server 1.12 clients are supported
   (`Wow.exe`/`VanillaFixes.exe`/any exe via picker or `--game-exe`) and get
   `WowMobile_Vanilla`, the dedicated 1.12 port of the touch-UI addon.

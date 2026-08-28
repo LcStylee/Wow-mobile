@@ -15,7 +15,8 @@
 //     a console of its own for the fully interactive wizard (ui_windows.go).
 //   - GUI mode — double-clicked (or --gui): no console ever appears; the
 //     wizard speaks through native dialogs, the status dashboard opens in the
-//     default browser, and a tray icon offers "Open dashboard" / "Quit".
+//     default browser, and a tray icon offers "Open dashboard" /
+//     "Choose game…" / "Quit".
 //
 // Non-Windows builds are console-only.
 package main

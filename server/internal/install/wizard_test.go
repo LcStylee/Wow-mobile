@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 type fakeSys struct {
 	registry      string
 	wellKnown     []string
+	installRoots  []string
 	pathFFmpeg    string
 	wingetFFmpeg  string
 	haveWinget    bool
@@ -29,6 +31,7 @@ type fakeSys struct {
 
 func (f *fakeSys) RegistryWowPath() (string, bool) { return f.registry, f.registry != "" }
 func (f *fakeSys) WellKnownWowDirs() []string      { return f.wellKnown }
+func (f *fakeSys) WowInstallRoots() []string       { return f.installRoots }
 func (f *fakeSys) LookPathFFmpeg() (string, bool)  { return f.pathFFmpeg, f.pathFFmpeg != "" }
 func (f *fakeSys) WingetFFmpeg() (string, bool) {
 	if f.wingetRan && f.afterWinget != "" {
@@ -57,8 +60,16 @@ type scriptPrompter struct {
 	t        *testing.T
 	confirms []bool
 	asks     []string
+	chooses  []scriptChoice // scripted ChooseGame outcomes
+	offered  [][]GameCandidate
 	asked    []string
 	notices  []string
+}
+
+// scriptChoice is one scripted ChooseGame answer.
+type scriptChoice struct {
+	sel GameSelection
+	err error
 }
 
 func (p *scriptPrompter) Confirm(q string, def bool) (bool, error) {
@@ -86,6 +97,17 @@ func (p *scriptPrompter) Ask(q string) (string, error) {
 
 func (p *scriptPrompter) SelectGamePath(prevInvalid string) (string, error) {
 	return p.Ask("select game path (prev invalid: " + prevInvalid + ")")
+}
+
+func (p *scriptPrompter) ChooseGame(cands []GameCandidate) (GameSelection, error) {
+	p.asked = append(p.asked, fmt.Sprintf("choose: %d candidates", len(cands)))
+	p.offered = append(p.offered, cands)
+	if len(p.chooses) == 0 {
+		p.t.Fatalf("unexpected ChooseGame with %d candidates — the picker should have been skipped", len(cands))
+	}
+	c := p.chooses[0]
+	p.chooses = p.chooses[1:]
+	return c.sel, c.err
 }
 
 func (p *scriptPrompter) Notice(title, message string) {
@@ -205,8 +227,9 @@ func TestRunFirstTimeFlow(t *testing.T) {
 	}
 }
 
-// Locate order: a stale persisted path falls through to the registry, and the
-// fresh find is persisted as the recorded game exe.
+// Locate order: a stale persisted path falls through to the scan, whose
+// registry candidate is offered in the picker; the confirmed find is
+// persisted as the recorded game exe.
 func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	wow := makeWowDir(t, true)
 	storeDir := t.TempDir()
@@ -217,7 +240,7 @@ func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	}
 
 	sys := &fakeSys{registry: wow, pathFFmpeg: "ff", windowPresent: true}
-	p := &scriptPrompter{t: t}
+	p := &scriptPrompter{t: t, chooses: []scriptChoice{{sel: GameSelection{Index: 0}}}}
 	opts := baseOpts(t, "", sys, p)
 	opts.Store = LoadStore(storeDir)
 
@@ -229,6 +252,9 @@ func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	if res.GameExe != wantExe {
 		t.Fatalf("registry candidate not used: %q", res.GameExe)
 	}
+	if len(p.offered) != 1 || len(p.offered[0]) != 1 || p.offered[0][0].ExePath != wantExe {
+		t.Fatalf("picker not shown the registry candidate: %+v", p.offered)
+	}
 	after := LoadStore(storeDir)
 	if got := after.Get(KeyGameExe); got != wantExe {
 		t.Fatalf("fresh find not persisted as game_exe: %q", got)
@@ -238,8 +264,10 @@ func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	}
 }
 
-// The pre-game_exe wow_path key still works: existing installs upgrade
-// without re-detection or prompts.
+// The pre-game_exe wow_path key was persisted by releases that auto-detected
+// without asking, so it must NOT take the silent fast path: the scan runs
+// once with the remembered install as the picker's first/default candidate,
+// and the confirmed pick is marked chosen — later runs are then silent.
 func TestLocateWowMigratesLegacyWowPathKey(t *testing.T) {
 	wow := makeWowDir(t, true)
 	storeDir := t.TempDir()
@@ -249,15 +277,76 @@ func TestLocateWowMigratesLegacyWowPathKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
-	opts := baseOpts(t, "", sys, &scriptPrompter{t: t})
+	p := &scriptPrompter{t: t, chooses: []scriptChoice{{sel: GameSelection{Index: 0}}}}
+	opts := baseOpts(t, "", sys, p)
 	opts.Store = LoadStore(storeDir)
 
 	res, err := Run(opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.GameExe != filepath.Join(wow, GameExeName) {
+	wantExe := filepath.Join(wow, GameExeName)
+	if res.GameExe != wantExe {
 		t.Fatalf("wow_path migration failed: %+v", res)
+	}
+	if len(p.offered) != 1 || p.offered[0][0].ExePath != wantExe {
+		t.Fatalf("unconfirmed wow_path must go through the picker with itself as default: %+v", p.offered)
+	}
+	after := LoadStore(storeDir)
+	if after.Get(KeyGameExe) != wantExe || after.Get(KeyGameChosen) != "1" {
+		t.Fatalf("confirmed migration not persisted with the chosen marker: exe=%q chosen=%q",
+			after.Get(KeyGameExe), after.Get(KeyGameChosen))
+	}
+
+	// Second run: the now-confirmed choice is reused with zero prompts.
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts2 := baseOpts(t, "", sys2, &scriptPrompter{t: t})
+	opts2.Store = LoadStore(storeDir)
+	res2, err := Run(opts2)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if res2.GameExe != wantExe {
+		t.Fatalf("confirmed choice not reused silently: %+v", res2)
+	}
+}
+
+// A game_exe persisted by a pre-picker release carries no explicit-choice
+// marker (those releases auto-detected and persisted without asking — the
+// v0.2.0 field report: wrong install grabbed on a multi-install PC). After
+// upgrading, that store must NOT keep the wrong install silently: the scan
+// runs, the remembered exe is only the picker's default, and the user's pick
+// of the other install wins and is marked chosen.
+func TestUnmarkedPersistedGameExeRescans(t *testing.T) {
+	remembered := makeWowDir(t, true)
+	other := makeGameDir(t, "Wow.exe", true)
+	storeDir := t.TempDir()
+	store := LoadStore(storeDir)
+	store.Set(KeyGameExe, filepath.Join(remembered, GameExeName))
+	store.Set(KeyClientType, string(ClientTypeClassicEra))
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	sys := &fakeSys{wellKnown: []string{other}, pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, chooses: []scriptChoice{{sel: GameSelection{Index: 1}}}}
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.offered) != 1 || len(p.offered[0]) != 2 ||
+		p.offered[0][0].ExePath != filepath.Join(remembered, GameExeName) {
+		t.Fatalf("unmarked game_exe must re-scan with itself as the picker default: %+v", p.offered)
+	}
+	if res.GameExe != filepath.Join(other, "Wow.exe") {
+		t.Fatalf("user's corrective pick not applied: %+v", res)
+	}
+	after := LoadStore(storeDir)
+	if after.Get(KeyGameExe) != res.GameExe || after.Get(KeyGameChosen) != "1" {
+		t.Fatalf("corrective pick not persisted with the chosen marker: exe=%q chosen=%q",
+			after.Get(KeyGameExe), after.Get(KeyGameChosen))
 	}
 }
 
@@ -397,6 +486,63 @@ func TestGameExeFlag(t *testing.T) {
 	opts2.GameExeFlag = filepath.Join(dir, "missing.exe")
 	if _, err := Run(opts2); err == nil || !strings.Contains(err.Error(), "--game-exe") {
 		t.Fatalf("invalid --game-exe not rejected: %v", err)
+	}
+}
+
+// A chosen install stamped with a non-1.x version ("stream only: touch UI
+// addon unavailable" in the picker) must get NO addon: neither variant can
+// load on a 2.x+ client, and the "Private-server 1.12 client detected"
+// notice must not fire for a client that is not a 1.12 client. The addon
+// step reports skipped instead; window settings still follow the nearer
+// family (legacy for 2.x–7.x, modern for 8.0+).
+func TestStreamOnlyClientSkipsAddon(t *testing.T) {
+	// TBC-era 2.4 client: legacy window settings, no addon, no 1.12 notice.
+	dir := makeGameDir(t, "Wow.exe", true) // legacy Config.wtf pre-satisfied
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t} // zero scripted answers: any prompt fails
+	opts := baseOpts(t, "", sys, p)
+	opts.GameExeFlag = filepath.Join(dir, "Wow.exe")
+	opts.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 2, Minor: 4}, true }
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ClientType != ClientTypeLegacy {
+		t.Fatalf("2.4 client must use the legacy settings family: %+v", res)
+	}
+	for _, folder := range []string{"WowMobile", "WowMobile_Vanilla"} {
+		if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", folder)); !os.IsNotExist(err) {
+			t.Errorf("%s must not be installed into a stream-only 2.4 client (err=%v)", folder, err)
+		}
+	}
+	text := opts.Out.(*bytes.Buffer).String()
+	if !strings.Contains(text, "skipped — stream only") {
+		t.Fatalf("addon step must report the stream-only skip:\n%s", text)
+	}
+	if strings.Contains(text, "Private-server 1.12 client detected") {
+		t.Fatalf("1.12 notice must not fire for a 2.4 client:\n%s", text)
+	}
+	if len(p.notices) != 0 {
+		t.Fatalf("GUI notice must not fire for a stream-only client: %v", p.notices)
+	}
+
+	// Retail 11.x client: modern settings family, addon equally skipped.
+	dir2 := makeWowDir(t, true)
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts2 := baseOpts(t, "", sys2, &scriptPrompter{t: t})
+	opts2.GameExeFlag = filepath.Join(dir2, GameExeName)
+	opts2.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 11, Minor: 2}, true }
+
+	res2, err := Run(opts2)
+	if err != nil {
+		t.Fatalf("Run (11.x): %v", err)
+	}
+	if res2.ClientType != ClientTypeClassicEra {
+		t.Fatalf("11.x client must use the modern settings family: %+v", res2)
+	}
+	if _, err := os.Stat(filepath.Join(dir2, "Interface", "AddOns", "WowMobile")); !os.IsNotExist(err) {
+		t.Errorf("WowMobile must not be installed into a stream-only 11.x client (err=%v)", err)
 	}
 }
 
@@ -654,5 +800,25 @@ func TestStorePreservesUnknownKeys(t *testing.T) {
 	}
 	if LoadStore(dir).Get(KeyWowPath) != `C:\wow` {
 		t.Fatal("updated key not persisted")
+	}
+}
+
+func TestRememberedGameExeIgnoresStaleWowPathUnderMarker(t *testing.T) {
+	store := LoadStore(t.TempDir())
+	// A pre-picker upgrade scenario: the user's explicit choice (marker set)
+	// whose exe has since vanished, alongside a stale auto-detected wow_path
+	// pointing at a different, never-confirmed install. The fast path must
+	// NOT silently substitute the stale install — it must return "" so the
+	// wizard falls through to a fresh scan-and-ask.
+	staleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staleDir, "WowClassic.exe"), []byte("mz"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.Set(KeyGameChosen, "1")
+	store.Set(KeyGameExe, filepath.Join(t.TempDir(), "gone", "WowClassic.exe"))
+	store.Set(KeyWowPath, staleDir)
+	opts := &Options{Store: store}
+	if got := rememberedGameExe(opts); got != "" {
+		t.Fatalf("rememberedGameExe = %q, want \"\": a stale wow_path must never stand in for a vanished explicit choice", got)
 	}
 }

@@ -42,8 +42,26 @@ func TestParseExplicit(t *testing.T) {
 	}
 }
 
+func TestParseChooseGame(t *testing.T) {
+	cfg, err := Parse([]string{"--choose-game"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ChooseGame {
+		t.Fatal("--choose-game not parsed")
+	}
+	cfg, err = Parse(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ChooseGame {
+		t.Fatal("--choose-game must default off")
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	bad := [][]string{
+		{"--choose-game", "--skip-setup"}, // the picker is part of setup
 		{"--resolution", "1080"},
 		{"--resolution", "0x0"},
 		{"--resolution", "1081x1920"}, // odd width
