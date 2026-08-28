@@ -152,7 +152,7 @@ func TestDetectClientType(t *testing.T) {
 		{`C:\turtle\wow.exe`, ClientTypeLegacy, true},
 		{`C:\turtle\VanillaFixes.exe`, ClientTypeLegacy, true},
 		{`C:\turtle\vanillafixes.EXE`, ClientTypeLegacy, true},
-		{`C:\turtle\TurtleWoW.exe`, "", false},           // unknown name => ask
+		{`C:\turtle\TurtleWoW.exe`, "", false},                        // unknown name => ask
 		{`C:\_classic_era_\anything.exe`, ClientTypeClassicEra, true}, // tree wins for unknown names too
 	}
 	for _, tc := range tests {

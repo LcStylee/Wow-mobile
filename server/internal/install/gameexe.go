@@ -39,10 +39,13 @@ func (ct ClientType) valid() bool {
 
 // String returns the human wording used in wizard output and dialogs.
 func (ct ClientType) String() string {
-	if ct == ClientTypeLegacy {
+	switch ct {
+	case ClientTypeLegacy:
 		return "1.12-era client"
+	case ClientTypeClassicEra:
+		return "Classic Era"
 	}
-	return "Classic Era"
+	return string(ct)
 }
 
 // KnownGameExes are the game executables recognized inside a selected folder,
@@ -134,7 +137,7 @@ func ResolveGameExe(path string) (string, error) {
 // launched through a Wow.exe/VanillaFixes.exe found there; the legacy names
 // only classify as 1.12-era OUTSIDE such a tree.
 func DetectClientType(exePath string) (ClientType, bool) {
-	base := strings.ToLower(filepath.Base(exePath))
+	base := strings.ToLower(lastPathComponent(exePath))
 	if base == "wowclassic.exe" {
 		return ClientTypeClassicEra, true
 	}
@@ -158,4 +161,14 @@ func DefaultClientType(exePath string) ClientType {
 		return ClientTypeClassicEra
 	}
 	return ClientTypeLegacy
+}
+
+// lastPathComponent is filepath.Base for Windows paths on any OS: the
+// detection rules must classify `C:\...\Wow.exe` identically in the portable
+// tests (Linux CI) and on the Windows host, so both separators split.
+func lastPathComponent(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }

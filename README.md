@@ -39,6 +39,14 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
   right-click, pinch to zoom, plus a floating quick rail (Space / Esc / chat /
   Map / Bags) and an on-screen chat keyboard. Below the world square, every
   addon button is simply tapped.
+- **Consumer-grade host app.** A real Windows installer (`WowMobile-Setup.exe`,
+  Start Menu + Add/Remove Programs), no terminal window: setup runs in native
+  dialogs (with a folder picker when WoW isn't found), a dark status dashboard
+  opens in your browser with a big scannable QR code and live stream stats, and
+  a tray icon offers Open dashboard / Quit. Terminal users keep the classic
+  text wizard (`--console`). Private-server 1.12 clients are supported
+  (`Wow.exe`/`VanillaFixes.exe`/any exe via picker or `--game-exe`) and get
+  `WowMobile_Vanilla`, the dedicated 1.12 port of the touch-UI addon.
 - **Installable PWA client.** Add to Home Screen, fullscreen with portrait lock,
   screen wake lock, live HUD (RTT, bitrate, fps, encode time), on-the-fly
   quality switching (4/8/16 Mbps), and automatic reconnect with backoff after
@@ -53,23 +61,28 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
 ## Quickstart
 
-1. **Download** the latest `wowstreamd.exe` from
+1. **Download `WowMobile-Setup.exe`** from
    [GitHub Releases](https://github.com/LcStylee/Wow-mobile/releases) onto your
-   Windows gaming PC.
-2. **Double-click it** and follow the first-run wizard. It finds your WoW
-   Classic Era install (or asks for the path), installs the bundled WowMobile
-   addon, sets the portrait window in `Config.wtf`, finds or installs FFmpeg,
-   and offers to launch the game — the phone client is built into the exe, so
-   there is nothing else to download.
+   Windows gaming PC and **run it**.
 
-   *Windows SmartScreen note:* the binary is unsigned, so SmartScreen may warn
-   about an unknown publisher. Click **More info → Run anyway**, or build from
-   source ([docs/SETUP.md](docs/SETUP.md#manual-setup-advanced)).
+   *Windows SmartScreen note:* the installer is unsigned, so SmartScreen may
+   warn about an unknown publisher. Click **More info → Run anyway**, or build
+   from source ([docs/SETUP.md](docs/SETUP.md#manual-setup-advanced)).
+2. **Launch WoW Mobile from the Start Menu.** No terminal window — it walks
+   you through everything in normal Windows dialogs (finds your WoW install or
+   shows a folder picker, installs the bundled WowMobile addon, sets the
+   portrait window, installs FFmpeg if needed, offers to launch the game), then
+   opens a status page in your browser with a **big QR code** and drops an icon
+   into the system tray.
 3. **Scan the QR code** with your phone (same Wi-Fi), accept the self-signed
    certificate, and tap to play.
 
-Full walkthrough (wizard details, phone pairing, manual setup, and
-troubleshooting): [docs/SETUP.md](docs/SETUP.md).
+Prefer no installer? The standalone `wowstreamd.exe` on the same Releases page
+is the portable alternative — double-click for the same dialog flow, or run it
+from a terminal for the classic text wizard (`--console` forces it).
+
+Full walkthrough (dialog flow, dashboard, phone pairing, manual setup, private
+servers, and troubleshooting): [docs/SETUP.md](docs/SETUP.md).
 
 ## Requirements
 
@@ -84,7 +97,10 @@ troubleshooting): [docs/SETUP.md](docs/SETUP.md).
   [Releases](https://github.com/LcStylee/Wow-mobile/releases) binary.
 - **5 GHz Wi-Fi** (or better) with phone and PC on the same LAN. There is no
   STUN/TURN — this is deliberately LAN-only.
-- **WoW Classic Era** (the addon targets Interface `11507`).
+- **WoW Classic Era** (the addon targets Interface `11507`) — or a 1.12-era
+  private-server client (streams fine; the wizard installs `WowMobile_Vanilla`,
+  the 1.12 port of the touch UI addon — see the
+  [private servers FAQ](#faq)).
 - A modern phone browser: Safari 16+ on iOS, Chrome/Edge on Android.
 
 ## Latency, honestly
@@ -123,6 +139,18 @@ relaying your own inputs 1:1 — is the established remote-play category
 one-touch-one-input rule exists precisely to keep it there. No warranty is made
 about how any third party treats your account.
 
+**Does it work with private servers (1.12 clients, Wow.exe / VanillaFixes.exe)?**
+Yes — streaming, touch input, the dashboard, and the phone client all work
+identically. The wizard's folder picker accepts any folder containing
+`Wow.exe`/`VanillaFixes.exe`, or you can pick **any** game `.exe` yourself
+(`--game-exe` from the command line). It even writes the right `Config.wtf`
+CVars for 1.12 (`gxResolution` instead of `gxWindowedResolution`). The touch
+UI comes along too: the Classic Era addon (Interface `11507`) cannot load on
+1.12, so the wizard installs **`WowMobile_Vanilla`** — a dedicated 1.12
+(Lua 5.0) port of the addon — instead; enable **WoW Mobile (Vanilla)** once at
+character select. Details:
+[docs/SETUP.md → Private servers](docs/SETUP.md#private-servers-112-clients).
+
 **Can I play over the internet / on mobile data?**
 Not out of the box, and on purpose. The signaling server binds to your LAN,
 WebRTC uses host candidates only, and the latency budget assumes a LAN. If you
@@ -152,17 +180,21 @@ cleanly replaces the first, never mirrors it.
 ## Repository layout
 
 The repo root is the Go module (`github.com/LcStylee/Wow-mobile`); build with
-`go build ./server/cmd/wowstreamd` from the root. `client/` and
-`addon/WowMobile/` are embedded into the binary at build time (`embed.go`), so
-the released exe is fully self-contained.
+`go build ./server/cmd/wowstreamd` from the root. `client/` and both addon
+variants (`addon/WowMobile/`, `addon/WowMobile_Vanilla/`) are embedded into
+the binary at build time (`embed.go`), so the released exe is fully
+self-contained.
 
 | Path | What |
 |---|---|
 | `addon/WowMobile/` | WoW Classic Era addon (Lua): portrait UI overhaul, control deck, touch panels — embedded in the exe, installed by the wizard |
+| `addon/WowMobile_Vanilla/` | The same touch UI ported to 1.12 clients (Lua 5.0, Interface `11200`) — embedded in the exe, installed by the wizard for private-server clients |
 | `server/` | `wowstreamd` — Go streaming host for Windows: capture, WebRTC, input injection, signaling, first-run wizard |
 | `client/` | Zero-build PWA phone client: video, gesture layer, joystick, HUD, chat keyboard — embedded in the exe and served by it |
 | `protocol/` | Binding wire-protocol spec for the client⇄server data channels |
-| `embed.go` | Root embed package: `go:embed` of `client/` and `addon/WowMobile/` |
+| `embed.go` | Root embed package: `go:embed` of `client/`, `client/host/`, `addon/WowMobile/`, and `addon/WowMobile_Vanilla/` |
+| `installer/` | NSIS script that packages `wowstreamd.exe` into `WowMobile-Setup.exe` |
+| `assets/` | App icon artwork (`wowmobile.ico`) and its generator |
 | `docs/` | [Architecture](docs/ARCHITECTURE.md) and [setup guide](docs/SETUP.md) |
 
 ## License

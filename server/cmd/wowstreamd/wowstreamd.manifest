@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Application manifest baked into wowstreamd.exe via rsrc_windows_amd64.syso
+     (regen command: server/cmd/wowstreamd/rsrc.go). Two effects:
+       - Common Controls v6: the GUI wizard's MessageBox/task dialogs and the
+         folder/file pickers render in the modern visual style instead of the
+         Windows-95 look.
+       - Per-monitor-v2 DPI awareness: dialogs and the tray menu draw crisp on
+         scaled displays, applied from the very first window. The .syso lives
+         in the package directory, so EVERY windows/amd64 build (console mode
+         included) carries this manifest; the runtime path
+         (platform_windows.go makeProcessDPIAware) treats the resulting
+         already-set ERROR_ACCESS_DENIED as success and only acts as a
+         fallback for a build whose .syso is missing. -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" processorArchitecture="amd64"
+                    name="WowMobile.wowstreamd" type="win32"/>
+  <description>WoW Mobile streaming host</description>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0" processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

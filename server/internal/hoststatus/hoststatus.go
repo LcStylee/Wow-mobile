@@ -112,7 +112,8 @@ func (s *Status) SetClientType(ct string) {
 }
 
 // SetAddonNote sets the persistent dashboard note (legacy 1.12 clients: the
-// addon was not installed); "" clears it.
+// WowMobile_Vanilla port was installed — enable it at character select); ""
+// clears it.
 func (s *Status) SetAddonNote(note string) {
 	if s == nil {
 		return

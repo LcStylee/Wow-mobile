@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WoW Mobile — host</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a10">
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <main id="page">
+    <header id="masthead">
+      <svg id="mark" viewBox="0 0 48 48" aria-hidden="true">
+        <rect x="10" y="4" width="28" height="40" rx="6" fill="none" stroke="currentColor" stroke-width="3"/>
+        <path d="M21 17 L31 24 L21 31 Z" fill="currentColor"/>
+      </svg>
+      <div id="masthead-text">
+        <h1>WoW <span>Mobile</span></h1>
+        <p>Streaming host on this PC</p>
+      </div>
+      <span id="version" class="pill">…</span>
+    </header>
+
+    <!-- Legacy-client note (1.12 private servers): persistent, honest. -->
+    <aside id="addon-note" class="note" hidden></aside>
+
+    <div id="columns">
+      <section class="card" id="pair-card">
+        <h2>Pair your phone</h2>
+        <p class="hint">Same Wi-Fi as this PC. Scan, accept the certificate
+          warning once, add to Home Screen, tap to play.</p>
+        <div id="qr-wrap">
+          <img id="qr" src="qr.svg" alt="Pairing QR code" width="280" height="280">
+        </div>
+        <div id="url-row">
+          <code id="pair-url">waiting for server…</code>
+          <button id="copy" type="button" title="Copy the pairing URL">Copy</button>
+        </div>
+      </section>
+
+      <section class="card" id="setup-card">
+        <h2>Setup checklist</h2>
+        <ul id="steps" aria-live="polite"></ul>
+
+        <h2 class="mt">Live status</h2>
+        <dl id="live">
+          <div><dt>Encoder</dt><dd id="encoder">–</dd></div>
+          <div><dt>Client</dt><dd id="client-type">–</dd></div>
+          <div><dt>Phone</dt><dd id="phone">not connected</dd></div>
+        </dl>
+        <div id="stream" hidden>
+          <div class="stat"><b id="s-kbps">–</b><span>kbps</span></div>
+          <div class="stat"><b id="s-fps">–</b><span>fps</span></div>
+          <div class="stat"><b id="s-enc">–</b><span>enc&nbsp;ms</span></div>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <button id="quit" type="button">Quit WoW Mobile</button>
+      <p class="hint">Quitting stops streaming and releases all inputs.
+        WoW itself keeps running.</p>
+    </footer>
+  </main>
+
+  <!-- Shown after Quit or when the server goes away. -->
+  <div id="offline" hidden>
+    <div>
+      <h2>WoW Mobile stopped</h2>
+      <p>The streaming server is no longer running on this PC.
+        Start it again from the Start Menu to resume.</p>
+    </div>
+  </div>
+
+  <script src="host.js"></script>
+</body>
+</html>

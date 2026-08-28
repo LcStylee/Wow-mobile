@@ -134,3 +134,35 @@ func TestServerCertificateRegeneratedOnNewLANIP(t *testing.T) {
 		t.Fatal("certificate not regenerated for an uncovered LAN IP")
 	}
 }
+
+// HostURL follows the configured bind: 127.0.0.1 for wildcard binds (which
+// include loopback), the bound address itself for explicit loopback binds,
+// and "" for a specific non-loopback bind — there the LoopbackOnly-guarded
+// dashboard is unreachable and no URL must be advertised (callers warn and
+// skip the GUI auto-open instead).
+func TestHostURLFollowsBindAddress(t *testing.T) {
+	cases := []struct {
+		addr  string
+		noTLS bool
+		want  string
+	}{
+		{":8443", false, "https://127.0.0.1:8443/host/"},
+		{"0.0.0.0:8443", false, "https://127.0.0.1:8443/host/"},
+		{"[::]:9000", false, "https://127.0.0.1:9000/host/"},
+		{":8443", true, "http://127.0.0.1:8443/host/"},
+		{"127.0.0.1:8443", false, "https://127.0.0.1:8443/host/"},
+		{"[::1]:8443", false, "https://[::1]:8443/host/"},
+		{"localhost:8443", false, "https://localhost:8443/host/"},
+		{"garbage", false, "https://127.0.0.1:8443/host/"}, // unparsable: default port, loopback
+		// Non-loopback binds: loopback cannot reach the listener at all.
+		{"192.168.1.5:8443", false, ""},
+		{"[fe80::1]:8443", false, ""},
+		{"10.0.0.2:8443", true, ""},
+	}
+	for _, tc := range cases {
+		s := &Server{addr: tc.addr, noTLS: tc.noTLS}
+		if got := s.HostURL(); got != tc.want {
+			t.Errorf("HostURL(addr=%q noTLS=%v) = %q, want %q", tc.addr, tc.noTLS, got, tc.want)
+		}
+	}
+}

@@ -19,6 +19,7 @@ var (
 	user32                            = windows.NewLazySystemDLL("user32.dll")
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetProcessDPIAware            = user32.NewProc("SetProcessDPIAware")
+	procIsProcessDPIAware             = user32.NewProc("IsProcessDPIAware")
 )
 
 // dpiAwarenessContextPerMonitorAwareV2 is the pseudo-handle
@@ -33,20 +34,40 @@ const dpiAwarenessContextPerMonitorAwareV2 = ^uintptr(3)
 // pixels — the capture rect, the resolution-mismatch check, and the SendInput
 // virtual-screen normalization would all be wrong. Must run before the first
 // window/metrics query.
+//
+// Note that every windows/amd64 build already starts per-monitor-v2 aware:
+// the application manifest in rsrc_windows_amd64.syso (which sits in this
+// package directory, so plain `go build` picks it up too) declares
+// PerMonitorV2, and process DPI awareness is set-once — the runtime setters
+// below then fail with ERROR_ACCESS_DENIED ("the default API awareness mode
+// ... has already been set ... within the application manifest"). That is
+// success, not a problem, so it must not be warned about; the setters are a
+// fallback for a build whose .syso was stripped or is missing.
 func makeProcessDPIAware(log *slog.Logger) {
 	// Per-monitor-v2 (Windows 10 1703+) also keeps mixed-DPI multi-monitor
 	// setups consistent. SetProcessDpiAwarenessContext returns nonzero on
-	// success.
+	// success; ERROR_ACCESS_DENIED means awareness was already fixed at
+	// process creation (the manifest's PerMonitorV2) — aware either way.
 	if procSetProcessDpiAwarenessContext.Find() == nil {
-		if ret, _, _ := procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorAwareV2); ret != 0 {
+		ret, _, callErr := procSetProcessDpiAwarenessContext.Call(dpiAwarenessContextPerMonitorAwareV2)
+		if ret != 0 || callErr == windows.ERROR_ACCESS_DENIED {
 			return
 		}
 	}
 	// Older Windows: system-DPI awareness still stops virtualization on
 	// single-monitor setups (SetProcessDPIAware, user32, Vista+).
-	if ret, _, callErr := procSetProcessDPIAware.Call(); ret == 0 {
-		log.Warn("could not make process DPI-aware; capture rect and input mapping will be wrong on scaled displays", "err", callErr)
+	if ret, _, _ := procSetProcessDPIAware.Call(); ret != 0 {
+		return
 	}
+	// Both setters refused. Warn only when the process genuinely ends up
+	// DPI-unaware — with the manifest applied (or a pre-1703 Windows where
+	// its dpiAware element set awareness) the setters fail even though the
+	// process is aware, and IsProcessDPIAware (user32, Vista+; true for
+	// system- and per-monitor-aware alike) tells the two cases apart.
+	if ret, _, _ := procIsProcessDPIAware.Call(); ret != 0 {
+		return
+	}
+	log.Warn("could not make process DPI-aware; capture rect and input mapping will be wrong on scaled displays")
 }
 
 // newPlatform locates the WoW window up front (failing fast with guidance if

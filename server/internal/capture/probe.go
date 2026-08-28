@@ -27,7 +27,9 @@ var encoderPreference = []struct {
 func ProbeEncoder(ffmpegPath string) (Encoder, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-encoders").Output()
+	cmd := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-encoders")
+	hideConsole(cmd) // Windows: no console flash from the probe in GUI mode
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("probing %s for encoders: %w", ffmpegPath, err)
 	}

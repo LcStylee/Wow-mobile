@@ -26,6 +26,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
 	"github.com/LcStylee/Wow-mobile/server/internal/rtc"
 )
 
@@ -63,11 +64,30 @@ type Server struct {
 	httpServer *http.Server
 	listener   net.Listener // bound by Listen, consumed by Serve
 
+	host HostUI // zero value = host dashboard disabled
+
 	// Single-session auth state, replaced wholesale on each pairing.
 	authMu   sync.Mutex
 	auth     sessionAuth
 	haveAuth bool
 }
+
+// HostUI configures the loopback-only host dashboard (/host). All fields must
+// be set for the dashboard to be served.
+type HostUI struct {
+	// FS is the embedded dashboard page tree (client/host).
+	FS fs.FS
+	// Status is serialized at GET /host/api/status and provides the pairing
+	// URL for GET /host/qr.svg.
+	Status *hoststatus.Status
+	// Quit is invoked by POST /host/api/quit — the same graceful shutdown as
+	// Ctrl+C (cancel the Serve context).
+	Quit func()
+}
+
+// EnableHostUI turns on the /host dashboard routes. Must be called before
+// Listen.
+func (s *Server) EnableHostUI(h HostUI) { s.host = h }
 
 type sessionAuth struct {
 	id         string
@@ -115,6 +135,7 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /api/session/{id}/offer", s.handleOffer)
 	mux.HandleFunc("DELETE /api/session/{id}", s.handleDelete)
 	mux.Handle("/", http.FileServerFS(s.clientFS))
+	s.registerHostRoutes(mux)
 
 	s.httpServer = &http.Server{
 		Addr:              s.addr,
@@ -194,6 +215,17 @@ func (s *Server) PrintBanner(w io.Writer, token string, tokenGenerated bool) {
 			fmt.Fprint(w, qr)
 		}
 	}
+	if s.host.FS != nil {
+		// Console mode: the dashboard is not auto-opened, so print where it
+		// lives (GUI mode opens the browser and the tray icon links it) — or,
+		// on a non-loopback --addr bind, say why there is no dashboard URL
+		// instead of advertising one the listener cannot serve.
+		if url := s.HostURL(); url != "" {
+			fmt.Fprintf(w, "\nStatus dashboard (this PC only): %s\n", url)
+		} else {
+			fmt.Fprintf(w, "\nStatus dashboard unavailable: --addr binds %s only, which loopback cannot reach (use a wildcard or loopback bind to enable it).\n", s.addr)
+		}
+	}
 	if tokenGenerated {
 		fmt.Fprintln(w, "Pairing token was generated for this run; pass --token to fix it.")
 	}
@@ -201,6 +233,53 @@ func (s *Server) PrintBanner(w io.Writer, token string, tokenGenerated bool) {
 		fmt.Fprintln(w, "The certificate is self-signed: accept the browser warning when pairing (it is reused across restarts).")
 	}
 	fmt.Fprintln(w)
+}
+
+// HostURL is the loopback address of the host dashboard, derived from the
+// configured bind: 127.0.0.1 for the default wildcard binds (which include
+// loopback), the bound address itself for an explicit loopback bind (e.g.
+// --addr [::1]:8443, where 127.0.0.1 is NOT listening). It returns "" when
+// --addr binds a specific non-loopback address: no loopback listener exists
+// then — and LoopbackOnly would reject the /host routes on that address
+// anyway — so there is no working dashboard URL to advertise; callers print a
+// warning / skip the browser auto-open instead of pointing at a dead URL.
+func (s *Server) HostURL() string {
+	scheme := "https"
+	if s.noTLS {
+		scheme = "http"
+	}
+	host, port, err := net.SplitHostPort(s.addr)
+	if err != nil || port == "" {
+		port = "8443"
+	}
+	ip := net.ParseIP(host)
+	switch {
+	case host == "" || (ip != nil && ip.IsUnspecified()):
+		host = "127.0.0.1" // wildcard bind: loopback is included
+	case (ip != nil && ip.IsLoopback()) || strings.EqualFold(host, "localhost"):
+		// explicit loopback bind: keep it — it is the only listening address.
+	default:
+		return "" // non-loopback bind: the dashboard is unreachable
+	}
+	return fmt.Sprintf("%s://%s/host/", scheme, net.JoinHostPort(host, port))
+}
+
+// PairingURL is the preferred phone pairing URL (token in the query string),
+// mirroring the banner's first line; "" when no LAN IP is known.
+func (s *Server) PairingURL(token string) string {
+	ips := LANIPs()
+	if len(ips) == 0 {
+		return ""
+	}
+	scheme := "https"
+	if s.noTLS {
+		scheme = "http"
+	}
+	_, port, err := net.SplitHostPort(s.addr)
+	if err != nil || port == "" {
+		port = "8443"
+	}
+	return fmt.Sprintf("%s://%s:%s/?token=%s", scheme, ips[0], port, token)
 }
 
 // terminalQR renders content as a half-block-character QR code, two modules
@@ -247,6 +326,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.storeAuth(sessionAuth{id: id, secretHash: sha256.Sum256([]byte(secret))})
 	s.mgr.Create(id)
+	// Dashboard "phone" card: who paired last (nil-safe when no host UI).
+	s.host.Status.SetPhoneInfo(r.RemoteAddr, r.UserAgent())
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookie,

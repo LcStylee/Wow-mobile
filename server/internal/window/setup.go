@@ -30,6 +30,8 @@ func PrintSetup(w io.Writer, width, height int) {
      SET gxWindowedResolution "%dx%d"
 
    %dx%d must equal wowstreamd's --resolution so touch coordinates map 1:1.
+   (1.12-era private-server clients predate gxWindowedResolution — write
+   SET gxResolution "..." there instead; the wizard picks the right one.)
 
 3. Install the WowMobile addon (portrait touch UI). The first-run wizard does
    this automatically — rerun wowstreamd without --skip-setup. From a source
@@ -37,8 +39,13 @@ func PrintSetup(w io.Writer, width, height int) {
 
      C:\Program Files (x86)\World of Warcraft\_classic_era_\Interface\AddOns\WowMobile
 
-4. Launch WoW, log in, and enable "WoW Mobile" on the AddOns screen of the
-   character select if it is not already checked.
+   (1.12-era private-server clients use the addon/WowMobile_Vanilla directory
+   — the 1.12 port — copied to Interface\AddOns\WowMobile_Vanilla instead;
+   the wizard picks the right variant.)
+
+4. Launch WoW, log in, and enable "WoW Mobile" ("WoW Mobile (Vanilla)" on a
+   1.12 client) on the AddOns screen of the character select if it is not
+   already checked.
 
 5. Run wowstreamd and open the printed URL on your phone.
 `, width, height, width, height)

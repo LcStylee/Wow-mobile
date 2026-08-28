@@ -1,12 +1,17 @@
-// Package install is wowstreamd's first-run wizard: it locates the WoW
-// Classic Era installation, installs/updates the embedded WowMobile addon,
-// fixes Config.wtf for the portrait window, finds (or installs) FFmpeg, and
-// makes sure the game is running — each step idempotent and near-instant when
-// already satisfied, so the wizard runs on every start.
+// Package install is wowstreamd's first-run wizard: it locates the game
+// (official WoW Classic Era or a 1.12-era private-server client), installs or
+// updates the embedded addon variant matching the client (WowMobile for
+// Classic Era, the WowMobile_Vanilla 1.12 port for legacy), fixes Config.wtf
+// for the portrait window, finds (or installs) FFmpeg, and makes sure the
+// game is running — each step idempotent and near-instant when already
+// satisfied, so the wizard runs on every start.
 //
 // The wizard logic in this file is portable and tested everywhere; the
 // Windows-only operations (registry, drive scan, winget, window checks) sit
-// behind the System interface, implemented in sys_windows.go.
+// behind the System interface (sys_windows.go), and the user interface sits
+// behind Prompter — a console implementation in prompt.go and a native-dialog
+// implementation in cmd/wowstreamd (GUI mode), so the wizard logic stays
+// single-source.
 package install
 
 import (
@@ -18,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
 )
 
 // wizardSteps is the step count in the "[n/5]" progress prefix.
@@ -28,8 +35,31 @@ const wizardSteps = 5
 // non-interactive run can never hang forever.
 const defaultWaitTimeout = 10 * time.Minute
 
-// GameExeName is the WoW Classic Era executable inside the game directory.
+// GameExeName is the official WoW Classic Era executable — the auto-detect
+// paths (registry, well-known dirs) look for it via KnownGameExes; private
+// servers record whatever executable the user picked instead.
 const GameExeName = "WowClassic.exe"
+
+// Checklist step ids/labels, shared with the host dashboard (hoststatus).
+const (
+	StepGame    = "game"
+	StepAddon   = "addon"
+	StepConfig  = "config"
+	StepFFmpeg  = "ffmpeg"
+	StepRunning = "running"
+)
+
+// Steps returns the dashboard checklist matching this wizard's steps, in
+// order and all pending — the single source for hoststatus.New.
+func Steps() []hoststatus.Step {
+	return []hoststatus.Step{
+		{ID: StepGame, Label: "World of Warcraft"},
+		{ID: StepAddon, Label: "WowMobile addon"},
+		{ID: StepConfig, Label: "Portrait resolution"},
+		{ID: StepFFmpeg, Label: "FFmpeg"},
+		{ID: StepRunning, Label: "Game running"},
+	}
+}
 
 // System abstracts every Windows-only operation the wizard needs, so the
 // orchestration logic stays portable and testable with a fake.
@@ -50,7 +80,8 @@ type System interface {
 	HaveWinget() bool
 	// RunWingetInstall runs `winget install -e --id Gyan.FFmpeg
 	// --accept-source-agreements --accept-package-agreements`, streaming its
-	// output to out.
+	// output to out. The child runs with no console window of its own, so GUI
+	// mode never flashes a terminal.
 	RunWingetInstall(out io.Writer) error
 	// ProbeEncoder returns the best H.264 encoder name (e.g. "h264_nvenc")
 	// the given ffmpeg build offers.
@@ -63,7 +94,9 @@ type System interface {
 }
 
 // Prompter asks the user. The console implementation honors --yes and
-// non-interactive stdin; tests inject scripted answers.
+// non-interactive stdin; the GUI implementation (cmd/wowstreamd, Windows)
+// shows native dialogs and never touches stdin; tests inject scripted
+// answers.
 type Prompter interface {
 	// Confirm asks a yes/no question with a default. Implementations must
 	// never block when the session is non-interactive — they return def.
@@ -71,6 +104,16 @@ type Prompter interface {
 	// Ask asks for free-form text with no default. Implementations must fail
 	// (not block) when the session is non-interactive.
 	Ask(question string) (string, error)
+	// SelectGamePath asks where WoW is — the answer may be a folder or the
+	// game .exe itself. prevInvalid is the previously rejected answer ("" on
+	// the first ask); the GUI uses it to offer a retry / pick-the-exe-yourself
+	// dialog, the console re-prompts. Must fail, not block, when
+	// non-interactive.
+	SelectGamePath(prevInvalid string) (string, error)
+	// Notice shows a message needing the user's attention once. The GUI shows
+	// an information dialog; the console implementation is a no-op because the
+	// wizard has already printed the same text to its output.
+	Notice(title, message string)
 }
 
 // Options configures a wizard run.
@@ -80,15 +123,21 @@ type Options struct {
 	Store  *Store // persisted state (config.json); never nil
 	Sys    System
 
-	AddonFS fs.FS // embedded addon rooted at the WowMobile folder
+	AddonFS        fs.FS // embedded Classic Era addon rooted at the WowMobile folder
+	VanillaAddonFS fs.FS // embedded 1.12 port rooted at the WowMobile_Vanilla folder
 
 	Width, Height int    // --resolution, for Config.wtf
 	WindowTitle   string // --window-title, for the game-running check
 	WowDirFlag    string // --wow-dir override, "" = auto-detect
+	GameExeFlag   string // --game-exe override: exact game executable, beats everything
 	FFmpegFlag    string // --ffmpeg override, "" = search
 
-	Interactive bool // stdin is a terminal
+	Interactive bool // a user can answer prompts (terminal stdin, or GUI dialogs)
 	Yes         bool // --yes: accept every default
+
+	// Status receives live step states for the host dashboard; nil is fine
+	// (all hoststatus methods are nil-safe).
+	Status *hoststatus.Status
 
 	PollInterval time.Duration // wait-loop granularity; 0 = 2s
 	WaitTimeout  time.Duration // wait-loop cap before a clear error; 0 = defaultWaitTimeout
@@ -96,42 +145,80 @@ type Options struct {
 
 // Result is what the rest of wowstreamd needs from a completed wizard run.
 type Result struct {
-	WowDir     string // validated WoW _classic_era_ directory
-	FFmpegPath string // located ffmpeg executable
+	GameExe    string     // recorded game executable (the launch target)
+	GameDir    string     // its directory — Interface\ and WTF\ live beneath it
+	ClientType ClientType // classicEra or legacy (1.12 private server)
+	FFmpegPath string     // located ffmpeg executable
 }
+
+// LegacyAddonNote is the explanation shown (dashboard note + console print +
+// one-time GUI dialog) when a 1.12-era client is detected: such clients get
+// WowMobile_Vanilla — the 1.12 (Lua 5.0) port of the touch UI — instead of
+// the Classic Era addon, and it must be enabled once at character select.
+const LegacyAddonNote = "Private-server 1.12 client detected: the WowMobile_Vanilla addon — the 1.12 port " +
+	"of the WoW Mobile touch UI — was installed instead of the Classic Era addon. At WoW's character " +
+	"select, open AddOns and make sure \"WoW Mobile (Vanilla)\" is checked (once). Streaming and touch " +
+	"input work either way."
 
 // Run executes the five wizard steps in order and returns the located paths.
 // Every step is idempotent: on a machine that is already set up it only
 // prints its "[n/5] ... OK" line and moves on.
-func Run(opts Options) (*Result, error) {
+func Run(opts Options) (res *Result, err error) {
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 2 * time.Second
 	}
-	res := &Result{}
+	res = &Result{}
 
-	var err error
-	if res.WowDir, err = stepLocateWow(&opts); err != nil {
+	// Any error marks the step being worked on as failed on the dashboard;
+	// track it via a tiny helper each step calls on entry.
+	current := ""
+	begin := func(id string) {
+		current = id
+		opts.Status.SetStep(id, hoststatus.StateRunning, "")
+	}
+	defer func() {
+		if err != nil && current != "" {
+			opts.Status.SetStep(current, hoststatus.StateFailed, err.Error())
+		}
+	}()
+
+	begin(StepGame)
+	if res.GameExe, res.ClientType, err = stepLocateGame(&opts); err != nil {
 		return nil, err
 	}
-	if err := stepInstallAddon(&opts, res.WowDir); err != nil {
+	res.GameDir = filepath.Dir(res.GameExe)
+	opts.Status.SetClientType(string(res.ClientType))
+
+	begin(StepAddon)
+	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType); err != nil {
 		return nil, err
 	}
-	if err := stepConfigWTF(&opts, res.WowDir); err != nil {
+	begin(StepConfig)
+	if err = stepConfigWTF(&opts, res.GameDir, res.ClientType); err != nil {
 		return nil, err
 	}
+	begin(StepFFmpeg)
 	if res.FFmpegPath, err = stepFFmpeg(&opts); err != nil {
 		return nil, err
 	}
-	if err := stepGameRunning(&opts, res.WowDir); err != nil {
+	begin(StepRunning)
+	if err = stepGameRunning(&opts, res.GameExe); err != nil {
 		return nil, err
 	}
 	return res, nil
 }
 
-// step prints one aligned wizard progress line:
+// step prints one aligned wizard progress line and mirrors it to the
+// dashboard checklist:
 //
-//	[1/5] WoW Classic Era ....... found: C:\...
-func step(out io.Writer, n int, label, result string) {
+//	[1/5] World of Warcraft .... found: C:\...
+func step(opts *Options, n int, id, label, state, result string) {
+	stepLine(opts.Out, n, label, result)
+	opts.Status.SetStep(id, state, result)
+}
+
+// stepLine renders the aligned "[n/5] label .... result" progress line.
+func stepLine(out io.Writer, n int, label, result string) {
 	dots := 22 - len(label)
 	if dots < 3 {
 		dots = 3
@@ -139,73 +226,126 @@ func step(out io.Writer, n int, label, result string) {
 	fmt.Fprintf(out, "[%d/%d] %s %s %s\n", n, wizardSteps, label, strings.Repeat(".", dots), result)
 }
 
-// ValidWowDir reports whether dir is a usable WoW Classic Era directory:
-// WowClassic.exe next to an Interface\ directory.
-func ValidWowDir(dir string) bool {
-	if dir == "" {
-		return false
+// stepLocateGame finds the game executable: --game-exe, --wow-dir, persisted
+// state, the Blizzard registry, well-known paths, then a prompt (console:
+// pasted folder-or-exe path; GUI: folder browser with an exe-picker
+// fallback). It then resolves the client type and persists both.
+func stepLocateGame(opts *Options) (string, ClientType, error) {
+	const label = "World of Warcraft"
+	exe := ""
+
+	switch {
+	case opts.GameExeFlag != "":
+		// Validated like --ffmpeg: a typo'd path fails here with a targeted
+		// error, not later at launch. Accepted verbatim otherwise — any exe
+		// name works (private servers).
+		if st, err := os.Stat(opts.GameExeFlag); err != nil || st.IsDir() {
+			return "", "", fmt.Errorf("--game-exe %q: not an existing file", opts.GameExeFlag)
+		}
+		exe = opts.GameExeFlag
+	case opts.WowDirFlag != "":
+		e, err := ResolveGameExe(opts.WowDirFlag)
+		if err != nil {
+			return "", "", fmt.Errorf("--wow-dir: %w", err)
+		}
+		exe = e
+	default:
+		exe = locateGameAuto(opts)
 	}
-	if st, err := os.Stat(filepath.Join(dir, GameExeName)); err != nil || st.IsDir() {
-		return false
+
+	if exe == "" {
+		stepLine(opts.Out, 1, label, "not found automatically")
+		prevInvalid := ""
+		for attempt := 0; attempt < 5; attempt++ {
+			answer, err := opts.Prompt.SelectGamePath(prevInvalid)
+			if err != nil {
+				return "", "", fmt.Errorf("WoW was not found; pass its folder with --wow-dir or the game program with --game-exe (%w)", err)
+			}
+			e, rerr := ResolveGameExe(answer)
+			if rerr == nil {
+				exe = e
+				break
+			}
+			prevInvalid = strings.Trim(strings.TrimSpace(answer), `"`)
+			fmt.Fprintf(opts.Out, "  %v\n", rerr)
+		}
+		if exe == "" {
+			return "", "", errors.New("no valid WoW location after 5 attempts; pass --wow-dir <folder> or --game-exe <program>")
+		}
 	}
-	st, err := os.Stat(filepath.Join(dir, "Interface"))
-	return err == nil && st.IsDir()
+
+	ct, err := resolveClientType(opts, exe)
+	if err != nil {
+		return "", "", err
+	}
+	persistGame(opts, exe, ct)
+	step(opts, 1, StepGame, label, hoststatus.StateOK, fmt.Sprintf("found: %s (%s)", exe, ct))
+	return exe, ct, nil
 }
 
-// stepLocateWow finds the game directory: flag, persisted config, registry,
-// well-known paths, then a prompt. The result is persisted for next time.
-func stepLocateWow(opts *Options) (string, error) {
-	const label = "WoW Classic Era"
-	if opts.WowDirFlag != "" {
-		if !ValidWowDir(opts.WowDirFlag) {
-			return "", fmt.Errorf("--wow-dir %q is not a WoW Classic Era directory (need %s and Interface\\ inside it)", opts.WowDirFlag, GameExeName)
+// locateGameAuto tries the zero-question sources in order: persisted game
+// exe, persisted (pre-upgrade) wow_path, the Blizzard registry, well-known
+// install paths. Returns "" when all fail.
+func locateGameAuto(opts *Options) string {
+	if exe := opts.Store.Get(KeyGameExe); exe != "" {
+		if st, err := os.Stat(exe); err == nil && !st.IsDir() {
+			return exe
 		}
-		persistWowDir(opts, opts.WowDirFlag)
-		step(opts.Out, 1, label, "found: "+opts.WowDirFlag+" (--wow-dir)")
-		return opts.WowDirFlag, nil
 	}
-
-	if dir := opts.Store.Get(KeyWowPath); ValidWowDir(dir) {
-		step(opts.Out, 1, label, "found: "+dir)
-		return dir, nil
+	if dir := opts.Store.Get(KeyWowPath); dir != "" { // migration from older versions
+		if exe, err := ResolveGameExe(dir); err == nil {
+			return exe
+		}
 	}
 	if base, ok := opts.Sys.RegistryWowPath(); ok {
-		for _, cand := range []string{base, filepath.Join(base, "_classic_era_")} {
-			if ValidWowDir(cand) {
-				persistWowDir(opts, cand)
-				step(opts.Out, 1, label, "found: "+cand)
-				return cand, nil
+		for _, cand := range []string{base, filepath.Join(base, classicEraDirName)} {
+			if exe, err := ResolveGameExe(cand); err == nil {
+				return exe
 			}
 		}
 	}
 	for _, cand := range opts.Sys.WellKnownWowDirs() {
-		if ValidWowDir(cand) {
-			persistWowDir(opts, cand)
-			step(opts.Out, 1, label, "found: "+cand)
-			return cand, nil
+		if exe, err := ResolveGameExe(cand); err == nil {
+			return exe
 		}
 	}
-
-	step(opts.Out, 1, label, "not found automatically")
-	for attempt := 0; attempt < 5; attempt++ {
-		dir, err := opts.Prompt.Ask(`Paste the path to your WoW Classic Era folder (the one containing ` + GameExeName + `), e.g. C:\Program Files (x86)\World of Warcraft\_classic_era_`)
-		if err != nil {
-			return "", fmt.Errorf("WoW Classic Era was not found; pass its path with --wow-dir (%w)", err)
-		}
-		dir = strings.Trim(strings.TrimSpace(dir), `"`)
-		if ValidWowDir(dir) {
-			persistWowDir(opts, dir)
-			step(opts.Out, 1, label, "found: "+dir)
-			return dir, nil
-		}
-		fmt.Fprintf(opts.Out, "  %q does not contain %s and Interface\\ — please check the path.\n", dir, GameExeName)
-	}
-	return "", errors.New("no valid WoW Classic Era directory after 5 attempts; pass it with --wow-dir")
+	return ""
 }
 
-func persistWowDir(opts *Options, dir string) {
-	if opts.Store.Get(KeyWowPath) != dir {
-		opts.Store.Set(KeyWowPath, dir)
+// resolveClientType classifies the client behind exe: automatic detection
+// first, then the persisted earlier answer for this same exe, then the user.
+// Under --yes / non-interactive, Confirm returns the non-guessing default
+// (DefaultClientType: classicEra only for _classic_era_ paths, else legacy)
+// and the choice is logged either way.
+func resolveClientType(opts *Options, exe string) (ClientType, error) {
+	if ct, ok := DetectClientType(exe); ok {
+		return ct, nil
+	}
+	if opts.Store.Get(KeyGameExe) == exe {
+		if ct := ClientType(opts.Store.Get(KeyClientType)); ct.valid() {
+			return ct, nil
+		}
+	}
+	def := DefaultClientType(exe) == ClientTypeClassicEra
+	isClassic, err := opts.Prompt.Confirm(
+		"Is "+filepath.Base(exe)+" a WoW Classic Era (1.15) client? Choose No for a 1.12-era private-server client.", def)
+	if err != nil {
+		return "", err
+	}
+	ct := ClientTypeLegacy
+	if isClassic {
+		ct = ClientTypeClassicEra
+	}
+	fmt.Fprintf(opts.Out, "  Unrecognized game program %s — treating it as a %s client.\n", filepath.Base(exe), ct)
+	return ct, nil
+}
+
+// persistGame stores the resolved exe and client type together (the type is
+// only trusted while it matches the exe).
+func persistGame(opts *Options, exe string, ct ClientType) {
+	if opts.Store.Get(KeyGameExe) != exe || opts.Store.Get(KeyClientType) != string(ct) {
+		opts.Store.Set(KeyGameExe, exe)
+		opts.Store.Set(KeyClientType, string(ct))
 		saveStore(opts)
 	}
 }
@@ -216,33 +356,57 @@ func saveStore(opts *Options) {
 	}
 }
 
-// stepInstallAddon copies the embedded addon into Interface\AddOns\WowMobile,
-// writing only files that are missing or differ; nothing else in AddOns is
-// ever touched.
-func stepInstallAddon(opts *Options, wowDir string) error {
+// stepInstallAddon copies the embedded addon matching the client type into
+// <gameDir>\Interface\AddOns — the Classic Era addon (WowMobile, Interface
+// 11507) for Classic Era clients, its 1.12 port (WowMobile_Vanilla, Interface
+// 11200, Lua 5.0) for legacy private-server clients — writing only files that
+// are missing or changed; nothing else in AddOns is ever touched. Legacy
+// clients additionally get a visible note (dashboard + console + one-time GUI
+// dialog) that the Vanilla variant is the one to enable at character select.
+func stepInstallAddon(opts *Options, gameDir string, ct ClientType) error {
 	const label = "WowMobile addon"
-	dest := filepath.Join(wowDir, "Interface", "AddOns", "WowMobile")
-	plan, err := PlanAddon(opts.AddonFS, dest)
+	src, folder := opts.AddonFS, "WowMobile"
+	if ct == ClientTypeLegacy {
+		src, folder = opts.VanillaAddonFS, "WowMobile_Vanilla"
+	}
+	dest := filepath.Join(gameDir, "Interface", "AddOns", folder)
+	plan, err := PlanAddon(src, dest)
 	if err != nil {
 		return fmt.Errorf("comparing addon files: %w", err)
 	}
 	if plan.Changed() {
-		if err := ApplyAddon(opts.AddonFS, dest, plan); err != nil {
+		if err := ApplyAddon(src, dest, plan); err != nil {
 			return fmt.Errorf("installing addon into %s: %w", dest, err)
 		}
 	}
-	step(opts.Out, 2, label, plan.Summary())
+	summary := plan.Summary()
+	if ct == ClientTypeLegacy {
+		summary += " (WowMobile_Vanilla, 1.12 port)"
+	}
+	step(opts, 2, StepAddon, label, hoststatus.StateOK, summary)
+	if ct == ClientTypeLegacy {
+		fmt.Fprintln(opts.Out, "  "+LegacyAddonNote)
+		opts.Status.SetAddonNote(LegacyAddonNote)
+		// The modal GUI notice must not nag on every start; the dashboard
+		// note and the console print above repeat, the dialog shows once.
+		if opts.Store.Get(KeyLegacyNoticeShown) != "1" {
+			opts.Prompt.Notice("WoW Mobile", LegacyAddonNote)
+			opts.Store.Set(KeyLegacyNoticeShown, "1")
+			saveStore(opts)
+		}
+	}
 	return nil
 }
 
-// stepConfigWTF ensures the portrait-window settings in WTF\Config.wtf,
-// with a .bak backup and a minimal edit — but never while WoW is running,
-// because the game rewrites the file on exit.
-func stepConfigWTF(opts *Options, wowDir string) error {
+// stepConfigWTF ensures the portrait-window settings in <gameDir>\WTF\
+// Config.wtf — the CVar names follow the client type (gxWindowedResolution on
+// Classic Era, gxResolution on 1.12) — with a .bak backup and a minimal edit,
+// but never while WoW is running, because the game rewrites the file on exit.
+func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 	const label = "Portrait resolution"
-	want := PortraitSettings(opts.Width, opts.Height)
+	want := PortraitSettingsFor(ct, opts.Width, opts.Height)
 	resolution := fmt.Sprintf("%dx%d", opts.Width, opts.Height)
-	path := filepath.Join(wowDir, "WTF", "Config.wtf")
+	path := filepath.Join(gameDir, "WTF", "Config.wtf")
 
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -251,7 +415,7 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 			return perr
 		}
 		if !ok {
-			step(opts.Out, 3, label, "skipped — configure the window manually (see --setup)")
+			step(opts, 3, StepConfig, label, hoststatus.StateSkipped, "skipped — configure the window manually (see --setup)")
 			return nil
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -260,7 +424,7 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 		if err := os.WriteFile(path, FreshConfig(want), 0o644); err != nil {
 			return fmt.Errorf("creating %s: %w", path, err)
 		}
-		step(opts.Out, 3, label, fmt.Sprintf("Config.wtf created (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf created (%s windowed)", resolution))
 		return nil
 	}
 	if err != nil {
@@ -268,7 +432,7 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 	}
 
 	if SettingsSatisfied(content, want) {
-		step(opts.Out, 3, label, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
 		return nil
 	}
 
@@ -283,10 +447,11 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 			return perr
 		}
 		if !wait {
-			step(opts.Out, 3, label, "unchanged — close WoW and restart wowstreamd to apply "+resolution)
+			step(opts, 3, StepConfig, label, hoststatus.StateSkipped, "unchanged — close WoW and restart wowstreamd to apply "+resolution)
 			return nil
 		}
 		fmt.Fprintln(opts.Out, "  Waiting for WoW to close (Ctrl+C to abort)...")
+		opts.Status.SetStep(StepConfig, hoststatus.StateRunning, "waiting for WoW to close")
 		if err := waitForGameWindow(opts, false, "WoW to close"); err != nil {
 			return fmt.Errorf("%w; close WoW and restart wowstreamd to apply %s", err, resolution)
 		}
@@ -296,7 +461,7 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 			return perr
 		}
 		if !ok {
-			step(opts.Out, 3, label, "skipped — configure the window manually (see --setup)")
+			step(opts, 3, StepConfig, label, hoststatus.StateSkipped, "skipped — configure the window manually (see --setup)")
 			return nil
 		}
 	}
@@ -306,9 +471,9 @@ func stepConfigWTF(opts *Options, wowDir string) error {
 		return fmt.Errorf("updating %s: %w", path, err)
 	}
 	if changed {
-		step(opts.Out, 3, label, fmt.Sprintf("Config.wtf updated (%s windowed, backup: Config.wtf%s)", resolution, BackupSuffix))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf updated (%s windowed, backup: Config.wtf%s)", resolution, BackupSuffix))
 	} else {
-		step(opts.Out, 3, label, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
 	}
 	return nil
 }
@@ -328,9 +493,14 @@ func stepFFmpeg(opts *Options) (string, error) {
 	const label = "FFmpeg"
 	report := func(path string) string {
 		if enc, ok := opts.Sys.ProbeEncoder(path); ok {
+			opts.Status.SetEncoder(enc)
 			return fmt.Sprintf("found: %s available", enc)
 		}
 		return "found: " + path
+	}
+	found := func(path, suffix string) (string, error) {
+		step(opts, 4, StepFFmpeg, label, hoststatus.StateOK, report(path)+suffix)
+		return path, nil
 	}
 
 	if opts.FFmpegFlag != "" {
@@ -339,32 +509,28 @@ func stepFFmpeg(opts *Options) (string, error) {
 		if st, err := os.Stat(opts.FFmpegFlag); err != nil || st.IsDir() {
 			return "", fmt.Errorf("--ffmpeg %q: not an existing file", opts.FFmpegFlag)
 		}
-		step(opts.Out, 4, label, report(opts.FFmpegFlag)+" (--ffmpeg)")
-		return opts.FFmpegFlag, nil
+		return found(opts.FFmpegFlag, " (--ffmpeg)")
 	}
 	if path, ok := opts.Sys.LookPathFFmpeg(); ok {
-		step(opts.Out, 4, label, report(path))
-		return path, nil
+		return found(path, "")
 	}
 	if path := opts.Store.Get(KeyFFmpegPath); path != "" {
 		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			step(opts.Out, 4, label, report(path))
-			return path, nil
+			return found(path, "")
 		}
 	}
 	if path, ok := opts.Sys.WingetFFmpeg(); ok {
 		persistFFmpeg(opts, path)
-		step(opts.Out, 4, label, report(path))
-		return path, nil
+		return found(path, "")
 	}
 
-	step(opts.Out, 4, label, "not found")
+	step(opts, 4, StepFFmpeg, label, hoststatus.StateRunning, "not found")
 	if !opts.Sys.HaveWinget() {
 		fmt.Fprintln(opts.Out, "  winget is not available on this system.")
 		fmt.Fprintln(opts.Out, FFmpegManualInstallHint)
 		return "", errors.New("ffmpeg not found (install it, then restart wowstreamd, or pass --ffmpeg)")
 	}
-	ok, err := opts.Prompt.Confirm("Install FFmpeg now via winget (winget install -e --id Gyan.FFmpeg)?", true)
+	ok, err := opts.Prompt.Confirm("FFmpeg (the video encoder WoW Mobile uses) is not installed. Install it now via winget? This runs in the background and can take a few minutes.", true)
 	if err != nil {
 		return "", err
 	}
@@ -372,16 +538,17 @@ func stepFFmpeg(opts *Options) (string, error) {
 		fmt.Fprintln(opts.Out, FFmpegManualInstallHint)
 		return "", errors.New("ffmpeg not found (install it, then restart wowstreamd, or pass --ffmpeg)")
 	}
+	opts.Status.SetStep(StepFFmpeg, hoststatus.StateRunning, "installing FFmpeg via winget…")
 	if err := opts.Sys.RunWingetInstall(opts.Out); err != nil {
 		fmt.Fprintln(opts.Out, FFmpegManualInstallHint)
 		return "", fmt.Errorf("winget install of FFmpeg failed: %w", err)
 	}
 	// The fresh install is not on this process's PATH — find the binary in
 	// the WinGet packages directory and persist it for every future start.
+	// On success the wizard continues automatically; no further prompt.
 	if path, ok := opts.Sys.WingetFFmpeg(); ok {
 		persistFFmpeg(opts, path)
-		step(opts.Out, 4, label, report(path)+" (installed via winget)")
-		return path, nil
+		return found(path, " (installed via winget)")
 	}
 	return "", errors.New("winget reported success but ffmpeg.exe was not found under the WinGet packages directory; restart wowstreamd (new PATH) or pass --ffmpeg")
 }
@@ -393,35 +560,35 @@ func persistFFmpeg(opts *Options, path string) {
 	}
 }
 
-// stepGameRunning checks for the game window and offers to launch
-// WowClassic.exe, polling until the window (post-login) exists.
-func stepGameRunning(opts *Options, wowDir string) error {
+// stepGameRunning checks for the game window and offers to launch the
+// recorded game executable, polling until the window (post-login) exists.
+func stepGameRunning(opts *Options, gameExe string) error {
 	const label = "Game running"
 	if opts.Sys.GameWindowPresent(opts.WindowTitle) {
-		step(opts.Out, 5, label, "window found")
+		step(opts, 5, StepRunning, label, hoststatus.StateOK, "window found")
 		return nil
 	}
 
-	step(opts.Out, 5, label, "no window matching "+fmt.Sprintf("%q", opts.WindowTitle))
+	step(opts, 5, StepRunning, label, hoststatus.StateRunning, "no window matching "+fmt.Sprintf("%q", opts.WindowTitle))
 	if !opts.Interactive && !opts.Yes {
 		return errors.New("the WoW window was not found and stdin is not interactive; start WoW first, or run with --yes to auto-launch it")
 	}
-	exe := filepath.Join(wowDir, GameExeName)
-	ok, err := opts.Prompt.Confirm("Launch "+exe+" now?", true)
+	ok, err := opts.Prompt.Confirm("Launch "+gameExe+" now?", true)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return errors.New("WoW is not running; start it (windowed, not minimized), then restart wowstreamd")
 	}
-	if err := opts.Sys.LaunchGame(exe); err != nil {
-		return fmt.Errorf("launching %s: %w", exe, err)
+	if err := opts.Sys.LaunchGame(gameExe); err != nil {
+		return fmt.Errorf("launching %s: %w", gameExe, err)
 	}
 	fmt.Fprintln(opts.Out, "  WoW is starting — log in to your character. Waiting for the game window (Ctrl+C to abort)...")
+	opts.Status.SetStep(StepRunning, hoststatus.StateRunning, "waiting for the game window — log in to your character")
 	if err := waitForGameWindow(opts, true, "the WoW window to appear"); err != nil {
-		return fmt.Errorf("%w after launching %s; check that the game started (windowed, not minimized), then restart wowstreamd", err, GameExeName)
+		return fmt.Errorf("%w after launching %s; check that the game started (windowed, not minimized), then restart wowstreamd", err, filepath.Base(gameExe))
 	}
-	step(opts.Out, 5, label, "window found")
+	step(opts, 5, StepRunning, label, hoststatus.StateOK, "window found")
 	return nil
 }
 

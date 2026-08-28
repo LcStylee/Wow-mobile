@@ -3,25 +3,27 @@
 package main
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 
 	embedded "github.com/LcStylee/Wow-mobile"
 	"github.com/LcStylee/Wow-mobile/server/internal/config"
+	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
 	"github.com/LcStylee/Wow-mobile/server/internal/install"
+	"github.com/LcStylee/Wow-mobile/server/internal/winui"
 )
 
 // runFirstRunWizard runs the five-step installer wizard before streaming.
 // It fills cfg.FFmpegPath with the located ffmpeg when the flag was not set,
-// so the rest of startup needs no PATH lookup of its own.
-func runFirstRunWizard(cfg *config.Config, _ *slog.Logger) error {
+// so the rest of startup needs no PATH lookup of its own. In console mode the
+// wizard is the classic text flow on stdin/stdout; in GUI mode the same
+// wizard logic speaks through native dialogs (guiPrompter) and never touches
+// stdin.
+func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status, _ *slog.Logger) error {
 	if cfg.SkipSetup {
 		return nil
 	}
@@ -29,24 +31,43 @@ func runFirstRunWizard(cfg *config.Config, _ *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("embedded addon missing: %w", err)
 	}
+	vanillaAddonFS, err := fs.Sub(embedded.VanillaAddonFS, "addon/WowMobile_Vanilla")
+	if err != nil {
+		return fmt.Errorf("embedded 1.12 addon missing: %w", err)
+	}
 	configDir, err := os.UserConfigDir() // %APPDATA%
 	if err != nil {
 		return fmt.Errorf("resolving %%APPDATA%%: %w", err)
 	}
-	interactive := stdinIsTerminal()
+
+	var prompt install.Prompter
+	interactive := false
+	if ui.gui {
+		// Dialogs can always ask (unless --yes promised not to), and they
+		// never read stdin — the GUI-mode no-blocking guarantee.
+		prompt = guiPrompter{yes: cfg.Yes}
+		interactive = !cfg.Yes
+	} else {
+		interactive = stdinIsTerminal()
+		prompt = install.NewConsolePrompter(os.Stdin, os.Stdout, interactive, cfg.Yes)
+	}
+
 	res, err := install.Run(install.Options{
-		Out:         os.Stdout,
-		Prompt:      install.NewConsolePrompter(os.Stdin, os.Stdout, interactive, cfg.Yes),
-		Store:       install.LoadStore(filepath.Join(configDir, "wowstreamd")),
-		Sys:         install.NewSystem(),
-		AddonFS:     addonFS,
-		Width:       cfg.Width,
-		Height:      cfg.Height,
-		WindowTitle: cfg.WindowTitle,
-		WowDirFlag:  cfg.WowDir,
-		FFmpegFlag:  cfg.FFmpegPath,
-		Interactive: interactive,
-		Yes:         cfg.Yes,
+		Out:            os.Stdout,
+		Prompt:         prompt,
+		Store:          install.LoadStore(filepath.Join(configDir, "wowstreamd")),
+		Sys:            install.NewSystem(),
+		AddonFS:        addonFS,
+		VanillaAddonFS: vanillaAddonFS,
+		Width:          cfg.Width,
+		Height:         cfg.Height,
+		WindowTitle:    cfg.WindowTitle,
+		WowDirFlag:     cfg.WowDir,
+		GameExeFlag:    cfg.GameExe,
+		FFmpegFlag:     cfg.FFmpegPath,
+		Interactive:    interactive,
+		Yes:            cfg.Yes,
+		Status:         status,
 	})
 	if err != nil {
 		return err
@@ -57,49 +78,36 @@ func runFirstRunWizard(cfg *config.Config, _ *slog.Logger) error {
 	return nil
 }
 
-// stdinIsTerminal reports whether stdin is an interactive console (a real
-// console handle answers GetConsoleMode; pipes and files do not).
-func stdinIsTerminal() bool {
-	var mode uint32
-	return windows.GetConsoleMode(windows.Handle(os.Stdin.Fd()), &mode) == nil
+// guiPrompter implements install.Prompter with native dialogs (winui) —
+// GUI-mode wizard runs never block on stdin anywhere.
+type guiPrompter struct {
+	yes bool // --yes: answer every Confirm with its default, ask nothing
 }
 
-// setupConsole enables ANSI/VT processing on the console so escape sequences
-// render instead of leaking as text; when the console refuses (very old
-// Windows, redirected output) everything degrades to plain text — the wizard
-// and banner are plain text by construction.
-func setupConsole() {
-	for _, f := range []*os.File{os.Stdout, os.Stderr} {
-		h := windows.Handle(f.Fd())
-		var mode uint32
-		if windows.GetConsoleMode(h, &mode) == nil {
-			_ = windows.SetConsoleMode(h, mode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING)
-		}
+func (p guiPrompter) Confirm(question string, def bool) (bool, error) {
+	if p.yes {
+		return def, nil
 	}
+	return winui.AskYesNo(question, def), nil
 }
 
-// holdConsoleOnFatal keeps the console window alive after a fatal error when
-// this process is the console's only owner — i.e. the user double-clicked the
-// exe and the window would vanish before the error could be read. Started
-// from an existing terminal (cmd/PowerShell), it exits immediately as usual.
-func holdConsoleOnFatal() {
-	if !stdinIsTerminal() || !ownsConsole() {
-		return
+func (p guiPrompter) Ask(question string) (string, error) {
+	// The wizard's only free-form question is the game location, which goes
+	// through SelectGamePath below; anything else has no GUI affordance.
+	return "", errors.New("free-form input is not available in GUI mode")
+}
+
+func (p guiPrompter) SelectGamePath(prevInvalid string) (string, error) {
+	if p.yes {
+		return "", errors.New("--yes cannot open a folder picker; pass --wow-dir or --game-exe")
 	}
-	fmt.Fprint(os.Stderr, "\nPress Enter to exit...")
-	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	path, err := winui.SelectGameLocation(prevInvalid)
+	if errors.Is(err, winui.ErrCancelled) {
+		return "", errors.New("folder selection cancelled")
+	}
+	return path, err
 }
 
-var (
-	kernel32                  = windows.NewLazySystemDLL("kernel32.dll")
-	procGetConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
-)
-
-// ownsConsole reports whether this process is the only one attached to its
-// console (the double-click case: the console dies with the process).
-func ownsConsole() bool {
-	var pids [2]uint32
-	n, _, _ := procGetConsoleProcessList.Call(
-		uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
-	return n == 1
+func (p guiPrompter) Notice(title, message string) {
+	winui.Info(message)
 }

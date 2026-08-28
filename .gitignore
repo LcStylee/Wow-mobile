@@ -1,0 +1,3 @@
+# Build artifacts — the committed sources regenerate all of these.
+wowstreamd.exe
+installer/WowMobile-Setup.exe

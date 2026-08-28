@@ -169,6 +169,7 @@ func (s *Supervisor) runOnce(ctx context.Context, cfg Config, gen int) error {
 	// rect, resolved title) so every restart captures the current geometry.
 	args := s.argv(cfg)
 	cmd := exec.CommandContext(pctx, cfg.FFmpegPath, args...)
+	hideConsole(cmd) // Windows: no ffmpeg console window in GUI mode
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

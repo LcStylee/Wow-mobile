@@ -15,6 +15,15 @@ func addonSrc() fstest.MapFS {
 	}
 }
 
+// vanillaAddonSrc is the fake WowMobile_Vanilla (1.12 port) tree the wizard
+// installs for legacy clients.
+func vanillaAddonSrc() fstest.MapFS {
+	return fstest.MapFS{
+		"WowMobile_Vanilla.toc": {Data: []byte("## Interface: 11200\nCore.lua\n")},
+		"Core.lua":              {Data: []byte("-- vanilla core\n")},
+	}
+}
+
 func TestPlanAddonFreshInstall(t *testing.T) {
 	dest := t.TempDir()
 	src := addonSrc()

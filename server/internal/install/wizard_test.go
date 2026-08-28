@@ -58,6 +58,7 @@ type scriptPrompter struct {
 	confirms []bool
 	asks     []string
 	asked    []string
+	notices  []string
 }
 
 func (p *scriptPrompter) Confirm(q string, def bool) (bool, error) {
@@ -83,21 +84,42 @@ func (p *scriptPrompter) Ask(q string) (string, error) {
 	return ans, nil
 }
 
+func (p *scriptPrompter) SelectGamePath(prevInvalid string) (string, error) {
+	return p.Ask("select game path (prev invalid: " + prevInvalid + ")")
+}
+
+func (p *scriptPrompter) Notice(title, message string) {
+	p.notices = append(p.notices, message)
+}
+
 // makeWowDir builds a valid fake WoW Classic Era dir.
 func makeWowDir(t *testing.T, withConfig bool) string {
 	t.Helper()
+	return makeGameDir(t, GameExeName, withConfig)
+}
+
+// makeGameDir builds a fake game dir around the given executable name. When
+// withConfig is set, Config.wtf is pre-satisfied for the client type the
+// wizard will assign to that exe (Classic Era for WowClassic.exe, legacy for
+// everything else in these tests).
+func makeGameDir(t *testing.T, exeName string, withConfig bool) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, GameExeName), []byte("MZ"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, exeName), []byte("MZ"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "Interface", "AddOns"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if withConfig {
+		ct := ClientTypeClassicEra
+		if exeName != GameExeName {
+			ct = ClientTypeLegacy
+		}
 		if err := os.MkdirAll(filepath.Join(dir, "WTF"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "WTF", "Config.wtf"), FreshConfig(PortraitSettings(1080, 1920)), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "WTF", "Config.wtf"), FreshConfig(PortraitSettingsFor(ct, 1080, 1920)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -107,17 +129,18 @@ func makeWowDir(t *testing.T, withConfig bool) string {
 func baseOpts(t *testing.T, wow string, sys *fakeSys, p Prompter) Options {
 	t.Helper()
 	return Options{
-		Out:          &bytes.Buffer{},
-		Prompt:       p,
-		Store:        LoadStore(t.TempDir()),
-		Sys:          sys,
-		AddonFS:      addonSrc(),
-		Width:        1080,
-		Height:       1920,
-		WindowTitle:  "World of Warcraft",
-		WowDirFlag:   wow,
-		Interactive:  true,
-		PollInterval: time.Millisecond,
+		Out:            &bytes.Buffer{},
+		Prompt:         p,
+		Store:          LoadStore(t.TempDir()),
+		Sys:            sys,
+		AddonFS:        addonSrc(),
+		VanillaAddonFS: vanillaAddonSrc(),
+		Width:          1080,
+		Height:         1920,
+		WindowTitle:    "World of Warcraft",
+		WowDirFlag:     wow,
+		Interactive:    true,
+		PollInterval:   time.Millisecond,
 	}
 }
 
@@ -138,12 +161,13 @@ func TestRunAllSatisfiedSkipsEveryPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v\n%s", err, out.String())
 	}
-	if res.WowDir != wow || res.FFmpegPath != sys.pathFFmpeg {
+	wantExe := filepath.Join(wow, GameExeName)
+	if res.GameExe != wantExe || res.GameDir != wow || res.ClientType != ClientTypeClassicEra || res.FFmpegPath != sys.pathFFmpeg {
 		t.Fatalf("result wrong: %+v", res)
 	}
 	text := out.String()
 	for _, wantLine := range []string{
-		"[1/5] WoW Classic Era ....... found: " + wow,
+		"[1/5] World of Warcraft ..... found: " + wantExe + " (Classic Era)",
 		"[2/5] WowMobile addon ....... installed (3 files, up to date)",
 		"[3/5] Portrait resolution ... Config.wtf OK (1080x1920 windowed)",
 		"[4/5] FFmpeg ................ found: h264_nvenc available",
@@ -181,8 +205,8 @@ func TestRunFirstTimeFlow(t *testing.T) {
 	}
 }
 
-// Locate order: persisted path wins without prompting; a stale persisted path
-// falls through to registry, and the fresh find is re-persisted.
+// Locate order: a stale persisted path falls through to the registry, and the
+// fresh find is persisted as the recorded game exe.
 func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	wow := makeWowDir(t, true)
 	storeDir := t.TempDir()
@@ -201,11 +225,39 @@ func TestLocateWowPersistedThenRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.WowDir != wow {
-		t.Fatalf("registry candidate not used: %q", res.WowDir)
+	wantExe := filepath.Join(wow, GameExeName)
+	if res.GameExe != wantExe {
+		t.Fatalf("registry candidate not used: %q", res.GameExe)
 	}
-	if got := LoadStore(storeDir).Get(KeyWowPath); got != wow {
-		t.Fatalf("fresh find not persisted: %q", got)
+	after := LoadStore(storeDir)
+	if got := after.Get(KeyGameExe); got != wantExe {
+		t.Fatalf("fresh find not persisted as game_exe: %q", got)
+	}
+	if got := after.Get(KeyClientType); got != string(ClientTypeClassicEra) {
+		t.Fatalf("client type not persisted: %q", got)
+	}
+}
+
+// The pre-game_exe wow_path key still works: existing installs upgrade
+// without re-detection or prompts.
+func TestLocateWowMigratesLegacyWowPathKey(t *testing.T) {
+	wow := makeWowDir(t, true)
+	storeDir := t.TempDir()
+	store := LoadStore(storeDir)
+	store.Set(KeyWowPath, wow)
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts := baseOpts(t, "", sys, &scriptPrompter{t: t})
+	opts.Store = LoadStore(storeDir)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.GameExe != filepath.Join(wow, GameExeName) {
+		t.Fatalf("wow_path migration failed: %+v", res)
 	}
 }
 
@@ -220,8 +272,166 @@ func TestLocateWowPromptsAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.WowDir != wow {
-		t.Fatalf("pasted (quoted) path not accepted: %q", res.WowDir)
+	if res.GameExe != filepath.Join(wow, GameExeName) {
+		t.Fatalf("pasted (quoted) path not accepted: %q", res.GameExe)
+	}
+}
+
+// The pasted path may also be the exe itself — private servers pick the
+// program directly, whatever its name; an unknown name asks for the client
+// type once and persists the answer.
+func TestLocateWowAcceptsPastedExeAndAsksClientType(t *testing.T) {
+	dir := makeGameDir(t, "TurtleWoW.exe", true)
+	exe := filepath.Join(dir, "TurtleWoW.exe")
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	// Confirm #1: "Is this a Classic Era client?" answered NO => legacy.
+	p := &scriptPrompter{t: t, asks: []string{exe}, confirms: []bool{false}}
+	storeDir := t.TempDir()
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.GameExe != exe || res.ClientType != ClientTypeLegacy {
+		t.Fatalf("custom exe flow wrong: %+v", res)
+	}
+	if got := LoadStore(storeDir).Get(KeyClientType); got != string(ClientTypeLegacy) {
+		t.Fatalf("answered client type not persisted: %q", got)
+	}
+	// The 1.12 port must have been installed, its note printed, and the
+	// one-time GUI notice offered.
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile_Vanilla", "WowMobile_Vanilla.toc")); err != nil {
+		t.Fatalf("vanilla addon not installed: %v", err)
+	}
+	text := opts.Out.(*bytes.Buffer).String()
+	if !strings.Contains(text, "WowMobile_Vanilla, 1.12 port") {
+		t.Fatalf("legacy addon install line missing:\n%s", text)
+	}
+	if len(p.notices) != 1 || !strings.Contains(p.notices[0], "WowMobile_Vanilla") {
+		t.Fatalf("GUI notice wrong: %v", p.notices)
+	}
+
+	// Second run: the persisted answer is reused — no client-type prompt, no
+	// repeated notice.
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p2 := &scriptPrompter{t: t}
+	opts2 := baseOpts(t, "", sys2, p2)
+	opts2.Store = LoadStore(storeDir)
+	res2, err := Run(opts2)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if res2.ClientType != ClientTypeLegacy {
+		t.Fatalf("persisted client type not reused: %+v", res2)
+	}
+	if len(p2.notices) != 0 {
+		t.Fatalf("legacy notice repeated: %v", p2.notices)
+	}
+}
+
+// A 1.12 private-server dir (Wow.exe): the WowMobile_Vanilla port is
+// installed (never the Classic Era addon), Config.wtf gets the old
+// gxResolution CVar (and NOT gxWindowedResolution), and the launch step
+// starts the recorded exe.
+func TestLegacyClientFlow(t *testing.T) {
+	dir := makeGameDir(t, "Wow.exe", false)
+	sys := &fakeSys{pathFFmpeg: "ff", launchShows: true}
+	p := &scriptPrompter{t: t, confirms: []bool{true, true}} // create Config.wtf, launch
+	opts := baseOpts(t, dir, sys, p)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ClientType != ClientTypeLegacy {
+		t.Fatalf("Wow.exe not detected as legacy: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile")); !os.IsNotExist(err) {
+		t.Fatal("Classic Era addon must not be installed for a 1.12 client")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "Interface", "AddOns", "WowMobile_Vanilla", "WowMobile_Vanilla.toc"))
+	if err != nil || !bytes.Contains(data, []byte("## Interface: 11200")) {
+		t.Fatalf("WowMobile_Vanilla not installed for a 1.12 client: %q err=%v", data, err)
+	}
+	cfg, err := os.ReadFile(filepath.Join(dir, "WTF", "Config.wtf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !SettingsSatisfied(cfg, PortraitSettingsFor(ClientTypeLegacy, 1080, 1920)) {
+		t.Fatalf("legacy Config.wtf wrong: %q", cfg)
+	}
+	if bytes.Contains(cfg, []byte("gxWindowedResolution")) {
+		t.Fatalf("legacy Config.wtf must not carry gxWindowedResolution: %q", cfg)
+	}
+	if len(sys.launched) != 1 || sys.launched[0] != filepath.Join(dir, "Wow.exe") {
+		t.Fatalf("launch wrong: %v", sys.launched)
+	}
+	text := opts.Out.(*bytes.Buffer).String()
+	if !strings.Contains(text, "WowMobile_Vanilla, 1.12 port") {
+		t.Fatalf("vanilla addon install line missing:\n%s", text)
+	}
+	if !strings.Contains(text, LegacyAddonNote) {
+		t.Fatalf("legacy addon note missing:\n%s", text)
+	}
+}
+
+// --game-exe overrides everything and is validated like --ffmpeg.
+func TestGameExeFlag(t *testing.T) {
+	dir := makeGameDir(t, "VanillaFixes.exe", true)
+	exe := filepath.Join(dir, "VanillaFixes.exe")
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts := baseOpts(t, "", sys, &scriptPrompter{t: t})
+	opts.GameExeFlag = exe
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.GameExe != exe || res.ClientType != ClientTypeLegacy {
+		t.Fatalf("--game-exe flow wrong: %+v", res)
+	}
+
+	opts2 := baseOpts(t, "", sys, &scriptPrompter{t: t})
+	opts2.GameExeFlag = filepath.Join(dir, "missing.exe")
+	if _, err := Run(opts2); err == nil || !strings.Contains(err.Error(), "--game-exe") {
+		t.Fatalf("invalid --game-exe not rejected: %v", err)
+	}
+}
+
+// --yes with an unrecognized exe must not guess Classic Era: outside a
+// _classic_era_ tree the logged default is legacy.
+func TestYesUnknownExeDefaultsLegacy(t *testing.T) {
+	dir := makeGameDir(t, "CustomServer.exe", true)
+	exe := filepath.Join(dir, "CustomServer.exe")
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := NewConsolePrompter(blockingReader{}, io.Discard, true, true)
+	opts := baseOpts(t, "", sys, p)
+	opts.GameExeFlag = exe
+	opts.Yes = true
+	out := opts.Out.(*bytes.Buffer)
+
+	done := make(chan *Result, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		res, err := Run(opts)
+		done <- res
+		errCh <- err
+	}()
+	select {
+	case res := <-done:
+		if err := <-errCh; err != nil {
+			t.Fatalf("Run: %v\n%s", err, out.String())
+		}
+		if res.ClientType != ClientTypeLegacy {
+			t.Fatalf("--yes guessed %q for unknown exe; must default legacy", res.ClientType)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("--yes run blocked on the client-type prompt")
+	}
+	if !strings.Contains(out.String(), "treating it as a 1.12-era client") {
+		t.Fatalf("client-type default not logged:\n%s", out.String())
 	}
 }
 
@@ -417,7 +627,7 @@ func (blockingReader) Read([]byte) (int, error) {
 // documented.
 func TestStepLineFormat(t *testing.T) {
 	var b bytes.Buffer
-	step(&b, 4, "FFmpeg", "found: h264_nvenc available")
+	stepLine(&b, 4, "FFmpeg", "found: h264_nvenc available")
 	if got := b.String(); got != "[4/5] FFmpeg ................ found: h264_nvenc available\n" {
 		t.Fatalf("step line: %q", got)
 	}

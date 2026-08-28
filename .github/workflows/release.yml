@@ -54,11 +54,28 @@ jobs:
         run: go test ./...
 
       - name: cross-build wowstreamd.exe
-        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath ./server/cmd/wowstreamd
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H=windowsgui" ./server/cmd/wowstreamd
+
+      # Dry-run compile of the NSIS installer script against the exe built
+      # above, with placeholder defines — catches script rot on every push.
+      - name: installer compile check (makensis)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nsis
+          makensis -DVERSION=v0.0.0-ci -DEXE=wowstreamd.exe installer/wowmobile.nsi
 
       - name: client tests
         working-directory: client
         run: node --test tests/
+
+      # node --test only exercises the phone client; this gate also covers JS
+      # that ships without tests (notably the client/host dashboard's host.js,
+      # which is embedded into the exe via HostFS).
+      - name: JS syntax check (all shipped JS)
+        run: |
+          for f in $(find client server -name '*.js'); do
+            node --check "$f" || exit 1
+          done
 
       - name: addon Lua syntax check
         run: |
@@ -94,12 +111,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # -H=windowsgui: the released exe is a windowed app — no console on
+      # double-click; a terminal launch attaches back to the shell's console
+      # (see server/cmd/wowstreamd/ui_windows.go).
       - name: build wowstreamd.exe
         run: >
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0
           go build -trimpath
-          -ldflags "-s -w -X main.version=$VERSION"
+          -ldflags "-s -w -H=windowsgui -X main.version=$VERSION"
           -o wowstreamd.exe ./server/cmd/wowstreamd
+
+      - name: build WowMobile-Setup.exe (NSIS)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nsis
+          makensis -DVERSION="$VERSION" -DEXE=wowstreamd.exe installer/wowmobile.nsi
 
       - name: create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -107,5 +133,9 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
           # Pin the created tag to the tested commit, not the default branch head.
           target_commitish: ${{ github.sha }}
-          files: wowstreamd.exe
+          # Both artifacts: the installer for most people, the bare exe as
+          # the portable alternative (README quickstart).
+          files: |
+            installer/WowMobile-Setup.exe
+            wowstreamd.exe
           generate_release_notes: true

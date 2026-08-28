@@ -26,8 +26,9 @@ const (
 	// recorded game exe ("classicEra"/"legacy"); only trusted while it still
 	// matches KeyGameExe, so switching installs re-detects.
 	KeyClientType = "client_type"
-	// KeyLegacyNoticeShown records that the one-time "addon not installed on
-	// 1.12 clients" GUI notice was already shown (the dashboard note and the
+	// KeyLegacyNoticeShown records that the one-time GUI notice about the
+	// 1.12 addon variant (LegacyAddonNote: WowMobile_Vanilla installed, enable
+	// it at character select) was already shown (the dashboard note and the
 	// console print repeat every run; the modal dialog must not).
 	KeyLegacyNoticeShown = "legacy_addon_notice_shown"
 )

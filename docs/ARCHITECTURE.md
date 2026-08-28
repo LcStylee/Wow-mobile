@@ -131,26 +131,37 @@ for the addon's `/wm viewport`).
 
 The repo root is the Go module (`github.com/LcStylee/Wow-mobile`, `go.mod` at
 the root); `go build ./server/cmd/wowstreamd` from the root produces the
-single distributable exe. `client/` and `addon/WowMobile/` stay the canonical
-sources on disk and are additionally embedded into the binary by the root
-`embed.go` (`go:embed`): the signal server serves the PWA from the embedded FS
-(`--client-dir` overrides with a disk directory for development) and the
-first-run wizard (`server/internal/install`) installs the addon from it, so
-the released `wowstreamd.exe` is fully self-contained.
+single distributable exe. `client/` and the addon variants (`addon/WowMobile/`
+and `addon/WowMobile_Vanilla/`) stay the canonical sources on disk and are
+additionally embedded into the binary by the root `embed.go` (`go:embed`): the
+signal server serves the PWA from the embedded FS (`--client-dir` overrides
+with a disk directory for development) and the first-run wizard
+(`server/internal/install`) installs the addon variant matching the detected
+client from it, so the released `wowstreamd.exe` is fully self-contained.
 
 | Path | What | Validated by |
 |---|---|---|
-| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`); embedded, wizard-installed | luaparse syntax check (CI) + critic review |
-| `server/` | Go streaming host for Windows + first-run wizard | `GOOS=windows go vet ./...`, `go test ./...` (portable packages), CI |
+| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`); embedded, wizard-installed on Classic Era clients | luaparse syntax check (CI) + critic review |
+| `addon/WowMobile_Vanilla/` | 1.12 port of the addon (Lua 5.0, `## Interface: 11200`); embedded, wizard-installed on 1.12 private-server clients (which the Classic Era addon cannot load on) | luaparse syntax check (CI) + critic review |
+| `server/` | Go streaming host for Windows + first-run wizard (console text flow, or native dialogs in the windowed GUI mode of the `-H=windowsgui` release build) | `GOOS=windows go vet ./...`, `go test ./...` (portable packages), CI |
 | `client/` | Zero-build PWA touch client; embedded, served by the exe | `node --test tests/` (CI), critic review |
+| `client/host/` | Host status dashboard (QR, checklist, quit); embedded separately (`HostFS`) and served **loopback-only** at `/host` | `node --check` (CI), loopback-enforcement unit tests |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |
-| `embed.go` | Root embed package (`ClientFS`, `AddonFS`) | `embed_test.go` drift guard: embedded trees == disk trees byte-for-byte |
-| `.github/workflows/` | CI on every push/PR; tag-triggered release build of `wowstreamd.exe` | workflow runs on GitHub Actions |
+| `embed.go` | Root embed package (`ClientFS`, `HostFS`, `AddonFS`, `VanillaAddonFS`) | `embed_test.go` drift guard: embedded trees == disk trees byte-for-byte |
+| `installer/` | NSIS script producing `WowMobile-Setup.exe` (Start Menu/Desktop shortcuts, uninstaller) | `makensis` compile check (CI) |
+| `assets/` | App icon (`wowmobile.ico` + PNG source + generator); baked into the exe via the committed `rsrc_windows_amd64.syso` | — |
+| `.github/workflows/` | CI on every push/PR; tag-triggered release of `WowMobile-Setup.exe` + `wowstreamd.exe` | workflow runs on GitHub Actions |
 | `docs/` | This document, setup guide | — |
 
 ## Trust & security model
 
 - Signaling server binds to LAN, requires a pairing token (printed + QR at
   startup); WebRTC media is DTLS-SRTP encrypted end-to-end.
+- The host dashboard (`/host`: pairing token QR, status, quit control) is
+  **loopback-only**: every `/host` route verifies both the TCP peer address
+  and the `Host` header are loopback (`127.0.0.1`, `::1`, or `localhost`) and
+  answers 403 otherwise, so the token never reaches other LAN devices through
+  it — and, under `--no-tls`, a DNS-rebinding page cannot become same-origin
+  with the dashboard either.
 - The host injects input only into the WoW window and only while a paired,
   authenticated session is connected.

@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	github.com/akavel/rsrc v0.10.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
@@ -32,3 +33,5 @@ require (
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )
+
+tool github.com/akavel/rsrc

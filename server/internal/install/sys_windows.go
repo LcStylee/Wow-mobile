@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -133,6 +134,10 @@ func (winSystem) RunWingetInstall(out io.Writer) error {
 		"--accept-source-agreements", "--accept-package-agreements")
 	cmd.Stdout = out
 	cmd.Stderr = out
+	// Output is captured through the pipes above, so the child needs no
+	// console of its own: CREATE_NO_WINDOW keeps GUI mode window-free and
+	// stops console mode from flashing an extra window either.
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	return cmd.Run()
 }
 

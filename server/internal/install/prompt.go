@@ -68,6 +68,20 @@ func (p *ConsolePrompter) Ask(question string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+// SelectGamePath asks for a pasted path — a folder OR the game .exe itself
+// (private servers often launch through Wow.exe/VanillaFixes.exe or a custom
+// exe). The wizard validates and re-asks; prevInvalid was already reported to
+// the output by the wizard, so the console just asks again.
+func (p *ConsolePrompter) SelectGamePath(prevInvalid string) (string, error) {
+	return p.Ask(`Paste the path to your World of Warcraft folder — or to the game program (.exe) itself.
+Examples: C:\Program Files (x86)\World of Warcraft\_classic_era_
+          D:\Games\TurtleWoW\VanillaFixes.exe`)
+}
+
+// Notice is a no-op on the console: the wizard has already printed the same
+// text to its output, and a modal pause would only get in the way.
+func (p *ConsolePrompter) Notice(title, message string) {}
+
 func answerWord(def bool) string {
 	if def {
 		return "yes"

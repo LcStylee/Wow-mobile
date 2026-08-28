@@ -210,6 +210,25 @@ func (m *Manager) Close(id string) error {
 	return nil
 }
 
+// SessionConnected reports whether the current phone session's peer
+// connection has reached Connected (and not yet ended) — the host dashboard's
+// "phone connected" light. A session that disconnects clears itself via
+// sessionEnded, so a stale true is impossible.
+func (m *Manager) SessionConnected() bool {
+	m.mu.Lock()
+	sess := m.current
+	m.mu.Unlock()
+	if sess == nil {
+		return false
+	}
+	select {
+	case <-sess.connected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Shutdown tears down any live session; used on process exit so all held
 // inputs are released before ffmpeg dies.
 func (m *Manager) Shutdown() {

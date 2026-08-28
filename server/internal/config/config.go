@@ -39,10 +39,13 @@ type Config struct {
 	FFmpegPath       string // empty = look up "ffmpeg" in PATH
 	Audio            bool
 	Setup            bool   // --setup: print WoW configuration help and exit
-	WowDir           string // --wow-dir: WoW _classic_era_ directory (skips wizard auto-detection)
+	WowDir           string // --wow-dir: WoW game directory (skips wizard auto-detection)
+	GameExe          string // --game-exe: exact game executable (private servers); beats --wow-dir
 	Yes              bool   // --yes: first-run wizard accepts every default without prompting
 	SkipSetup        bool   // --skip-setup: skip the first-run wizard entirely
 	Version          bool   // --version: print the version and exit
+	ForceConsole     bool   // --console: force console mode (Windows GUI builds)
+	ForceGUI         bool   // --gui: force GUI mode even from a terminal (Windows)
 }
 
 // Parse parses argv (without the program name). Usage/errors go to errOut.
@@ -67,10 +70,16 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	// project) — ffmpeg alone cannot tap WASAPI loopback on stock Windows.
 	fs.BoolVar(&cfg.Audio, "audio", false, "capture desktop audio via the DirectShow device \"virtual-audio-capturer\" (requires screen-capture-recorder to be installed)")
 	fs.BoolVar(&cfg.Setup, "setup", false, "print WoW Config.wtf and addon setup instructions, then exit")
-	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW Classic Era directory (the one containing WowClassic.exe); skips the wizard's auto-detection")
+	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW game directory (e.g. the _classic_era_ folder, or a private-server folder containing Wow.exe); skips the wizard's auto-detection")
+	fs.StringVar(&cfg.GameExe, "game-exe", "", "exact game executable to record and launch (private servers, e.g. VanillaFixes.exe); overrides --wow-dir and every auto-detection")
 	fs.BoolVar(&cfg.Yes, "yes", false, "first-run wizard: accept every default without prompting (non-interactive)")
 	fs.BoolVar(&cfg.SkipSetup, "skip-setup", false, "skip the first-run setup wizard entirely")
 	fs.BoolVar(&cfg.Version, "version", false, "print the wowstreamd version and exit")
+	// Mode overrides for the Windows GUI build (-H=windowsgui): double-click
+	// gets native dialogs + the browser dashboard; a terminal launch is
+	// auto-detected. These flags force either way; no-ops off Windows.
+	fs.BoolVar(&cfg.ForceConsole, "console", false, "force console mode: the interactive text wizard, never dialogs; from a shell this opens its own console window (Windows)")
+	fs.BoolVar(&cfg.ForceGUI, "gui", false, "force GUI mode: native dialogs and the browser dashboard even when started from a terminal (Windows)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -100,6 +109,9 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	}
 	if cfg.WindowTitle == "" {
 		return nil, fmt.Errorf("--window-title must not be empty")
+	}
+	if cfg.ForceConsole && cfg.ForceGUI {
+		return nil, fmt.Errorf("--console and --gui are mutually exclusive")
 	}
 	if cfg.Token == "" {
 		cfg.Token, err = generateToken()

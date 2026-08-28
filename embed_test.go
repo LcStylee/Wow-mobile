@@ -14,13 +14,24 @@ import (
 //
 // The client tree carries dev-only files (tests/, package.json) that exist on
 // disk but must never be embedded — they would be shipped in and publicly
-// served by every released wowstreamd.exe (embed.go scopes them out).
+// served by every released wowstreamd.exe (embed.go scopes them out). The
+// host dashboard (client/host) is likewise excluded from the PUBLIC ClientFS:
+// it displays the pairing token, so it ships only via the separate HostFS,
+// served through loopback-guarded routes.
 func TestEmbeddedClientMatchesDisk(t *testing.T) {
-	assertFSEqualsDisk(t, ClientFS, "client", "client/tests", "client/package.json")
+	assertFSEqualsDisk(t, ClientFS, "client", "client/tests", "client/package.json", "client/host")
 }
 
 func TestEmbeddedAddonMatchesDisk(t *testing.T) {
 	assertFSEqualsDisk(t, AddonFS, "addon/WowMobile")
+}
+
+func TestEmbeddedVanillaAddonMatchesDisk(t *testing.T) {
+	assertFSEqualsDisk(t, VanillaAddonFS, "addon/WowMobile_Vanilla")
+}
+
+func TestEmbeddedHostDashboardMatchesDisk(t *testing.T) {
+	assertFSEqualsDisk(t, HostFS, "client/host")
 }
 
 // assertFSEqualsDisk compares the embedded tree with the on-disk dir in both
