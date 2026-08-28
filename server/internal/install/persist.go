@@ -14,8 +14,22 @@ import (
 
 // Persisted config.json keys.
 const (
-	KeyWowPath    = "wow_path"    // validated WoW _classic_era_ directory
+	// KeyWowPath is the pre-game_exe key (a validated _classic_era_
+	// directory). Still read for migration — an existing install upgrades
+	// without re-detecting — but no longer written.
+	KeyWowPath    = "wow_path"
 	KeyFFmpegPath = "ffmpeg_path" // located ffmpeg.exe (e.g. after winget install)
+	// KeyGameExe is the recorded game executable; every later wizard step
+	// (addon dir, Config.wtf, launch) derives from its directory.
+	KeyGameExe = "game_exe"
+	// KeyClientType caches the answer to "Classic Era or 1.12?" for the
+	// recorded game exe ("classicEra"/"legacy"); only trusted while it still
+	// matches KeyGameExe, so switching installs re-detects.
+	KeyClientType = "client_type"
+	// KeyLegacyNoticeShown records that the one-time "addon not installed on
+	// 1.12 clients" GUI notice was already shown (the dashboard note and the
+	// console print repeat every run; the modal dialog must not).
+	KeyLegacyNoticeShown = "legacy_addon_notice_shown"
 )
 
 // StoreFileName is the persisted settings file inside the wowstreamd config

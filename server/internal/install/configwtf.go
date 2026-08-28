@@ -19,13 +19,29 @@ type Setting struct {
 }
 
 // PortraitSettings returns the Config.wtf lines required for streaming a
-// windowed portrait WoW at width x height (docs/SETUP.md step 1).
+// windowed portrait WoW Classic Era at width x height (docs/SETUP.md step 1).
 func PortraitSettings(width, height int) []Setting {
 	return []Setting{
 		{Name: "gxWindow", Value: "1"},
 		{Name: "gxMaximize", Value: "0"},
 		{Name: "gxWindowedResolution", Value: fmt.Sprintf("%dx%d", width, height)},
 	}
+}
+
+// PortraitSettingsFor selects the windowed-portrait settings for the client
+// type: Classic Era (1.15) uses gxWindowedResolution; 1.12-era clients
+// (private servers) predate that CVar and use gxResolution instead — writing
+// gxWindowedResolution there would be dead weight, so it is omitted. The
+// gxWindow/gxMaximize pair is common to both generations.
+func PortraitSettingsFor(ct ClientType, width, height int) []Setting {
+	if ct == ClientTypeLegacy {
+		return []Setting{
+			{Name: "gxWindow", Value: "1"},
+			{Name: "gxMaximize", Value: "0"},
+			{Name: "gxResolution", Value: fmt.Sprintf("%dx%d", width, height)},
+		}
+	}
+	return PortraitSettings(width, height)
 }
 
 // SettingLine renders a Setting in WoW's canonical form.
