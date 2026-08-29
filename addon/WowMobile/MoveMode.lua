@@ -11,9 +11,11 @@
 --
 -- The Blizzard cursor stays the single source of truth: every state change
 -- reconciles against GetCursorInfo() (CURSOR_CHANGED / CURSOR_UPDATE plus a
--- slow ticker that only runs while carrying), so Blizzard-side placements —
--- the boosted bank/mail/trade frames place a carried item through their own
--- insecure click handlers — can never desync this UI, and a cursor filled by
+-- slow ticker that only runs while carrying), so Blizzard-cursor-side
+-- placements — the economy sheets (SheetKit bag list, the AH sell slot, the
+-- trade/mail attachment slots) place a carried item through insecure
+-- ClickTradeButton / ClickSendMailItemButton / ClickAuctionSellItemButton
+-- calls — can never desync this UI, and a cursor filled by
 -- Blizzard code is adopted into the same carry bar so it always has a visible
 -- Cancel. ALL move mutations are out-of-combat: Begin() in combat shows a
 -- notice and does nothing, and entering combat cancels the carry outright —
@@ -193,7 +195,7 @@ end
 local function Reconcile()
 	if not active then return end
 	if not GetCursorInfo() then
-		-- Placed (possibly by a boosted Blizzard frame) or dropped elsewhere.
+		-- Placed (possibly by an economy sheet's slot) or dropped elsewhere.
 		EndCarry()
 		return
 	end
@@ -235,8 +237,9 @@ local function HideSplit()
 		NotifySplitToggle()
 	end
 	-- Adoption is suppressed while the stepper is up (OnCursorChanged bails on
-	-- pendingSplit): a pickup made through some other surface meanwhile — a
-	-- boosted Blizzard frame's bank/mail slot, say — left a full cursor with
+	-- pendingSplit): a pickup made through some other surface meanwhile — an
+	-- economy sheet's trade/mail/sell slot lifting an item back, say — left a
+	-- full cursor with
 	-- no carry bar and no Cancel. Re-run adoption now so it gets both.
 	if wasOpen and not active and GetCursorInfo() then
 		OnCursorChanged()
@@ -255,8 +258,8 @@ local PLACEABLE = { spell = true, item = true, macro = true, petaction = true }
 
 -- `key` is the cursor identity ("type:id", same key SecureDrop compares)
 -- captured when the restore was decided on. The combat-queued path can run
--- SECONDS after Cancel: if Blizzard-side code (macro frame drag, a boosted
--- default frame) replaced the cursor payload mid-combat, the original
+-- SECONDS after Cancel: if Blizzard-cursor-side code (macro frame drag, an
+-- economy sheet slot) replaced the cursor payload mid-combat, the original
 -- action-origin payload is already gone — and PlaceAction here would slam
 -- the unrelated new payload into the old home slot. Bail on a mismatch and
 -- leave the foreign payload alone; the PLAYER_REGEN_ENABLED adoption gives
@@ -536,8 +539,9 @@ function OnCursorChanged() -- assigns the forward-declared local (split section)
 	-- cannot service. The PLAYER_REGEN_ENABLED handler below adopts whatever
 	-- is still on the cursor once combat ends.
 	if InCombatLockdown() then return end
-	-- A Blizzard-side pickup (macro frame, a boosted default frame's drag)
-	-- filled the cursor without us: adopt it so the user always has a carry
+	-- A Blizzard-cursor-side pickup (macro frame, an economy sheet slot
+	-- lifting an item back) filled the cursor without us: adopt it so the
+	-- user always has a carry
 	-- bar with a Cancel, and so drop targets light up for it too. Known limit:
 	-- if Blizzard-side code lifted the payload off an ACTION slot, nothing
 	-- observable marks it action-origin (the cursor kind is just spell/item/

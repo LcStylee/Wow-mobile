@@ -1,7 +1,9 @@
 --------------------------------------------------------------------------------
 -- WowMobile · Bags
--- Bag button row (backpack + bags 1-4 with free-slot counts) on the right end
--- of the deck's bottom row, and a deck-filling grid panel of every bag slot.
+-- A single bags button (backpack icon + total free-slot count) on the right
+-- end of the deck's bottom row, and a deck-filling grid panel of every bag
+-- slot. (Round 3: the five per-bag buttons all toggled the same panel, so
+-- they collapsed into one to free bottom-row width for Social/Raid, Deck.lua.)
 -- Grid cells are secure type="item" buttons whose "item" attribute is the
 -- positional "bag slot" string — set once per cell, so contents changing in
 -- combat never needs an attribute write; tap = use/equip (the same semantics
@@ -25,7 +27,7 @@ local GAP = 6
 
 local panel, scroller
 local combatNotice      -- "available after combat" text for a first open in lockdown
-local bagButtons = {}
+local bagsButton
 local cells = {}     -- "bag:slot" -> secure cell
 local bagSizes = {}  -- last laid-out size per bag
 
@@ -136,29 +138,15 @@ local function RefreshBagVisuals(bag)
 end
 
 --------------------------------------------------------------------------------
--- Bag button row
+-- Bags button
 --------------------------------------------------------------------------------
 
 local BACKPACK_ICON = "Interface\\Buttons\\Button-Backpack-Up"
 
 local function UpdateBagButtons()
-	for bag = 0, NUM_BAGS do
-		local b = bagButtons[bag]
-		local size = WM.Container.GetNumSlots(bag)
-		if bag == 0 then
-			b.icon:SetTexture(BACKPACK_ICON)
-		else
-			local invID = WM.Container.BagInventoryID(bag)
-			local texture = invID and GetInventoryItemTexture("player", invID)
-			b.icon:SetTexture(texture or WM.TEX_WHITE)
-			if not texture then
-				b.icon:SetVertexColor(0.15, 0.15, 0.18) -- empty bag slot
-			else
-				b.icon:SetVertexColor(1, 1, 1)
-			end
-		end
-		b.free:SetText(size > 0 and WM.Container.GetFreeSlots(bag) or "")
-	end
+	-- Total free slots across the backpack and every equipped bag (Compat:
+	-- C_Container.CalculateTotalNumberOfFreeBagSlots on 1.15).
+	bagsButton.free:SetText(WM.FreeBagSlots())
 end
 
 --------------------------------------------------------------------------------
@@ -193,32 +181,25 @@ WM.OnInit(function()
 		WM.OutOfCombat("bags-grid", RebuildGrid)
 	end
 
-	-- Bag buttons on the right end of the bottom row (menu buttons occupy the
-	-- left; see Deck.lua).
+	-- Single bags button on the right end of the bottom row (the 8 menu
+	-- buttons occupy the left; width budget in Deck.lua).
 	local row = WM.Layout.bottomRow
-	local prev
-	for bag = NUM_BAGS, 0, -1 do
-		local b = CreateFrame("Button", "WowMobileBagButton" .. bag, row)
-		b:SetSize(WM.Px(86), WM.Px(WM.DeckMetrics.rowBottom))
-		WM.SkinFrame(b, WM.Colors.button)
-		local hl = b:CreateTexture(nil, "HIGHLIGHT")
-		hl:SetAllPoints()
-		hl:SetColorTexture(1, 1, 1, 0.10)
-		b.icon = b:CreateTexture(nil, "ARTWORK")
-		b.icon:SetPoint("TOPLEFT", WM.Px(6), -WM.Px(6))
-		b.icon:SetPoint("BOTTOMRIGHT", -WM.Px(6), WM.Px(6))
-		b.free = WM.CreateText(b, 24, "OUTLINE")
-		b.free:SetPoint("BOTTOMRIGHT", -WM.Px(6), WM.Px(4))
-		b.free:SetTextColor(0.4, 0.9, 0.4)
-		if prev then
-			b:SetPoint("RIGHT", prev, "LEFT", -WM.Px(4), 0)
-		else
-			b:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-		end
-		b:SetScript("OnClick", function() WM.Deck.Toggle("bags") end)
-		prev = b
-		bagButtons[bag] = b
-	end
+	local b = CreateFrame("Button", "WowMobileBagsButton", row)
+	b:SetSize(WM.Px(120), WM.Px(WM.DeckMetrics.rowBottom))
+	WM.SkinFrame(b, WM.Colors.button)
+	local hl = b:CreateTexture(nil, "HIGHLIGHT")
+	hl:SetAllPoints()
+	hl:SetColorTexture(1, 1, 1, 0.10)
+	b.icon = b:CreateTexture(nil, "ARTWORK")
+	b.icon:SetSize(WM.Px(72), WM.Px(72))
+	b.icon:SetPoint("CENTER")
+	b.icon:SetTexture(BACKPACK_ICON)
+	b.free = WM.CreateText(b, 24, "OUTLINE")
+	b.free:SetPoint("BOTTOMRIGHT", -WM.Px(8), WM.Px(4))
+	b.free:SetTextColor(0.4, 0.9, 0.4)
+	b:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+	b:SetScript("OnClick", function() WM.Deck.Toggle("bags") end)
+	bagsButton = b
 	UpdateBagButtons()
 
 	WM.On("BAG_UPDATE", function(_, bag)

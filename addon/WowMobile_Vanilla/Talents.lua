@@ -6,9 +6,15 @@
 -- needs the square's full 1080 px height to reach tappable icon sizes; the
 -- ~840 px deck cannot give that) and given a big close button.
 --
--- On 1.12 TalentFrame is plain FrameXML (the Blizzard_TalentUI load-on-demand
--- split is a TBC-era change), so the hook installs directly at init — no
--- ADDON_LOADED wait.
+-- LoD note (corrected): on 1.12 TalentFrame is NOT plain FrameXML — the
+-- client ships AddOns/Blizzard_TalentUI as LoadOnDemand (FrameXML.toc has no
+-- Talent file), and UIParent's ToggleTalentFrame calls TalentFrame_LoadUI()
+-- before showing. So TalentFrame is nil at PLAYER_LOGIN and the touch chrome
+-- installs from ADDON_LOADED ("Blizzard_TalentUI") — same pattern as
+-- Blizzard_TrainerUI in Blizzard.lua — with an init-time path only for a
+-- pre-login force-load by some other addon. ADDON_LOADED fires synchronously
+-- inside TalentFrame_LoadUI, before ShowUIPanel runs, so the OnShow wrap is
+-- in place for the very first open.
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
@@ -37,7 +43,9 @@ local function Reflow()
 end
 
 function Talents.Toggle()
-	-- ToggleTalentFrame is 1.12's canonical open/close path.
+	-- ToggleTalentFrame is 1.12's canonical open/close path; it runs
+	-- TalentFrame_LoadUI() itself, which fires ADDON_LOADED and installs our
+	-- chrome (below) before the frame first shows.
 	if ToggleTalentFrame then
 		ToggleTalentFrame()
 	end
@@ -50,9 +58,12 @@ function Talents.Close()
 	end
 end
 
-WM.OnInit(function()
+local installed
+
+local function Install()
 	local f = TalentFrame
-	if not f then return end
+	if not f or installed then return end
+	installed = true
 
 	closeButton = WM.CreateTouchButton(f, 100, 88, "X", 44)
 	closeButton:SetFrameStrata("FULLSCREEN_DIALOG") -- above every tree overlay
@@ -69,4 +80,19 @@ WM.OnInit(function()
 	end)
 
 	WM.Deck.RegisterExclusive("talents", Talents.Close)
+end
+
+WM.OnInit(function()
+	-- Force-load path: some other addon loaded Blizzard_TalentUI during the
+	-- load screen (its ADDON_LOADED fired before PLAYER_LOGIN), so the frame
+	-- already exists at init.
+	Install()
+	-- Normal path: the LoD addon loads on the first ToggleTalentFrame tap.
+	-- Registered from init (like Blizzard.lua's shared dispatch) so it can
+	-- never run before the deck/Px machinery Install depends on is up.
+	WM.On("ADDON_LOADED", function(_, addonName)
+		if addonName == "Blizzard_TalentUI" then
+			Install()
+		end
+	end)
 end)

@@ -9,15 +9,18 @@
 -- 1.12 loot API (verified against vanilla FrameXML LootFrame.lua):
 --   LOOT_OPENED / LOOT_SLOT_CLEARED(slot) / LOOT_CLOSED,
 --   GetNumLootItems(), GetLootSlotInfo(slot) -> texture, item, quantity,
---   quality (quantity is 0 for coin slots — the default LootFrame keys its
---   coin path off that; LootSlotIsCoin exists too and is preferred when
---   present), LootSlot(slot), CloseLoot(), GameTooltip:SetLootItem(slot).
+--   quality (the default 1.12 LootFrame_Update keys coin rows off
+--   LootSlotIsCoin(slot) / LootSlotIsItem(slot); this module prefers
+--   LootSlotIsCoin too, keeping quantity == 0 only as a belt-and-braces
+--   fallback for builds lacking it — coin slots do report quantity 0),
+--   LootSlot(slot), CloseLoot(), GameTooltip:SetLootItem(slot).
 --   BoP confirmation: LOOT_BIND_CONFIRM(slot) -> the Blizzard "LOOT_BIND"
 --   StaticPopup (touch-boosted in Blizzard.lua), whose OnAccept runs
 --   LootSlot(data) on 1.12 (ConfirmLootSlot is a 2.x API and does not exist
 --   here). UIParent's own LOOT_BIND_CONFIRM handler — untouched by the
 --   LootFrame banish — still raises that popup; this module re-raises it
---   with identical data only to record the slot in bindConfirmSlots.
+--   with identical data only to guarantee dialog.data holds the slot
+--   (BindConfirmParked reads it off the live dialog).
 --
 -- Every slot is a full-width ~110 px row (icon, quality-colored name, count;
 -- coin rows gold-tinted); tap = loot that slot; "Take all" sweeps every slot
@@ -60,12 +63,27 @@ local picker, pickerScroller
 local candRows = {}
 local selectedSlot
 
--- Slots currently parked on a LOOT_BIND_CONFIRM popup: recorded when the
--- confirm fires, cleared when the slot clears (or a new corpse opens).
--- OpenPicker's fallback skips them — an uncleared slot is not necessarily
--- master-refused, and GiveMasterLoot on a bind-parked slot would be refused
--- by the server.
-local bindConfirmSlots = {}
+-- A slot counts as "parked on a LOOT_BIND confirm" only while its confirm
+-- dialog is actually up. A persistent recorded set would go knowably stale:
+-- cancelling the popup, or a Take-all sweep across multiple BoP slots making
+-- a later StaticPopup_Show override the earlier same-which LOOT_BIND dialog
+-- (1.12 reuses it), leaves no dialog for a slot that stayed flagged — and
+-- OpenPicker's fallback would then wrongly skip it for the rest of the
+-- corpse. So scan the live dialogs instead: 1.12 StaticPopup frames are
+-- StaticPopup1..STATICPOPUP_NUMDIALOGS with .which set by StaticPopup_Show.
+-- NOTE: 1.12 StaticPopup_Show NILS dialog.data on every show and its 4th
+-- argument feeds only the `multiple`-dialog matching — the explicit
+-- `dialog.data = slot` assignment in the LOOT_BIND_CONFIRM handler below is
+-- the ONLY thing that puts the slot there.
+local function BindConfirmParked(slot)
+	for i = 1, STATICPOPUP_NUMDIALOGS or 4 do
+		local f = getglobal("StaticPopup" .. i)
+		if f and f:IsVisible() and f.which == "LOOT_BIND" and f.data == slot then
+			return true
+		end
+	end
+	return false
+end
 
 local function QualityColoredName(name, quality)
 	local q = quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality]
@@ -218,17 +236,19 @@ local function OpenPicker(slot)
 	-- past the slot the server refused, and may have cleared it since. Fall
 	-- back to the first uncleared item slot AT/ABOVE GetLootThreshold() (the
 	-- function exists on 1.12; UnitPopup.lua reads it) that is NOT
-	-- parked on a LOOT_BIND confirm (bindConfirmSlots). Both filters matter
-	-- because "uncleared" alone is NOT "master-refused": a BoP slot parked
-	-- awaiting its LOOT_BIND confirm (the sweep's other detour) also stays
-	-- uncleared, and GiveMasterLoot on it would be refused by the server.
+	-- parked on a live LOOT_BIND confirm (BindConfirmParked). Both filters
+	-- matter because "uncleared" alone is NOT "master-refused": a BoP slot
+	-- parked awaiting its LOOT_BIND confirm (the sweep's other detour) also
+	-- stays uncleared, and GiveMasterLoot on it would be refused by the
+	-- server. Parked-ness is read off the live dialog, so a slot whose
+	-- confirm was cancelled or overridden is eligible again immediately.
 	-- This is a heuristic, not a guarantee — the fallback picks the first
 	-- surviving item slot, which the server may still rarely refuse; the
 	-- title names the item, so the assignment the user confirms is always
 	-- the one displayed, and a refused assignment just errors and leaves the
 	-- slot on its row.
 	local function IsMasterAssignSlot(s)
-		if bindConfirmSlots[s] then return false end
+		if BindConfirmParked(s) then return false end
 		local texture, _, quantity, quality = GetLootSlotInfo(s)
 		if not texture then return false end
 		if LootSlotIsCoin and LootSlotIsCoin(s) then return false end
@@ -260,11 +280,9 @@ local function ShowSheet()
 	sheet:Show()
 	picker:Hide() -- stale picker from a previous corpse never survives
 	selectedSlot = nil
-	-- Wipe (not reallocate) the bind-confirm parking set for the new corpse;
-	-- setting existing keys to nil during pairs() is legal Lua 5.0.
-	for s in pairs(bindConfirmSlots) do
-		bindConfirmSlots[s] = nil
-	end
+	-- No bind-confirm parking set to wipe: parked-ness is read off the live
+	-- LOOT_BIND dialog (BindConfirmParked), and HideSheet's LOOT_CLOSED
+	-- cleanup hid any dialog from the previous corpse.
 	scroller.ScrollToTop()
 	Render()
 	-- Auto-loot approximation (see header): autoLootCorpse CVar, Shift
@@ -378,7 +396,6 @@ WM.OnInit(function()
 
 	WM.On("LOOT_OPENED", ShowSheet)
 	WM.On("LOOT_SLOT_CLEARED", function(_, slot)
-		bindConfirmSlots[slot] = nil -- confirmed (or otherwise gone)
 		-- The picker's slot clearing (assignment landed, or the item was
 		-- looted some other way) closes the picker with it.
 		if picker:IsShown() and picker.slot == slot then
@@ -396,12 +413,13 @@ WM.OnInit(function()
 	WM.On("UPDATE_MASTER_LOOT_LIST", RenderPicker)
 	-- UIParent's own LOOT_BIND_CONFIRM handler still raises the LOOT_BIND
 	-- popup (the LootFrame banish does not touch it); the re-raise below is
-	-- redundant with identical data and exists so this module records the
-	-- slot in bindConfirmSlots either way. OnAccept runs LootSlot(data) on
-	-- 1.12. Data is passed both ways (StaticPopup_Show's 4th argument AND
-	-- dialog.data) because both feed dialog.data.
+	-- redundant and exists so dialog.data is GUARANTEED to hold the slot —
+	-- BindConfirmParked keys off it. OnAccept runs LootSlot(data) on 1.12.
+	-- 1.12 StaticPopup_Show nils dialog.data on every show (its 4th argument
+	-- only feeds `multiple` matching), so the explicit assignment below is
+	-- what actually stores the slot; the 4-arg call is kept for the
+	-- multiple-dialog bookkeeping only.
 	WM.On("LOOT_BIND_CONFIRM", function(_, slot)
-		bindConfirmSlots[slot] = true -- parked; OpenPicker's fallback skips it
 		local dialog = StaticPopup_Show("LOOT_BIND", nil, nil, slot)
 		if dialog then dialog.data = slot end
 	end)

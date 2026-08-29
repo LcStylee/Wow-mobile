@@ -1,16 +1,21 @@
 --------------------------------------------------------------------------------
 -- WowMobile (Vanilla 1.12) · Blizzard
 -- Hides/neuters every default UI element this addon replaces, and re-fits the
--- Blizzard frames that stay (party frames, game menu, loot/taxi/bank/mail/
--- trade windows, static popups). Banished frames are reparented under a
--- hidden frame (WM.BanishFrame); every frame named below exists in 1.12
--- FrameXML.
+-- Blizzard frames that stay (party frames, game menu, taxi window, static
+-- popups). Banished frames are reparented under a hidden frame
+-- (WM.BanishFrame); most frames named below exist in 1.12 FrameXML at init.
+-- The LoD exceptions on this client — AuctionFrame (Blizzard_AuctionUI),
+-- TradeSkillFrame (Blizzard_TradeSkillUI), CraftFrame (Blizzard_CraftUI),
+-- ClassTrainerFrame (Blizzard_TrainerUI), MacroFrame (Blizzard_MacroUI),
+-- KeyBindingFrame (Blizzard_BindingUI) — are handled by dropping their
+-- UIParent show events and/or via the shared ADDON_LOADED dispatch below.
 --
 -- Deliberately NOT touched:
 --   * ChatFrame1..N — Chat.lua owns those (the edit box must survive),
 --   * WorldMapFrame — WorldMap.lua reflows it instead of hiding it,
---   * TalentFrame — Talents.lua reflows it on demand (FrameXML on 1.12, not
---     a load-on-demand addon),
+--   * TalentFrame — Talents.lua reflows it on demand (LoD Blizzard_TalentUI
+--     on 1.12, loaded by ToggleTalentFrame's TalentFrame_LoadUI();
+--     Talents.lua owns its own ADDON_LOADED install),
 --   * GameTooltip / UIErrorsFrame — re-anchored, still Blizzard-driven.
 --------------------------------------------------------------------------------
 
@@ -65,9 +70,18 @@ WM.OnInit(function()
 	WM.BanishFrame(GossipFrame)
 	WM.BanishFrame(QuestFrame)
 	WM.BanishFrame(MerchantFrame)
-	-- On 1.12 the class trainer UI is plain FrameXML (Blizzard_TrainerUI is a
-	-- TBC-era split), so it can be banished directly at init.
-	WM.BanishFrame(ClassTrainerFrame)
+	-- The class trainer UI is NOT plain FrameXML on 1.12 — FrameXML.toc loads
+	-- only ClassTrainerFrameTemplates.xml; ClassTrainerFrame itself lives in
+	-- the LoD addon Blizzard_TrainerUI, loaded by UIParent's TRAINER_SHOW
+	-- handler. Suppression therefore works like the AH: drop UIParent's
+	-- show/close events (below, with the others) so the LoD addon never even
+	-- loads, banish a frame that a pre-login force-load already created, and
+	-- let the ADDON_LOADED handler (bottom of this file) banish it if some
+	-- other addon force-loads Blizzard_TrainerUI later — its OnHide calls
+	-- CloseTrainer, the usual session-killing hazard.
+	if ClassTrainerFrame then
+		WM.BanishFrame(ClassTrainerFrame)
+	end
 
 	-- Loot: LootSheet.lua rebuilds looting in the deck. The unregister-events
 	-- banish matters doubly here — LootFrame's OnHide handler calls
@@ -138,11 +152,79 @@ WM.OnInit(function()
 	GameMenuFrame:ClearAllPoints()
 	GameMenuFrame:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 
+	-- Economy frames replaced by deck rebuilds (round 2): Bank.lua, Mail.lua,
+	-- Trade.lua, AuctionHouse.lua, Crafting.lua. Same unregister-events banish
+	-- as the NPC frames — and it matters doubly for every one of these, the
+	-- LootFrame rationale: each frame's OnHide ends the server interaction
+	-- (CloseBankFrame / CloseMail / CloseTrade / CloseTradeSkill / CloseCraft),
+	-- so a merely-hidden frame that Blizzard code Show()s and re-Hide()s would
+	-- kill the session mid-use. With their events unregistered they never show
+	-- at all. (Bank/mail/trade previously went through FitPanelToSquare below;
+	-- the rebuilds replace that boost.)
+	WM.BanishFrame(BankFrame)
+	WM.BanishFrame(MailFrame)     -- drags InboxFrame/SendMailFrame down with it
+	WM.BanishFrame(OpenMailFrame) -- the letter-reading panel is its own UIPanel
+	WM.BanishFrame(TradeFrame)
+	-- TradeSkillFrame and CraftFrame are NOT core FrameXML on 1.12: the
+	-- client ships Blizzard_TradeSkillUI and Blizzard_CraftUI as LoadOnDemand
+	-- (Interface 11200 tocs), loaded by UIParent's TRADE_SKILL_SHOW /
+	-- CRAFT_SHOW handlers. The load-bearing suppression is dropping those
+	-- events off UIParent (below); these direct banishes only catch a
+	-- pre-login force-load, and the ADDON_LOADED handler at the bottom of
+	-- this file covers force-loads after login — each frame's OnHide calls
+	-- CloseTradeSkill / CloseCraft, the usual session-killing hazard.
+	if TradeSkillFrame then
+		WM.BanishFrame(TradeSkillFrame)
+	end
+	if CraftFrame then
+		WM.BanishFrame(CraftFrame)
+	end
+	-- Round-3 rebuild targets, same OnHide hazard as the frames above:
+	-- PetStableFrame's OnHide calls ClosePetStables (Stable.lua rebuilds the
+	-- stable) and ItemTextFrame's calls CloseItemText (Reader.lua rebuilds
+	-- reading), so both get the unregister-events banish.
+	WM.BanishFrame(PetStableFrame)
+	WM.BanishFrame(ItemTextFrame)
+	-- Some of these windows are shown by UIParent's own OnEvent rather than
+	-- (only) by the frames' handlers; drop those show paths too, the
+	-- START_LOOT_ROLL technique above. UnregisterEvent on an event UIParent
+	-- never registered is a harmless no-op, so the whole set goes belt-and-
+	-- braces. AUCTION_HOUSE_SHOW is the load-bearing one: the 1.12 AH UI is
+	-- the LoD addon Blizzard_AuctionUI, loaded by UIParent's handler
+	-- (AuctionFrame_LoadUI) — with the event dropped the default AH UI never
+	-- even loads, and AuctionHouse.lua drives the AH purely through the C API.
+	UIParent:UnregisterEvent("AUCTION_HOUSE_SHOW")
+	UIParent:UnregisterEvent("AUCTION_HOUSE_CLOSED")
+	UIParent:UnregisterEvent("TRADE_SHOW")
+	UIParent:UnregisterEvent("BANKFRAME_OPENED")
+	UIParent:UnregisterEvent("MAIL_SHOW")
+	UIParent:UnregisterEvent("TRADE_SKILL_SHOW")
+	UIParent:UnregisterEvent("CRAFT_SHOW")
+	UIParent:UnregisterEvent("PET_STABLE_SHOW")
+	UIParent:UnregisterEvent("TRAINER_SHOW")
+	UIParent:UnregisterEvent("TRAINER_CLOSED")
+	-- READY_CHECK's default answer UI on 1.12 is ReadyCheckFrame (in the LoD
+	-- addon Blizzard_RaidUI, NOT a StaticPopup), shown by UIParent's
+	-- READY_CHECK handler calling ShowReadyCheck() with no arguments;
+	-- Raid.lua renders its own fullscreen answer overlay, so the event is
+	-- dropped from UIParent exactly like START_LOOT_ROLL above (harmless
+	-- no-op if this build never registered it).
+	UIParent:UnregisterEvent("READY_CHECK")
+	-- If another addon force-loads Blizzard_AuctionUI anyway, banish its
+	-- frame (its OnHide calls CloseAuctionHouse — same hazard). Two paths:
+	-- a force-load during the load screen already happened (ADDON_LOADED
+	-- fired before PLAYER_LOGIN, i.e. before this handler existed), so catch
+	-- an AuctionFrame that exists right now; the shared ADDON_LOADED handler
+	-- at the bottom of this file covers force-loads after login.
+	if AuctionFrame then
+		WM.BanishFrame(AuctionFrame)
+	end
+
 	-- Mouse-scale Blizzard windows that keep driving frequent flows (flight
-	-- paths, bank, mail, trade): boost them toward touch size and center them
-	-- in the world square. All are UIPanels and 1.12's ShowUIPanel re-anchors
-	-- a UIPanel to the screen edge on every open, so the fit runs from an
-	-- OnShow hook instead of once at init.
+	-- paths): boost them toward touch size and center them in the world
+	-- square. All are UIPanels and 1.12's ShowUIPanel re-anchors a UIPanel to
+	-- the screen edge on every open, so the fit runs from an OnShow hook
+	-- instead of once at init.
 	local PANEL_SCALE = 1.75
 	local function FitPanelToSquare(frame)
 		if not frame then return end
@@ -158,10 +240,92 @@ WM.OnInit(function()
 			f:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 		end)
 	end
-	FitPanelToSquare(BankFrame)
-	FitPanelToSquare(MailFrame)
-	FitPanelToSquare(TradeFrame)
 	FitPanelToSquare(TaxiFrame)
+
+	-- Round-3 decision: the following Blizzard windows stay BOOSTED-ONLY, not
+	-- rebuilt in the deck. Each drives a rare, stateful flow whose logic
+	-- (multi-step server round-trips, text-entry popups, drag/paint
+	-- interactions) gains little from a rebuild and risks much, and the
+	-- capped 1.75x fit already lifts their standard ~22-unit buttons past the
+	-- 90 px touch floor (22 units x ~2.5 px/unit x 1.75 ~= 96 px):
+	--   * PetitionFrame — guild/charter signing: a handful of full-size
+	--     Sign/Request buttons, used once per guild ever.
+	--   * TabardFrame — the tabard designer: five arrow-stepper pairs +
+	--     Accept/Cancel around a live model preview we could not reproduce;
+	--     its small arrows are the one sub-90px case, hit-rect-padded below.
+	--   * WorldStateScoreFrame — the BG scoreboard is read-only rows; only
+	--     its close affordance is ever tapped.
+	--   * MacroFrame / KeyBindingFrame — keyboard-centric editors that assume
+	--     a physical keyboard anyway; boosted for occasional touch-ups (the
+	--     binding list's per-row buttons stay mouse-sized — padding them
+	--     without overlap needs a re-layout, not a trivial inset — accepted).
+	--     Both are LoD on 1.12 (Blizzard_MacroUI / Blizzard_BindingUI, loaded
+	--     via UIParent's MacroFrame_LoadUI / KeyBindingFrame_LoadUI from the
+	--     game menu), so their globals are nil here — the fit hooks are
+	--     attached from the shared ADDON_LOADED handler below instead.
+	--   * OptionsFrame / SoundOptionsFrame / UIOptionsFrame — the GameMenu
+	--     options screens; visited rarely, and their checkbox rows work at
+	--     the boosted scale.
+	FitPanelToSquare(PetitionFrame)
+	FitPanelToSquare(TabardFrame)
+	FitPanelToSquare(WorldStateScoreFrame)
+	FitPanelToSquare(OptionsFrame)
+	FitPanelToSquare(SoundOptionsFrame)
+	FitPanelToSquare(UIOptionsFrame)
+
+	-- The tabard designer's arrow steppers are 32x32 UI units, which the
+	-- boosted fit already lifts past the touch floor (32 x ~2.5 px/unit x
+	-- 1.75 ~= 140 physical px) — no negative padding needed for size. The
+	-- real hazard is the opposite: the five rows sit on a 25-unit vertical
+	-- pitch, so the native 32-unit buttons already OVERLAP siblings by 7
+	-- units, an ambiguous equal-strata/level hit-test band (the unspecified
+	-- z-order hazard documented in RollFrames.lua / Core.lua). So the insets
+	-- go both ways: widen horizontally (-14 each side, no horizontal
+	-- neighbor) but SHRINK vertically (+4 top/bottom -> 24-unit-tall hit
+	-- rect, under the 25-unit pitch) so every tap lands on exactly one row.
+	-- The 1.12 XML names the five customization rows
+	-- TabardFrameCustomization1..5 (template children $parentLeftButton /
+	-- $parentRightButton -> TabardFrameCustomization1LeftButton, ...);
+	-- TabardCharacterCustomization* is the later-era spelling, tried second
+	-- for renamed cores. Nil-guarded so an unmatched build just skips.
+	if TabardFrame then
+		local sides = { "LeftButton", "RightButton" }
+		HookOnShow(TabardFrame, function()
+			for i = 1, 5 do
+				for s = 1, 2 do
+					local b = getglobal("TabardFrameCustomization" .. i .. sides[s])
+						or getglobal("TabardCharacterCustomization" .. i .. sides[s])
+					if b and b.SetHitRectInsets then
+						b:SetHitRectInsets(-14, -14, 4, 4)
+					end
+				end
+			end
+		end)
+	end
+
+	-- Shared ADDON_LOADED dispatch for the LoD Blizzard addons this file
+	-- cares about (defined after FitPanelToSquare so the closure can reach
+	-- it): banish the session-killing frames when some other addon
+	-- force-loads their UI after login — each frame registers its own show
+	-- events in OnLoad, and its OnHide ends the server session (CloseAuctionHouse
+	-- / CloseTradeSkill / CloseCraft / CloseTrainer), the hazard described at
+	-- each banish site above — and attach the touch fit to the LoD editors
+	-- (Macro / KeyBinding) once their frames actually exist.
+	WM.On("ADDON_LOADED", function(_, addonName)
+		if addonName == "Blizzard_AuctionUI" then
+			WM.BanishFrame(AuctionFrame)
+		elseif addonName == "Blizzard_TradeSkillUI" then
+			WM.BanishFrame(TradeSkillFrame)
+		elseif addonName == "Blizzard_CraftUI" then
+			WM.BanishFrame(CraftFrame)
+		elseif addonName == "Blizzard_TrainerUI" then
+			WM.BanishFrame(ClassTrainerFrame)
+		elseif addonName == "Blizzard_MacroUI" then
+			FitPanelToSquare(MacroFrame)
+		elseif addonName == "Blizzard_BindingUI" then
+			FitPanelToSquare(KeyBindingFrame)
+		end
+	end)
 
 	-- Taxi node buttons are 16x16 UI units (~40 physical px) and the 512-unit
 	-- TaxiFrame hits the width cap above, so the fit alone can't rescue them.

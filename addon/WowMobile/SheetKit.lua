@@ -169,7 +169,15 @@ function Kit.NewStack(scroller)
 			for i = 1, #pool do pool[i]:Hide() end
 		end
 		for i = #placed, 1, -1 do
-			placed[i]:Hide()
+			local w = placed[i]
+			-- Never Hide() a focused EditBox: hiding drops keyboard focus and
+			-- folds the phone keyboard, and event-driven re-renders (BAG_UPDATE,
+			-- PLAYER_MONEY, CURSOR_* ...) land mid-typing. The next Anchor()
+			-- call re-positions the widget anyway, so leaving it shown for the
+			-- one synchronous rebuild frame is invisible.
+			if not (w.HasFocus and w:HasFocus()) then
+				w:Hide()
+			end
 			placed[i] = nil
 		end
 		y = 0
@@ -410,10 +418,30 @@ function Kit.CreateStepper(parent, wPx, label)
 		return v
 	end
 
+	-- onChange fires only when the clamped value actually CHANGED (same guard
+	-- as CreateMoneyStepper.SetCopper): render code parks steppers with Set(1)
+	-- from inside the very render that onChange re-enters, so an unconditional
+	-- fire would recurse Render -> Set -> onChange -> Render to a stack
+	-- overflow (non-stackable sell items, recipes with missing reagents).
 	function f.Set(v)
+		v = Clamp(v)
+		if v ~= f.value then
+			f.value = v
+			valueText:SetText(v)
+			if f.onChange then f.onChange(v) end
+		else
+			valueText:SetText(v)
+		end
+	end
+
+	-- Silent parking for render code: normalizes the stepper with NO onChange,
+	-- so a render that resets its own stepper (non-stackable sell item,
+	-- recipe with missing reagents) can never re-enter itself — even the
+	-- guarded Set() would nest one full render when the value does change,
+	-- leaving the outer render to append duplicate rows below it.
+	function f.SetSilent(v)
 		f.value = Clamp(v)
 		valueText:SetText(f.value)
-		if f.onChange then f.onChange(f.value) end
 	end
 
 	function f.Get()
@@ -433,11 +461,18 @@ function Kit.CreateStepper(parent, wPx, label)
 end
 
 -- Money entry as three tap-stepper groups (g/s/c) plus a step-multiplier
--- cycle button (x1 -> x10 -> x100). 950 px wide, 150 high; fits the 966 px
--- scroller viewport every sheet uses.
+-- cycle button (x1 -> x10 -> x100). 956 px wide (three 282 px unit groups +
+-- the 110 px cycle button: 3*282 + 110), 150 high; fits the 966 px scroller
+-- viewport every sheet uses.
+--
+-- Cap = MAXIMUM_BID_PRICE (2,000,000,000 copper on classic builds,
+-- Blizzard_AuctionData.lua) so every posting the default UI can represent is
+-- reachable; hard fallback matches that constant.
+local MAX_COPPER = MAXIMUM_BID_PRICE or 2000000000
+
 function Kit.CreateMoneyStepper(parent, label)
 	local f = CreateFrame("Frame", nil, parent)
-	f:SetSize(WM.Px(950), WM.Px(150))
+	f:SetSize(WM.Px(956), WM.Px(150))
 	f.copper = 0
 	local step = 1
 
@@ -466,7 +501,7 @@ function Kit.CreateMoneyStepper(parent, label)
 
 	function f.SetCopper(copper)
 		if copper < 0 then copper = 0 end
-		if copper > 999999999 then copper = 999999999 end
+		if copper > MAX_COPPER then copper = MAX_COPPER end
 		if copper ~= f.copper then
 			f.copper = copper
 			Refresh()

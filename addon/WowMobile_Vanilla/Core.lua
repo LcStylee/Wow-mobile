@@ -245,6 +245,154 @@ function WM.SetButtonEnabled(b, on)
 	end
 end
 
+--------------------------------------------------------------------------------
+-- Economy widgets (shared by the AH / mail / trade / bank / crafting sheets)
+--------------------------------------------------------------------------------
+
+-- Gold/silver/copper stepper: three [-] value [+] groups on one 942x96 row.
+-- Tap steps by 1, long-press (the client maps long-press to a right click)
+-- by 10. Returns a frame with GetCopper()/SetCopper(copper); opts.onChange
+-- fires after every user tap (not after SetCopper, so callers seed values
+-- without feedback loops).
+function WM.CreateMoneyStepper(parent, opts)
+	opts = opts or {}
+	local f = CreateFrame("Frame", nil, parent)
+	f:SetWidth(WM.Px(942))
+	f:SetHeight(WM.Px(96))
+
+	local amounts = { g = 0, s = 0, c = 0 }
+	local caps = { g = 9999, s = 99, c = 99 }
+	local colors = { g = "|cffffd700", s = "|cffc7c7cf", c = "|cffeda55f" }
+	local values = {}
+
+	local function Repaint()
+		values.g:SetText(colors.g .. amounts.g .. "g|r")
+		values.s:SetText(colors.s .. amounts.s .. "s|r")
+		values.c:SetText(colors.c .. amounts.c .. "c|r")
+	end
+
+	local function Bump(denom, delta)
+		local v = amounts[denom] + delta
+		if v < 0 then v = 0 end
+		if v > caps[denom] then v = caps[denom] end
+		if v == amounts[denom] then return end
+		amounts[denom] = v
+		Repaint()
+		if opts.onChange then opts.onChange() end
+	end
+
+	local denoms = { "g", "s", "c" }
+	local x = 0
+	for i = 1, 3 do
+		local d = denoms[i]
+		local minus = WM.CreateTouchButton(f, 92, 96, "-", 44)
+		minus:SetPoint("LEFT", f, "LEFT", WM.Px(x), 0)
+		minus:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		minus:SetScript("OnClick", function()
+			Bump(d, arg1 == "RightButton" and -10 or -1)
+		end)
+		local value = WM.CreateText(f, 32)
+		value:SetPoint("LEFT", minus, "RIGHT", 0, 0)
+		value:SetWidth(WM.Px(118))
+		value:SetJustifyH("CENTER")
+		values[d] = value
+		local plus = WM.CreateTouchButton(f, 92, 96, "+", 44)
+		plus:SetPoint("LEFT", minus, "RIGHT", WM.Px(118), 0)
+		plus:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		plus:SetScript("OnClick", function()
+			Bump(d, arg1 == "RightButton" and 10 or 1)
+		end)
+		x = x + 320
+	end
+
+	function f.GetCopper()
+		return amounts.g * 10000 + amounts.s * 100 + amounts.c
+	end
+
+	function f.SetCopper(copper)
+		copper = copper or 0
+		if copper < 0 then copper = 0 end
+		amounts.g = math.floor(copper / 10000)
+		if amounts.g > caps.g then amounts.g = caps.g end
+		amounts.s = math.mod(math.floor(copper / 100), 100)
+		amounts.c = math.mod(copper, 100)
+		Repaint()
+	end
+
+	f.SetCopper(0)
+	return f
+end
+
+-- Flat touch edit box. Tapping it takes the game's keyboard focus, so the
+-- phone's soft keyboard (raised via the client edge rail's "Aa" key) types
+-- straight into it — the same entry pattern as the rescued chat edit box in
+-- Chat.lua. Enter/Escape release focus so world keys work again.
+function WM.CreateEditBox(parent, wPx, hPx, maxLetters)
+	local eb = CreateFrame("EditBox", nil, parent)
+	eb:SetWidth(WM.Px(wPx))
+	eb:SetHeight(WM.Px(hPx))
+	WM.SkinFrame(eb, { 0.07, 0.07, 0.09, 1 })
+	eb:SetAutoFocus(false)
+	eb:SetMaxLetters(maxLetters or 60)
+	if eb.SetFont then
+		eb:SetFont(WM.FONT, WM.Px(30))
+	elseif eb.SetFontObject then
+		eb:SetFontObject(ChatFontNormal)
+	end
+	if eb.SetTextInsets then
+		eb:SetTextInsets(WM.Px(16), WM.Px(16), 0, 0)
+	end
+	eb:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+	eb:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+	return eb
+end
+
+-- Full-sheet confirmation overlay for destructive/paid actions (place bid,
+-- buyout, cancel auction, buy bank slot, pay COD, delete mail).
+-- FULLSCREEN_DIALOG strata — the LootSheet master-loot-picker technique:
+-- within one strata 1.12 draws and hit-tests strictly by frame level, and a
+-- sheet's scroller rows are DEEP descendants that would out-level a sibling
+-- overlay; the strata is set BEFORE the children are created so they inherit
+-- it. Strata alone is not enough, though: other FULLSCREEN_DIALOG overlays
+-- on the same sheet (mail detail, AH category picker) sit at the SAME
+-- default level as this frame, and equal strata+level draw/hit order is
+-- unspecified on 1.12 (it can reshuffle across Hide/Show cycles) — on a
+-- money-destructive Confirm a tap must never fall through to an underlying
+-- button. So the level is also bumped decisively (+20) before the children
+-- are created, so they inherit it and out-level any sibling overlay's deep
+-- descendants. o.Ask(msg, confirmLabel, fn): Confirm runs fn; Cancel just
+-- hides. The overlay is a child of its sheet, so it hides with it
+-- automatically.
+function WM.CreateConfirmOverlay(parent)
+	local o = CreateFrame("Frame", nil, parent)
+	o:SetFrameStrata("FULLSCREEN_DIALOG")
+	o:SetFrameLevel(o:GetFrameLevel() + 20)
+	o:SetAllPoints(parent)
+	o:EnableMouse(true)
+	WM.SkinFrame(o, WM.Colors.panel, WM.Colors.accent)
+	o:Hide()
+	local text = WM.CreateText(o, 34)
+	text:SetPoint("TOPLEFT", o, "TOPLEFT", WM.Px(32), -WM.Px(48))
+	text:SetPoint("TOPRIGHT", o, "TOPRIGHT", -WM.Px(32), -WM.Px(48))
+	text:SetJustifyH("LEFT")
+	local yes = WM.CreateTouchButton(o, 440, 120, "Confirm", 34)
+	yes:SetPoint("BOTTOMLEFT", o, "BOTTOMLEFT", WM.Px(24), WM.Px(24))
+	yes:SetScript("OnClick", function()
+		o:Hide()
+		if o.onConfirm then o.onConfirm() end
+	end)
+	local no = WM.CreateTouchButton(o, 440, 120, "Cancel", 34)
+	no:SetPoint("BOTTOMRIGHT", o, "BOTTOMRIGHT", -WM.Px(24), WM.Px(24))
+	no:SetScript("OnClick", function() o:Hide() end)
+	function o.Ask(msg, confirmLabel, fn)
+		text:SetText(msg)
+		yes.label:SetText(confirmLabel or "Confirm")
+		o.onConfirm = fn
+		o:Show()
+	end
+	return o
+end
+
 -- "cover"-crop a texture into a non-square region so icons never stretch.
 function WM.CropIcon(tex, wPx, hPx)
 	local ratio = wPx / hPx

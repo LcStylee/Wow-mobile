@@ -199,7 +199,15 @@ local function CreateRow(i)
 		{ label = "Greed", rollType = 2, color = { 1.00, 0.82, 0.00 } },
 		{ label = "Pass",  rollType = 0, color = { 0.70, 0.70, 0.75 } },
 	}
-	local bw = (ROW_W - 20 - 2 * GAP) / 3
+	-- Buttons start at x 114, clear of the icon column (x 10..102, like
+	-- name/timer): iconBtn spans y 70..162 from the row bottom and the
+	-- buttons span 10..100, so any horizontal overlap would put two
+	-- mouse-enabled SIBLINGS on top of each other in a 92x30 band — and
+	-- equal strata+level hit-testing is unspecified on 1.12 (see the
+	-- pinned-row note above), so a Need tap could nondeterministically hit
+	-- the tooltip icon instead. Keeping the columns disjoint makes every
+	-- tap deterministic; ~146 px buttons still clear the 90 px touch floor.
+	local bw = (ROW_W - 114 - 10 - 2 * GAP) / 3
 	local prev
 	for j = 1, 3 do
 		local d = defs[j]
@@ -207,7 +215,7 @@ local function CreateRow(i)
 		if prev then
 			b:SetPoint("BOTTOMLEFT", prev, "BOTTOMRIGHT", WM.Px(GAP), 0)
 		else
-			b:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", WM.Px(10), WM.Px(10))
+			b:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", WM.Px(114), WM.Px(10))
 		end
 		b.label:SetTextColor(d.color[1], d.color[2], d.color[3])
 		b.rollType = d.rollType

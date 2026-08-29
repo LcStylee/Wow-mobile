@@ -9,6 +9,10 @@
 --   WM.GetAura      – UnitAura/UnitBuff positional API  vs  C_UnitAuras aura data tables
 --   WM.CastingInfo / WM.ChannelInfo – UnitCastingInfo   vs  player-only CastingInfo
 --   WM.PickupSpellBookSlot – PickupSpellBookItem        vs  PickupSpell(spellID)
+--   WM.Friends.*    – C_FriendList                      vs  GetNumFriends & co.
+--   WM.Guild*/WM.InviteToGroup/WM.WhisperTo/WM.*ReadyCheck/WM.SetWatchedFaction
+--                   – C_GuildInfo / C_PartyInfo / ChatFrameUtil vs their
+--                     deprecated-shim globals (see each section's source notes)
 -- Detection is done once at load; each wrapper is a plain closure with no
 -- per-call branching.
 --------------------------------------------------------------------------------
@@ -233,6 +237,105 @@ else
 end
 
 --------------------------------------------------------------------------------
+-- Auction deposit + posting (AuctionHouse.lua)
+-- Verified against the 1.15 client's own UI source (Blizzard_AuctionUI/
+-- Classic/Blizzard_AuctionUI.lua, gethe/wow-ui-source classic_era branch):
+--   * deposit:  GetAuctionDeposit(duration, minBid, buyoutPrice, stackSize,
+--               numStacks) — NOT the old CalculateAuctionDeposit(runTime),
+--   * posting:  PostAuction(minBid, buyoutPrice, duration, stackSize,
+--               numStacks, confirmed) — NOT vanilla's StartAuction. It
+--               returns true when the post went through; false means the
+--               server raised AUCTION_HOUSE_POST_WARNING (re-post with
+--               confirmed = true to accept) or AUCTION_HOUSE_POST_ERROR.
+--   * duration: the radio index 1|2|3 (labels AUCTION_DURATION_ONE/TWO/
+--               THREE = 2h/8h/24h on era), not minutes.
+-- Older classic builds (pre-1.14 throttle rework) shipped
+-- CalculateAuctionDeposit(runTime) and StartAuction(minBid, buyout, runTime,
+-- stackSize, numStacks) with no return, where runTime is in MINUTES
+-- (120/480/1440), not the 1|2|3 index — the fallback maps the index. Both
+-- fallbacks are best-effort (dead code on the 11507 target, unverifiable in
+-- this sandbox) and report "posted" unconditionally, since no confirm
+-- handshake existed on those builds.
+--------------------------------------------------------------------------------
+
+if GetAuctionDeposit then
+	WM.AuctionDeposit = function(duration, minBid, buyout, stackSize, numStacks)
+		return GetAuctionDeposit(duration, minBid, buyout, stackSize, numStacks) or 0
+	end
+elseif CalculateAuctionDeposit then
+	WM.AuctionDeposit = function(duration)
+		return CalculateAuctionDeposit(duration) or 0
+	end
+else
+	WM.AuctionDeposit = function() return 0 end
+end
+
+if PostAuction then
+	WM.PostAuction = function(minBid, buyout, duration, stackSize, numStacks, confirmed)
+		return PostAuction(minBid, buyout, duration, stackSize, numStacks, confirmed)
+	end
+elseif StartAuction then
+	local RUN_TIME_MINUTES = { 120, 480, 1440 } -- index 1|2|3 -> minutes
+	WM.PostAuction = function(minBid, buyout, duration, stackSize, numStacks)
+		StartAuction(minBid, buyout, RUN_TIME_MINUTES[duration] or duration,
+			stackSize, numStacks)
+		return true
+	end
+else
+	WM.PostAuction = function() return true end
+end
+
+--------------------------------------------------------------------------------
+-- Trade money offer (Trade.lua)
+-- On 1.15 (10.x engine) the money-offer setter lives on C_TradeInfo only: the
+-- 1.15.9 client UI source has zero bare-global SetTradeMoney callers
+-- (Blizzard_UIPanels_Game/Classic/TradeFrame.lua and Blizzard_MoneyFrame both
+-- call C_TradeInfo.SetTradeMoney), TradeInfoDocumentation.lua lists it only
+-- under C_TradeInfo, and the Blizzard_DeprecatedTradeInfo shim restores only
+-- PickupTradeMoney — the bare global was removed. Pre-C_TradeInfo classic
+-- builds keep the global setter, hence the fallback branch. The GETTERS
+-- (GetPlayerTradeMoney / GetTargetTradeMoney) are still plain globals on
+-- 1.15 (MoneyFrame.lua localizes them), so no wrapper is needed for those.
+--------------------------------------------------------------------------------
+
+if C_TradeInfo and C_TradeInfo.SetTradeMoney then
+	WM.SetTradeMoney = function(copper) C_TradeInfo.SetTradeMoney(copper) end
+elseif SetTradeMoney then
+	local set = SetTradeMoney
+	WM.SetTradeMoney = function(copper) set(copper) end
+else
+	WM.SetTradeMoney = function() end
+end
+
+--------------------------------------------------------------------------------
+-- Bag space + mail command state (Mail.lua's collect-all loop)
+-- C_Container.CalculateTotalNumberOfFreeBagSlots and C_Mail.IsCommandPending
+-- both exist on 1.15 (the default OpenAllMailMixin uses exactly these);
+-- pre-C_Container builds sum the per-bag free counts, and without C_Mail the
+-- collector falls back to its fixed inter-take delay alone.
+--------------------------------------------------------------------------------
+
+if C_Container and C_Container.CalculateTotalNumberOfFreeBagSlots then
+	WM.FreeBagSlots = function()
+		return C_Container.CalculateTotalNumberOfFreeBagSlots() or 0
+	end
+else
+	WM.FreeBagSlots = function()
+		local free = 0
+		for bag = 0, NUM_BAG_SLOTS or 4 do
+			free = free + Container.GetFreeSlots(bag)
+		end
+		return free
+	end
+end
+
+if C_Mail and C_Mail.IsCommandPending then
+	WM.MailCommandPending = function() return C_Mail.IsCommandPending() end
+else
+	WM.MailCommandPending = function() return false end
+end
+
+--------------------------------------------------------------------------------
 -- Player cast info
 -- Both wrappers return: name, displayText, texture, startTimeMs, endTimeMs.
 --------------------------------------------------------------------------------
@@ -243,4 +346,127 @@ if UnitCastingInfo then
 else
 	WM.CastingInfo = function() return CastingInfo() end
 	WM.ChannelInfo = function() return ChannelInfo() end
+end
+
+--------------------------------------------------------------------------------
+-- Friends list (Social.lua)
+-- On 1.15 the friends list lives on C_FriendList (the classic_era
+-- FriendsFrame.lua calls C_FriendList.GetFriendInfoByIndex / AddFriend /
+-- ShowFriends exclusively); pre-C_FriendList classic builds keep the flat
+-- globals. GetInfo normalizes both to:
+--   name, level, className (localized), area, connected
+--------------------------------------------------------------------------------
+
+local Friends = {}
+WM.Friends = Friends
+
+if C_FriendList and C_FriendList.GetNumFriends then
+	Friends.Num = function() return C_FriendList.GetNumFriends() or 0 end
+	Friends.GetInfo = function(i)
+		local info = C_FriendList.GetFriendInfoByIndex(i)
+		if not info or not info.name then return nil end
+		return info.name, info.level or 0, info.className, info.area,
+			info.connected and true or false
+	end
+	Friends.Add = function(name) C_FriendList.AddFriend(name) end
+	Friends.Remove = function(name) C_FriendList.RemoveFriend(name) end
+	Friends.Request = function() C_FriendList.ShowFriends() end
+else
+	Friends.Num = function() return GetNumFriends() or 0 end
+	Friends.GetInfo = function(i)
+		local name, level, class, area, connected = GetFriendInfo(i)
+		if not name then return nil end
+		return name, level or 0, class, area, connected and true or false
+	end
+	Friends.Add = function(name) AddFriend(name) end
+	Friends.Remove = function(name) RemoveFriend(name) end
+	Friends.Request = function() ShowFriends() end
+end
+
+--------------------------------------------------------------------------------
+-- Guild roster (Social.lua)
+-- The roster request moved to C_GuildInfo.GuildRoster on 1.15 (the bare
+-- GuildRoster global is gone from the client; classic_era FriendsFrame.lua
+-- calls the C_ form). Promote/Demote/Uninvite exist BOTH ways on 1.15 —
+-- C_GuildInfo natively, plus the Blizzard_DeprecatedGuildScript shims
+-- (GuildPromote = C_GuildInfo.Promote, ...) — so the C_ form is preferred and
+-- the globals are the fallback for older builds. Same for the MOTD getter
+-- (GetGuildRosterMOTD = C_GuildInfo.GetMOTD in the shim). The permission
+-- predicates (CanGuildInvite/Promote/Demote/Remove) and the roster getters
+-- (GetNumGuildMembers, GetGuildRosterInfo, Get/SetGuildRosterShowOffline)
+-- are still plain globals on 1.15, so those need no wrapper.
+--------------------------------------------------------------------------------
+
+do
+	local request = (C_GuildInfo and C_GuildInfo.GuildRoster) or GuildRoster
+	WM.GuildRosterRequest = request and function() request() end or function() end
+
+	local promote = (C_GuildInfo and C_GuildInfo.Promote) or GuildPromote
+	WM.GuildPromote = promote and function(name) promote(name) end or function() end
+
+	local demote = (C_GuildInfo and C_GuildInfo.Demote) or GuildDemote
+	WM.GuildDemote = demote and function(name) demote(name) end or function() end
+
+	local uninvite = (C_GuildInfo and C_GuildInfo.Uninvite) or GuildUninvite
+	WM.GuildRemove = uninvite and function(name) uninvite(name) end or function() end
+
+	local motd = GetGuildRosterMOTD or (C_GuildInfo and C_GuildInfo.GetMOTD)
+	WM.GuildMOTD = motd and function() return motd() or "" end or function() return "" end
+end
+
+--------------------------------------------------------------------------------
+-- Whisper pre-fill + group invite (Social.lua / Raid.lua)
+-- SendTell opens the (rescued, Chat.lua) edit box pre-filled with "/w name":
+-- on 1.15 it lives on ChatFrameUtil (classic_era ChatFrameUtil.lua), with the
+-- ChatFrame_SendTell global kept as a Blizzard_DeprecatedChatInfo alias —
+-- prefer the native home, fall back through the alias to a raw OpenChat.
+-- Group invites moved to C_PartyInfo.InviteUnit on 1.15 (InviteUnit global is
+-- the deprecated alias).
+--------------------------------------------------------------------------------
+
+if ChatFrameUtil and ChatFrameUtil.SendTell then
+	WM.WhisperTo = function(name) ChatFrameUtil.SendTell(name) end
+elseif ChatFrame_SendTell then
+	WM.WhisperTo = function(name) ChatFrame_SendTell(name) end
+elseif ChatFrame_OpenChat then
+	WM.WhisperTo = function(name) ChatFrame_OpenChat("/w " .. name .. " ") end
+else
+	WM.WhisperTo = function() end
+end
+
+do
+	local invite = (C_PartyInfo and C_PartyInfo.InviteUnit) or InviteUnit
+	WM.InviteToGroup = invite and function(name) invite(name) end or function() end
+end
+
+--------------------------------------------------------------------------------
+-- Ready check (Raid.lua)
+-- On 1.15 both live on C_PartyInfo (classic_era ReadyCheck.xml calls
+-- C_PartyInfo.ConfirmReadyCheck(true/false) directly; DoReadyCheck /
+-- ConfirmReadyCheck globals are Blizzard_DeprecatedPartyInfo shims onto the
+-- same C_ functions). Prefer the native home, keep the globals as fallback.
+--------------------------------------------------------------------------------
+
+do
+	local confirm = (C_PartyInfo and C_PartyInfo.ConfirmReadyCheck) or ConfirmReadyCheck
+	WM.ConfirmReadyCheck = confirm and function(ready) confirm(ready) end or function() end
+
+	local start = (C_PartyInfo and C_PartyInfo.DoReadyCheck) or DoReadyCheck
+	WM.DoReadyCheck = start and function() start() end or function() end
+end
+
+--------------------------------------------------------------------------------
+-- Watched faction (CharacterPanel.lua's Rep tab)
+-- Classic Era 1.15 keeps the vanilla-shaped global: the classic_era
+-- Vanilla/ReputationFrame.xml calls SetWatchedFactionIndex(index) and
+-- SetWatchedFactionIndex(0) to clear. Newer lineages renamed it to
+-- C_Reputation.SetWatchedFactionByIndex. WM.SetWatchedFaction is nil when
+-- neither exists — the Rep tab then renders without the watch toggle
+-- (watch-toggle only where the platform supports it).
+--------------------------------------------------------------------------------
+
+if SetWatchedFactionIndex then
+	WM.SetWatchedFaction = function(index) SetWatchedFactionIndex(index or 0) end
+elseif C_Reputation and C_Reputation.SetWatchedFactionByIndex then
+	WM.SetWatchedFaction = function(index) C_Reputation.SetWatchedFactionByIndex(index or 0) end
 end

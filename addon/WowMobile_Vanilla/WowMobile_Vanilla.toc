@@ -17,8 +17,19 @@
 # anchors its status strip to the unit row UnitFrames publishes), and the
 # panel modules only depend on Deck (+ MoveMode). LootSheet and RollFrames
 # replace the banished LootFrame/GroupLootFrames and depend only on Deck.
-# WorldMap reflows Blizzard's map over the deck; Talents reflows the FrameXML
-# TalentFrame into the world square. Settings loads last because its panel
+# The economy sheets (Bank, Mail, Trade, AuctionHouse, Crafting) replace the
+# Blizzard frames banished in Blizzard.lua and depend on Deck + MoveMode
+# (plus Core's money-stepper/edit-box/confirm-overlay widgets).
+# The social/system set (round 3): Raid and Social are deck panels reached by
+# long-press on the bottom row (Deck.lua) — Raid also depends on UnitFrames'
+# boosted-dropdown wrap (WM.OpenUnitMenu); Stable and Reader are event-opened
+# bottom sheets replacing PetStableFrame/ItemTextFrame (banished in
+# Blizzard.lua); Inspect replaces the global InspectUnit launcher so the
+# target menu's Inspect opens its panel. All depend only on Deck (+ Core).
+# WorldMap reflows Blizzard's map over the deck; Talents reflows the LoD
+# Blizzard_TalentUI TalentFrame into the world square (installed on
+# ADDON_LOADED, since 1.12 loads it via TalentFrame_LoadUI on first open).
+# Settings loads last because its panel
 # drives Config + Viewport. (No Compat.lua in this port: the 1.12 API is
 # called directly.)
 Core.lua
@@ -43,6 +54,16 @@ Spellbook.lua
 CharacterPanel.lua
 QuestLog.lua
 Bags.lua
+Bank.lua
+Mail.lua
+Trade.lua
+AuctionHouse.lua
+Crafting.lua
+Raid.lua
+Social.lua
+Stable.lua
+Inspect.lua
+Reader.lua
 WorldMap.lua
 Talents.lua
 Settings.lua

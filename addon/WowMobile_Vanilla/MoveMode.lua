@@ -21,17 +21,14 @@
 --       - item payloads (bag/equipped): reconciled on CURSOR_UPDATE (present
 --         in the vanilla event set, but registered via WM.TryOn and NOT
 --         load-bearing — the same reconcile also runs on ITEM_LOCK_CHANGED,
---         BAG_UPDATE and a coarse 0.5 s tick), so a Blizzard-side
---         placement (the boosted BankFrame, the trade window) or clear folds
---         the carry bar automatically. The reconcile also runs in REVERSE:
---         a cursor loaded by Blizzard-side code while NO carry is active is
---         ADOPTED as a generic "Held item" carry — mainline with the bank
---         open, where tapping a bank item runs Blizzard's
---         BankFrameItemButtonGeneric_OnClick ->
---         PickupContainerItem(BANK_CONTAINER, slot). Without adoption that
---         would be an invisible carry with no Cancel, and bag-cell taps
---         would take the non-carry branch (UseContainerItem = DEPOSIT while
---         the bank is open) instead of placing the withdrawn item;
+--         BAG_UPDATE and a coarse 0.5 s tick), so an out-of-band placement
+--         or clear folds the carry bar automatically. The reconcile also
+--         runs in REVERSE: a cursor loaded outside a tracked carry (any
+--         Blizzard-side pickup, or an economy sheet's Click* API lifting a
+--         slot's occupant) is ADOPTED as a generic "Held item" carry.
+--         Without adoption that would be an invisible carry with no Cancel,
+--         and bag-cell taps would take the non-carry branch
+--         (UseContainerItem = use/deposit) instead of placing the item;
 --       - spell/action payloads: NO query exists. If Blizzard-side code
 --         clears the cursor (e.g. the edge rail's Esc key) the carry bar can
 --         linger; it resolves on Cancel, on a tap on a non-action surface,
@@ -48,23 +45,24 @@
 --     it off the bar in the default UI. Cancel therefore restores an action
 --     payload to its (still empty) home slot via PlaceAction first.
 --
--- Drop targets: bag cells (Bags.lua), character slots (CharacterPanel.lua,
--- equip-location filtered), action buttons (ActionBars.lua / QuickBar.lua),
--- and — while the bank is open — the boosted Blizzard BankFrame item buttons.
--- Those stay Blizzard-driven in BOTH directions, with a thin OnClick wrap
--- (WrapBankButton below) that reconciles IMMEDIATELY after Blizzard's click:
---   * deposit into an EMPTY bank slot: cursor empties, the wrap folds the
---     carry bar;
---   * deposit onto an OCCUPIED bank slot: Blizzard's click SWAPS — the
---     carried item lands in the bank and the displaced bank item rides the
---     cursor, so CursorHasItem() stays true and a fold would never fire. The
---     wrap detects this (carry active + cursor still loaded) and DEGRADES the
+-- Drop targets: bag cells (Bags.lua), bank/bank-bag/deposit cells (Bank.lua —
+-- the 1.12 container API addresses the bank as bag -1 and bank bags 5..10, so
+-- the same BeginFromBag/DropOnBag handlers serve both directions unchanged),
+-- character slots (CharacterPanel.lua, equip-location filtered), action
+-- buttons (ActionBars.lua / QuickBar.lua), and the economy sheets' special
+-- "put an item here" slots (AuctionHouse sell slot, Mail attachment, Trade
+-- offer slots). Those special slots place via their own Click* C-calls
+-- (ClickAuctionSellItemButton / ClickSendMailItemButton / ClickTradeButton)
+-- and then call Move.NoteSlotDrop(), which reconciles IMMEDIATELY:
+--   * placement into an EMPTY slot: cursor empties, the carry bar folds;
+--   * placement onto an OCCUPIED slot: the Click* call SWAPS — the carried
+--     item lands in the slot and the displaced occupant rides the cursor, so
+--     CursorHasItem() stays true and a fold would never fire. NoteSlotDrop
+--     detects this (carry active + cursor still loaded) and DEGRADES the
 --     payload to a generic no-origin "Held item", because the old icon/name/
---     invType now describe the deposited item, not what the cursor holds;
---   * withdraw with no carry active: Blizzard's click Pickups the bank item
---     and the wrap adopts it on the spot (no event latency).
--- The purchasable bank BAG slots are left alone (equipping bags is a rare
--- flow; Blizzard's buttons work).
+--     invType now describe the placed item, not what the cursor holds;
+--   * a Click* pickup with no carry active is adopted on the spot (no event
+--     latency).
 --
 -- Stack split: long-pressing a stack (count > 1) opens a quantity stepper
 -- sheet FIRST ("Take how many?"); confirming runs SplitContainerItem for
@@ -221,11 +219,11 @@ function Move.IsActive()
 end
 
 -- True when a tap should take the DROP path even though no payload is
--- tracked yet: Blizzard-side code loaded the cursor (mainline: a bank
--- withdraw) and the adopting reconcile hasn't run for it yet. Cell tap
--- handlers use IsActive() OR this, so a foreign cursor is never mistaken
--- for "no carry" (which would UseContainerItem = DEPOSIT with the bank
--- open, or UseAction, instead of placing).
+-- tracked yet: something loaded the cursor outside a tracked carry (an
+-- economy sheet's Click* pickup, any stray Blizzard path) and the adopting
+-- reconcile hasn't run for it yet. Cell tap handlers use IsActive() OR
+-- this, so a foreign cursor is never mistaken for "no carry" (which would
+-- UseContainerItem = use/deposit, or UseAction, instead of placing).
 function Move.CursorForeign()
 	return payload == nil and CursorHasItem()
 end
@@ -485,17 +483,32 @@ end
 local function Reconcile()
 	if not payload then
 		-- REVERSE direction (see header): no carry active but the cursor is
-		-- loaded — Blizzard-side code picked an item up (mainline: tapping a
-		-- boosted BankFrame item runs BankFrameItemButtonGeneric_OnClick ->
-		-- PickupContainerItem(BANK_CONTAINER, slot)). Adopt it as a generic
-		-- Held-item carry so the bar, highlights and Cancel all engage.
+		-- loaded — something outside a tracked carry picked an item up (a
+		-- stray Blizzard pickup path, or an economy sheet's Click* call
+		-- lifting a slot's occupant). Adopt it as a generic Held-item carry
+		-- so the bar, highlights and Cancel all engage.
 		AdoptForeignCursor()
 		return
 	end
 	if IsItemPayload() and not CursorHasItem() then
-		-- Placed or cleared by a Blizzard-driven surface (boosted BankFrame,
-		-- trade window, Esc): fold the carry UI without touching the cursor.
+		-- Placed or cleared out-of-band (a Click* placement, Esc): fold the
+		-- carry UI without touching the cursor.
 		EndCarry()
+	end
+end
+
+-- Public hook for the economy sheets (see the drop-target note in the
+-- header). NoteSlotDrop runs right after a sheet's Click* placement API:
+-- fold when the cursor emptied (placed clean), DEGRADE to a generic
+-- "Held item" carry when a swap left the slot's previous occupant riding
+-- the cursor (the tracked identity would be stale), and with no carry at
+-- all fall through to Reconcile — fold, or ADOPT a fresh Click* pickup.
+function Move.NoteSlotDrop()
+	if payload and CursorHasItem() then
+		Move.Begin({ kind = "container", icon = WM.TEX_QUESTION,
+			name = "Held item" })
+	else
+		Reconcile()
 	end
 end
 
@@ -613,6 +626,15 @@ WM.OnInit(function()
 	bar:SetPoint("BOTTOMRIGHT", WM.WorldSquare, "BOTTOMRIGHT", -WM.Px(8), WM.Px(8))
 	bar:SetHeight(WM.Px(CARRY_H))
 	bar:SetFrameStrata("DIALOG")
+	-- Swallow taps across the WHOLE bar, not just the Cancel button: without
+	-- this, a tap on the visible middle band (the carried icon/name — the
+	-- natural "tap the thing I'm carrying" gesture) would fall through to
+	-- WorldFrame, and on 1.12 a world click with an item on the cursor raises
+	-- the drop-to-destroy DELETE_ITEM confirm (touch-boosted in Blizzard.lua)
+	-- — one boosted tap from destroying the carried item. The client
+	-- joystick's first-touch capture zone already owns the left band
+	-- (x <= 486) client-side, so this costs nothing there.
+	bar:EnableMouse(true)
 	WM.SkinFrame(bar, WM.Colors.panel, WM.Colors.accent)
 	bar:Hide()
 
@@ -685,48 +707,10 @@ WM.OnInit(function()
 	splitCancel:SetPoint("LEFT", allBtn, "RIGHT", WM.Px(8), 0)
 	splitCancel:SetScript("OnClick", function() EndCarry() end)
 
-	-- While the bank is open, the boosted Blizzard BankFrame's 24 item
-	-- buttons become highlighted drop targets. Their own OnClick performs
-	-- every placement/pickup (PickupContainerItem on BANK_CONTAINER); the
-	-- wrap reconciles right after it runs (see the bank note in the header):
-	-- fold on a clean placement, DEGRADE the payload to a generic Held item
-	-- whenever ANY carry is active and an item rides the cursor afterwards:
-	--   · item carry, occupied-slot tap: the tap swapped — the old identity
-	--     now describes the deposited item, not the cursor (also fires on a
-	--     refused/no-op tap, where losing the name/count text but keeping a
-	--     working carry is the conservative outcome);
-	--   · spell/action carry: Blizzard's click ran PickupContainerItem
-	--     regardless, loading the BANK item onto the cursor — a stale
-	--     spell/action label would invert every later drop tap into a
-	--     Cancel, so it degrades to a working item carry too. (If the click
-	--     was instead a no-op and the spell stayed held, CursorHasItem() is
-	--     false — item-only — and the carry stays accurate as-is.)
-	-- With no payload it falls through to Reconcile: fold, or ADOPT a fresh
-	-- withdraw.
-	local function WrapBankButton(b)
-		local orig = b:GetScript("OnClick")
-		b:SetScript("OnClick", function()
-			if orig then orig() end -- 1.12: `this` still set for the call
-			if payload and CursorHasItem() then
-				Move.Begin({ kind = "container", icon = WM.TEX_QUESTION,
-					name = "Held item" })
-			else
-				Reconcile() -- fold (cursor emptied) or adopt (withdraw)
-			end
-		end)
-	end
-	local bankTargetsMade = false
-	WM.On("BANKFRAME_OPENED", function()
-		if bankTargetsMade then return end
-		bankTargetsMade = true
-		for i = 1, 24 do
-			local b = getglobal("BankFrameItem" .. i)
-			if b then
-				Move.MakeTarget(b, "bag")
-				WrapBankButton(b)
-			end
-		end
-	end)
+	-- (Round 1's boosted-BankFrame OnClick wrap lived here; the bank is now a
+	-- full deck rebuild — Bank.lua — whose cells go through BeginFromBag/
+	-- DropOnBag directly, and the swap/adopt reconcile it performed survives
+	-- as the public Move.NoteSlotDrop above.)
 
 	-- Item-payload reconciliation, BOTH directions (see header): fold a stale
 	-- carry when the cursor emptied Blizzard-side, ADOPT a foreign cursor

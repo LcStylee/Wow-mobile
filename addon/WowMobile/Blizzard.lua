@@ -143,26 +143,20 @@ WM.OnInit(function()
 		GameMenuFrame:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 	end)
 
-	-- Mouse-scale Blizzard windows that keep driving frequent flows (flight
-	-- paths, bank, mail, trade): boost them toward touch size and center them
-	-- in the world square. All four are insecure frames, so SetScale/SetPoint
-	-- are legal even in combat — no lockdown queue needed. Their item buttons
-	-- also place a MoveMode-carried item through their own insecure click
-	-- handlers, so cursor-carry works into the bank/mail/trade windows for
-	-- free. They are UIPanels, and ShowUIPanel
-	-- re-anchors a UIPanel to the screen edge on every open, so the fit runs
-	-- from an OnShow hook instead of once at init.
-	-- Boost mouse-scale panels toward touch size (same factor as POPUP_SCALE
-	-- below). The party frames reach touch size at PARTY_SCALE = 0.9 because
-	-- they are natively larger (120x53 UI units).
+	-- Mouse-scale Blizzard windows that keep driving flows this addon does not
+	-- rebuild: boost toward touch size and center in the world square.
+	-- Insecure frames, so SetScale/
+	-- SetPoint are legal even in combat — no lockdown queue needed. They are
+	-- UIPanels, and ShowUIPanel re-anchors a UIPanel to the screen edge on
+	-- every open, so the fit runs from an OnShow hook instead of once at init.
 	local PANEL_SCALE = 1.75
 	local function FitPanelToSquare(frame)
 		if not frame then return end
 		frame:HookScript("OnShow", function(f)
-			-- Cap the boost so the wide classic panels (Bank/Mail/Trade are
-			-- ~384 UI units on a 432-unit-wide portrait window; TaxiFrame is
-			-- 512) never overflow the square. GetWidth/GetHeight return
-			-- unscaled sizes, so the cap is stable across re-shows.
+			-- Cap the boost so wide classic panels (TaxiFrame is 512 UI units
+			-- on a 432-unit-wide portrait window) never overflow the square.
+			-- GetWidth/GetHeight return unscaled sizes, so the cap is stable
+			-- across re-shows.
 			local scale = math.min(PANEL_SCALE,
 				WM.WorldSquare:GetWidth() / f:GetWidth(),
 				WM.WorldSquare:GetHeight() / f:GetHeight())
@@ -171,10 +165,134 @@ WM.OnInit(function()
 			f:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 		end)
 	end
-	FitPanelToSquare(BankFrame)
-	FitPanelToSquare(MailFrame)
-	FitPanelToSquare(TradeFrame)
+	WM.FitPanelToSquare = FitPanelToSquare -- ADDON_LOADED hook below fits LoD frames
 	FitPanelToSquare(TaxiFrame)
+
+	-- Deliberately boosted-only (NOT rebuilt as touch sheets), each fitted to
+	-- the square like TaxiFrame; a rebuild would cost far more than these rare
+	-- one-shot flows are worth, and every one keeps working at fit scale:
+	--   * PetitionFrame — guild/arena charter signing: a handful of big-ish
+	--     UIPanelButtonTemplate buttons drive the whole flow, made thumb-safe
+	--     by the hit-rect padding below.
+	--   * TabardFrame — the tabard designer is a preview model plus five
+	--     left/right cyclers; its tiny 26-unit arrow nubs can't grow without
+	--     covering the preview art, so the tappable area grows instead
+	--     (hit-rect padding below, the TaxiButton technique).
+	--   * WorldStateScoreFrame — the BG scoreboard is read-only rows; nothing
+	--     on it needs a touch target beyond its close button, and rebuilding a
+	--     40-row stat table adds no play value on a phone.
+	--   * SettingsPanel (macro/keybinding panels below likewise) — options,
+	--     macros and keybindings are desk-at-the-PC configuration surfaces,
+	--     not phone-play flows; the square fit keeps them fully on-screen (the
+	--     ~920-unit-wide SettingsPanel would otherwise clip off the 432-unit
+	--     portrait window) at the cost of mouse-sized controls. Accepted.
+	-- All are static frames on era except Macro/Binding UIs (LoD, fitted from
+	-- the ADDON_LOADED hook below). SettingsPanel is not a classic UIPanel but
+	-- is insecure and keeps no per-show anchor logic, so the same hook works.
+	FitPanelToSquare(_G["PetitionFrame"])
+	FitPanelToSquare(_G["TabardFrame"])
+	FitPanelToSquare(_G["WorldStateScoreFrame"])
+	FitPanelToSquare(_G["SettingsPanel"])
+
+	-- Trivially padded hit rects on the boosted-only frames (the TaxiButton
+	-- technique): the frames are static, so a one-time pad at init sticks.
+	-- 12 units ≈ 30 physical px of extra tappable ring per side at fit scale.
+	for _, name in next, {
+		"PetitionFrameSignButton", "PetitionFrameRequestButton",
+		"PetitionFrameRenameButton", "PetitionFrameCancelButton",
+		"TabardFrameAcceptButton", "TabardFrameCancelButton",
+	} do
+		local b = _G[name]
+		if b then b:SetHitRectInsets(-12, -12, -12, -12) end
+	end
+	-- The five tabard cyclers' arrow nubs (classic_era TabardFrame.xml:
+	-- TabardFrameCustomization1..5 with $parentLeftButton/$parentRightButton).
+	for i = 1, 5 do
+		for _, side in next, { "LeftButton", "RightButton" } do
+			local b = _G["TabardFrameCustomization" .. i .. side]
+			if b then b:SetHitRectInsets(-14, -14, -14, -14) end
+		end
+	end
+
+	-- Readable objects/letters are rebuilt by Reader.lua. Same load-bearing
+	-- banish technique as LootFrame: ItemTextFrame's OnHide calls
+	-- CloseItemText() (classic_era ItemTextFrame.xml), which would end the
+	-- reading session mid-page — events unregistered + hidden parent means it
+	-- never opens and that OnHide can never fire.
+	WM.BanishFrame(ItemTextFrame)
+
+	-- The hunter stable is rebuilt by Stable.lua. PetStableFrame's OnHide
+	-- calls ClosePetStables() AND clears a carried pet off the cursor
+	-- (classic_era PetStable.xml), so the same banish rule applies.
+	WM.BanishFrame(_G["PetStableFrame"])
+
+	-- The ready-check prompt is rebuilt by Raid.lua as a fullscreen touch
+	-- overlay; the default ReadyCheckFrame registers READY_CHECK in OnLoad,
+	-- so unregistering (BanishFrame) is what keeps it from popping.
+	WM.BanishFrame(_G["ReadyCheckFrame"])
+
+	-- The compact raid frames duplicate Raid.lua's deck grid at mouse scale:
+	-- Blizzard_CompactRaidFrames is a default-enabled (non-LoD) addon on 1.15,
+	-- so CompactRaidFrameManager exists at login and shows its left-edge flange
+	-- whenever you are in a raid — in the portrait window that lands in/near
+	-- the client joystick's bottom-left first-touch zone — with the container's
+	-- frames shown under default settings. Same banish technique: events
+	-- unregistered stops the roster-driven Show paths on both. Per-member
+	-- ready-check answers move to the deck raid grid's cell badges (Raid.lua)
+	-- since no default raid frame is left to display them.
+	WM.BanishFrame(_G["CompactRaidFrameManager"])
+	WM.BanishFrame(_G["CompactRaidFrameContainer"])
+
+	-- Economy frames replaced by the round-2 touch sheets (Bank.lua / Mail.lua
+	-- / Trade.lua). Same banish technique as LootFrame and doubly load-bearing
+	-- here: each frame's OnHide ends the live interaction (BankFrame_OnHide →
+	-- CloseBankFrame, MailFrame's OnHide path → CloseMail, TradeFrame_OnHide →
+	-- CloseTrade — Blizzard_UIPanels_Game in the 1.15 client source), so a
+	-- visible default frame being hidden would kill the session the sheet is
+	-- serving. Banished (events unregistered + hidden parent) they never
+	-- become visible, so those OnHide handlers can never fire. The 10.x-engine
+	-- PlayerInteractionFrameManager still runs its showFunc on some of them:
+	--   * Banker: showFunc "BankFrame_Open" resolves to nil on era (no such
+	--     function in the 1.15 tree), so the manager no-ops.
+	--   * MailInfo: showFunc MailFrame_Show is NOT side-effect-free — beyond
+	--     ShowUIPanel (harmless against the hidden-parented frame: shown flag
+	--     only, no OnShow/OnHide since the frame never becomes visible) it
+	--     runs OpenAllBags() — and the default ContainerFrames are NOT
+	--     banished (Bags.lua hooks only the toggles), so Blizzard's
+	--     mouse-sized bag frames would open under/over the mail sheet on
+	--     every mailbox interaction — and it calls CloseMail() whenever
+	--     ShowUIPanel left MailFrame's shown flag unset (a panel-refusal edge
+	--     that would kill the mail session the sheet is serving). Both side
+	--     effects ride one insecure global, so replace it outright: the deck
+	--     bags panel supersedes OpenAllBags, Mail.lua issues its own
+	--     CheckInbox, and the ShowUIPanel/CloseMail dance has no job left
+	--     with MailFrame banished.
+	WM.BanishFrame(BankFrame)
+	WM.BanishFrame(MailFrame)
+	WM.BanishFrame(_G["OpenMailFrame"]) -- separate UIPanel the inbox opens into
+	WM.BanishFrame(TradeFrame)
+	if MailFrame_Show then
+		MailFrame_Show = function() end
+	end
+
+	-- The auction house, tradeskill and enchanting UIs are load-on-demand
+	-- Blizzard addons (Blizzard_AuctionUI / Blizzard_TradeSkillUI /
+	-- Blizzard_CraftUI on era — same trio the classic_era FrameXML ships);
+	-- there is no frame to banish at login. UIParent's own handlers for these
+	-- events are what load and show them (UIParent.lua: AUCTION_HOUSE_SHOW →
+	-- AuctionFrame_LoadUI, TRADE_SKILL_SHOW → TradeSkillFrame_LoadUI,
+	-- CRAFT_SHOW → CraftFrame_LoadUI) — drop the events from UIParent, the
+	-- TRAINER_SHOW technique; AuctionHouse.lua/Crafting.lua consume them
+	-- instead. The matching *_CLOSED/_CLOSE handlers stay registered: with
+	-- the UIs never loaded they hit nil-guarded Hide paths and do nothing.
+	-- Should another addon force-load one anyway, the ADDON_LOADED hook below
+	-- banishes its frame.
+	UIParent:UnregisterEvent("AUCTION_HOUSE_SHOW")
+	UIParent:UnregisterEvent("TRADE_SKILL_SHOW")
+	UIParent:UnregisterEvent("CRAFT_SHOW")
+	WM.BanishFrame(_G["AuctionFrame"])
+	WM.BanishFrame(_G["TradeSkillFrame"])
+	WM.BanishFrame(_G["CraftFrame"])
 
 	-- Taxi node buttons are 16x16 UI units (~40 physical px) and the 512-unit
 	-- TaxiFrame hits the width cap above, so the fit alone can't rescue them.
@@ -219,5 +337,28 @@ end)
 WM.On("ADDON_LOADED", function(_, name)
 	if name == "Blizzard_TrainerUI" then
 		WM.BanishFrame(ClassTrainerFrame)
+	elseif name == "Blizzard_AuctionUI" then
+		WM.BanishFrame(_G["AuctionFrame"])
+	elseif name == "Blizzard_TradeSkillUI" then
+		WM.BanishFrame(_G["TradeSkillFrame"])
+	elseif name == "Blizzard_CraftUI" then
+		WM.BanishFrame(_G["CraftFrame"])
+	elseif name == "Blizzard_InspectUI" then
+		-- Inspect.lua rebuilds the inspect view. The default InspectFrame's
+		-- OnHide calls ClearInspectPlayer() — banished (never visible), that
+		-- can't fire and end the inspect session the touch sheet is showing.
+		-- InspectFrame_Show (still called by the unit menu's Inspect) keeps
+		-- doing the useful part: CanInspect + NotifyInspect, which Inspect.lua
+		-- hooks to drive its sheet.
+		WM.BanishFrame(_G["InspectFrame"])
+	elseif name == "Blizzard_MacroUI" then
+		-- Boosted-only, see the FitPanelToSquare block above (LoD frame, so
+		-- the fit attaches at load rather than at init). Guarded: another
+		-- addon force-loading these BEFORE this addon's init would find the
+		-- helper unpublished; the panels then simply stay at mouse scale.
+		if WM.FitPanelToSquare then WM.FitPanelToSquare(_G["MacroFrame"]) end
+	elseif name == "Blizzard_BindingUI" then
+		-- Boosted-only, same rationale.
+		if WM.FitPanelToSquare then WM.FitPanelToSquare(_G["KeyBindingFrame"]) end
 	end
 end)

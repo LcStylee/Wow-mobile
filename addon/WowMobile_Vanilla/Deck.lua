@@ -215,14 +215,21 @@ WM.OnInit(function()
 	row:SetHeight(WM.Px(m.rowBottom))
 	WM.Layout.bottomRow = row
 
+	-- The row is full (6 menu + 5 bag buttons at the 90 px floor), so the
+	-- round-3 panels ride as LONG-PRESS secondaries on related buttons — the
+	-- addon-wide "long-press = secondary action" convention (the client maps
+	-- long-press to a right click). Two-line labels advertise both targets:
+	-- tap opens the first line's panel, long-press the second line's.
 	local entries = {
 		{ label = "Spells",  onTap = function() deck.Toggle("spellbook") end },
 		{ label = "Talents", onTap = function()
 			-- Talents live in the world square (reflowed Blizzard TalentFrame).
 			if WM.Talents then WM.Talents.Toggle() end
 		end },
-		{ label = "Char",    onTap = function() deck.Toggle("character") end },
-		{ label = "Quests",  onTap = function() deck.Toggle("questlog") end },
+		{ label = "Char\n|cff9999a3Social|r", onTap = function() deck.Toggle("character") end,
+			onHold = function() deck.Toggle("social") end },
+		{ label = "Quests\n|cff9999a3Raid|r", onTap = function() deck.Toggle("questlog") end,
+			onHold = function() deck.Toggle("raid") end },
 		{ label = "Map",     onTap = function()
 			-- The map overlays the deck as a reflowed Blizzard frame, not a
 			-- Deck.CreatePanel; WorldMap.lua joins the exclusive system.
@@ -239,7 +246,15 @@ WM.OnInit(function()
 		else
 			b:SetPoint("LEFT", row, "LEFT", 0, 0)
 		end
-		b:SetScript("OnClick", entries[i].onTap)
+		b.onTap, b.onHold = entries[i].onTap, entries[i].onHold
+		b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		b:SetScript("OnClick", function()
+			if arg1 == "RightButton" and this.onHold then
+				this.onHold()
+			else
+				this.onTap()
+			end
+		end)
 		prev = b
 	end
 end)

@@ -194,13 +194,16 @@ function deck.CreateScroller(parent)
 end
 
 --------------------------------------------------------------------------------
--- Bottom row: 6 menu buttons on the left (Spells / Talents / Char / Quests /
--- Map / Config); Bags.lua fills the right side with the bag button row.
+-- Bottom row: 8 menu buttons on the left (Spells / Talents / Char / Quests /
+-- Social / Raid / Map / Config); Bags.lua fills the right end with its single
+-- bags button.
 --------------------------------------------------------------------------------
 
--- 6 menu buttons (98) + 5 gaps (4) = 608 px; the bag row on the right takes
--- 446 px (Bags.lua) — 1054 px total inside the 1064 px row.
-local MENU_W = 98
+-- 8 menu buttons (110) + 7 gaps (4) = 908 px; the bags button on the right
+-- takes 120 px (Bags.lua) — 1028 px total inside the 1064 px row. (Round 3
+-- collapsed Bags' five per-bag buttons — all of which toggled the same panel —
+-- into one, freeing the width for the Social and Raid entries.)
+local MENU_W = 110
 
 WM.OnInit(function()
 	local m = WM.DeckMetrics
@@ -218,6 +221,8 @@ WM.OnInit(function()
 		end },
 		{ label = "Char",    onTap = function() deck.Toggle("character") end },
 		{ label = "Quests",  onTap = function() deck.Toggle("questlog") end },
+		{ label = "Social",  onTap = function() deck.Toggle("social") end },
+		{ label = "Raid",    onTap = function() deck.Toggle("raid") end },
 		{ label = "Map",     onTap = function()
 			-- The map overlays the deck as a reflowed Blizzard frame, not a
 			-- Deck.CreatePanel; WorldMap.lua joins the exclusive system.

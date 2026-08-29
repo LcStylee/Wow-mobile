@@ -14,7 +14,17 @@
 # previous module published in WM.Layout; Pet also anchors its status strip
 # to the unit row UnitFrames publishes), and the panel modules only depend on
 # Deck. MoveMode sits right after Deck: ActionBars/Spellbook/CharacterPanel/
-# Bags call its file-scope API from their cell factories. WorldMap reflows
+# Bags call its file-scope API from their cell factories. SheetKit (shared
+# economy-sheet infrastructure) follows MoveMode: its bag-list rows hand off
+# to MoveMode.Begin, and the economy sheets (AuctionHouse/Crafting/Mail/
+# Bank/Trade — after RollFrames, ordered freely among themselves; they build
+# on Kit.CreateSheet/NewStack/steppers/bag list plus the Compat auction and
+# mail wrappers) require it loaded before
+# them. The round-3 interaction
+# sheets (Stable/Inspect/Reader — event-driven replacements for banished
+# default frames) and the Social/Raid/CharacterPanel panels also build on
+# SheetKit's stack/text-field kit, so they sit with the other SheetKit
+# consumers. WorldMap reflows
 # Blizzard's map over the deck (ARCHITECTURE §4); Talents reflows
 # Blizzard_TalentUI into the world square. LootSheet/RollFrames only need
 # Core/Deck/Viewport (they replace default frames banished in Blizzard.lua).
@@ -26,6 +36,7 @@ Blizzard.lua
 Viewport.lua
 Deck.lua
 MoveMode.lua
+SheetKit.lua
 ActionBars.lua
 QuickBar.lua
 XPBar.lua
@@ -38,10 +49,20 @@ Chat.lua
 BottomSheet.lua
 LootSheet.lua
 RollFrames.lua
+AuctionHouse.lua
+Crafting.lua
+Mail.lua
+Bank.lua
+Trade.lua
+Stable.lua
+Inspect.lua
+Reader.lua
 Spellbook.lua
 CharacterPanel.lua
 QuestLog.lua
 Bags.lua
+Social.lua
+Raid.lua
 WorldMap.lua
 Talents.lua
 Settings.lua
