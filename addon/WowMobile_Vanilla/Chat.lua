@@ -8,7 +8,7 @@
 --   * the shared edit box (1.12 has ONE global ChatFrameEditBox, not one per
 --     chat frame) is rescued BEFORE ChatFrame1 is banished, restyled large,
 --     and re-anchored over the chat strip — typing arrives via the streaming
---     client's keyboard (edge-rail Enter opens it).
+--     client's keyboard (edge-rail Aa opens it).
 --------------------------------------------------------------------------------
 
 local WM = WowMobile

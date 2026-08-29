@@ -1,10 +1,13 @@
 --------------------------------------------------------------------------------
 -- WowMobile (Vanilla 1.12) · Crafting
--- One deck sheet serving BOTH 1.12 crafting APIs, replacing the banished
--- TradeSkillFrame and CraftFrame (both core FrameXML on this client — the
--- Blizzard_TradeSkillUI/CraftUI LoD splits are TBC-era; banished with events
--- unregistered in Blizzard.lua because their OnHides call CloseTradeSkill /
--- CloseCraft):
+-- One deck sheet serving BOTH 1.12 crafting APIs, replacing the suppressed
+-- TradeSkillFrame and CraftFrame. On 1.12 both live in Load-on-Demand
+-- Blizzard addons (Blizzard_TradeSkillUI / Blizzard_CraftUI — the patch
+-- 1.10 LoD split), so suppression works by dropping UIParent's
+-- TRADE_SKILL_SHOW/CRAFT_SHOW events, with a conditional banish plus an
+-- ADDON_LOADED handler in Blizzard.lua as belt-and-braces should another
+-- addon force-load them (their OnHides call CloseTradeSkill / CloseCraft,
+-- hence banish rather than Hide):
 --   * tradeskill API — GetNumTradeSkills / GetTradeSkillInfo(i) -> name,
 --     type ("header"/"optimal"/"medium"/"easy"/"trivial"), numAvailable,
 --     isExpanded; GetTradeSkillNumReagents / GetTradeSkillReagentInfo(i, j)

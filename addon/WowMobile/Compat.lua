@@ -470,3 +470,23 @@ if SetWatchedFactionIndex then
 elseif C_Reputation and C_Reputation.SetWatchedFactionByIndex then
 	WM.SetWatchedFaction = function(index) C_Reputation.SetWatchedFactionByIndex(index or 0) end
 end
+
+--------------------------------------------------------------------------------
+-- Raid-style party frames (Raid.lua notice / Blizzard.lua party re-home)
+-- Era 1.15 exposes retail's "Use Raid-Style Party Frames" setting through
+-- EditMode: when it is on, PartyFrameMixin:ShouldShow() hides every pooled
+-- PartyFrame member and the party renders on CompactPartyFrame instead —
+-- which this addon banishes with its own entry (it is a PartyFrame child,
+-- not part of the CompactRaidFrameManager/Container pair). The canonical
+-- query is EditModeManagerFrame:UseRaidStylePartyFrames(); feature-detected
+-- per call (EditModeManagerFrame methods arrive with Blizzard_EditMode) and
+-- false on any build without it.
+--------------------------------------------------------------------------------
+
+function WM.UseRaidStylePartyFrames()
+	local mgr = EditModeManagerFrame
+	if mgr and mgr.UseRaidStylePartyFrames then
+		return mgr:UseRaidStylePartyFrames() and true or false
+	end
+	return false
+end

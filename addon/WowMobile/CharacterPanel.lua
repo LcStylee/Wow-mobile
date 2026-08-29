@@ -153,7 +153,10 @@ end
 -- thin progress bar along the bottom. Event-driven rebuilds over the pool.
 --------------------------------------------------------------------------------
 
-local ROW_H = 88
+-- 92 px: rows are tappable actions (watch-toggle, header collapse), so they
+-- honor the >=90 px touch floor (ARCHITECTURE §4), matching the Raid tool
+-- row; the lists live in scrollers, so the height costs nothing.
+local ROW_H = 92
 
 local function NewBarList(scroller)
 	local list = { rows = {}, used = 0, y = 0 }

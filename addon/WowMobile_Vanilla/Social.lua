@@ -63,7 +63,7 @@ local function ResetContent()
 	-- Hiding the edit box drops its keyboard focus on 1.12, and event-driven
 	-- re-renders land mid-typing routinely (FRIENDLIST_UPDATE on any friend
 	-- login/logout, GUILD_ROSTER_UPDATE on roster changes). Snapshot the
-	-- focus state (tracked via OnEditFocusGained/Lost at creation) BEFORE the
+	-- focus state (Core's CreateEditBox tracks it as eb.wmFocused) BEFORE the
 	-- Hide clears it, so AddEntryRow can hand focus back — otherwise the
 	-- phone user must re-tap the box to keep typing. Text survives on its own.
 	entryHadFocus = entryBox.wmFocused
@@ -226,6 +226,14 @@ local function AddEntryRow(buttonLabel, onSubmit)
 	entryBtn:SetPoint("TOPLEFT", scroller.child, "TOPLEFT",
 		WM.Px(640 + GAP), -WM.Px(cursorY))
 	entryBtn.label:SetText(buttonLabel)
+	-- The phone keyboard's closing Enter (Core's edit-box protocol) submits
+	-- the same way the button does.
+	entryBox.onEnter = function(name)
+		if name and name ~= "" then
+			onSubmit(name)
+			entryBox:SetText("")
+		end
+	end
 	entryBtn:SetScript("OnClick", function()
 		local name = entryBox:GetText()
 		if name and name ~= "" then
@@ -451,9 +459,9 @@ WM.OnInit(function()
 
 	-- Entry-row widgets (created once, repositioned per render).
 	entryBox = WM.CreateEditBox(scroller.child, 640, 92, 12) -- names cap at 12
-	-- Focus tracking for the re-render snapshot in ResetContent.
-	entryBox:SetScript("OnEditFocusGained", function() this.wmFocused = true end)
-	entryBox:SetScript("OnEditFocusLost", function() this.wmFocused = nil end)
+	-- Focus tracking for the re-render snapshot in ResetContent comes with
+	-- the box: Core's CreateEditBox maintains entryBox.wmFocused (its focus
+	-- scripts also drive the phone-keyboard Enter protocol — don't override).
 	entryBox:Hide()
 	entryBtn = WM.CreateTouchButton(scroller.child, 300, 92, "", 28)
 	entryBtn:Hide()

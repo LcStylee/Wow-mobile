@@ -15,9 +15,13 @@
 -- Blizzard_InspectUI itself reads GetInventoryItemLink(InspectFrame.unit,
 -- slot) for party units after NotifyInspect(unit), so non-target units are
 -- fully supported by the C API). The LoD addon is normally never loaded at
--- all. Belt-and-braces: if some other addon force-loads Blizzard_InspectUI
--- anyway, its ADDON_LOADED both re-asserts our InspectUnit (the LoD addon
--- redefines the global as it loads) and banishes InspectFrame.
+-- all. If some other addon force-loads Blizzard_InspectUI anyway, its
+-- ADDON_LOADED banishes InspectFrame (the load-bearing part — its OnHide
+-- calls ClearInspectPlayer, which would wipe inspect data mid-session) and
+-- re-asserts our InspectUnit purely as belt-and-braces against nonstandard
+-- cores: on stock 1.12 the LoD addon defines InspectFrame_Show, NOT
+-- InspectUnit (only UIParent.lua defines that global), so the load cannot
+-- actually clobber our replacement.
 --
 -- PLATFORM HONESTY (the panel says so on screen): 1.12 has NO INSPECT_READY
 -- event. NotifyInspect(unit) asks the server to stream that unit's item
@@ -199,9 +203,12 @@ WM.OnInit(function()
 		WM.InspectOpen(unit)
 	end
 
-	-- If another addon force-loads Blizzard_InspectUI, it redefines
-	-- InspectUnit and raises InspectFrame (whose OnHide would also
-	-- ClearInspectPlayer mid-session) — re-assert ours and banish the frame.
+	-- If another addon force-loads Blizzard_InspectUI, it raises InspectFrame
+	-- (whose OnHide calls ClearInspectPlayer mid-session) — banishing it is
+	-- the load-bearing part. On stock 1.12 the LoD addon defines
+	-- InspectFrame_Show, NOT InspectUnit (only UIParent.lua defines that
+	-- global), so it cannot clobber our replacement; the re-assert below is
+	-- pure belt-and-braces against nonstandard cores.
 	WM.On("ADDON_LOADED", function(_, addonName)
 		if addonName == "Blizzard_InspectUI" then
 			function InspectUnit(unit)

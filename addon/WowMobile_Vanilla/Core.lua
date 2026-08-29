@@ -325,8 +325,16 @@ end
 
 -- Flat touch edit box. Tapping it takes the game's keyboard focus, so the
 -- phone's soft keyboard (raised via the client edge rail's "Aa" key) types
--- straight into it — the same entry pattern as the rescued chat edit box in
--- Chat.lua. Enter/Escape release focus so world keys work again.
+-- straight into it — the same keystroke stream the rescued chat edit box in
+-- Chat.lua receives. The client brackets every keyboard submission with two
+-- VK_RETURN taps (client keyboard.js: "opens the chat box" / "sends the
+-- line"), so Enter here is stateful to speak that protocol: an Enter arriving
+-- before anything has been typed since focus (the opening bracket) is
+-- consumed — it only selects the box's old text so the incoming characters
+-- replace it — while an Enter after typing (the closing bracket) drops focus
+-- (world keys work again) and fires eb.onEnter(text) when the caller set one.
+-- Escape just drops focus. eb.wmFocused tracks focus for callers' re-render
+-- snapshots (Social.lua).
 function WM.CreateEditBox(parent, wPx, hPx, maxLetters)
 	local eb = CreateFrame("EditBox", nil, parent)
 	eb:SetWidth(WM.Px(wPx))
@@ -342,7 +350,24 @@ function WM.CreateEditBox(parent, wPx, hPx, maxLetters)
 	if eb.SetTextInsets then
 		eb:SetTextInsets(WM.Px(16), WM.Px(16), 0, 0)
 	end
-	eb:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+	local typed = false -- keystrokes since focus gain (Enter protocol above)
+	eb:SetScript("OnEditFocusGained", function()
+		typed = false
+		this.wmFocused = true
+	end)
+	eb:SetScript("OnEditFocusLost", function() this.wmFocused = nil end)
+	eb:SetScript("OnTextChanged", function() typed = true end)
+	eb:SetScript("OnEnterPressed", function()
+		if not typed then
+			-- The keyboard's opening RETURN: consume it, select the old text
+			-- so the incoming characters replace it.
+			this:HighlightText()
+			return
+		end
+		typed = false
+		this:ClearFocus()
+		if eb.onEnter then eb.onEnter(eb:GetText()) end
+	end)
 	eb:SetScript("OnEscapePressed", function() this:ClearFocus() end)
 	return eb
 end

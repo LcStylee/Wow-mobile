@@ -23,9 +23,18 @@
 --     not-ready at READY_CHECK_FINISHED — the default UI's AFK rule — then
 --     cleared after a short linger). The panel need not be open for the
 --     answer overlay to work.
--- When not in a raid the grid area shows a notice instead (party members
--- already live on the re-homed Blizzard party frames, Blizzard.lua — a
--- duplicate 5-cell grid here would just shadow them).
+-- When not in a raid the grid area shows a notice instead: party members
+-- already live on the re-homed, touch-scaled Blizzard PartyFrame container
+-- (its pooled member frames; Blizzard.lua) at the right edge of the world
+-- square — a duplicate 5-cell grid here would just shadow them. Caveat: with
+-- "Use Raid-Style Party Frames" enabled (era exposes the EditMode-backed
+-- setting) PartyFrameMixin:ShouldShow() hides those pooled member frames and
+-- the party renders on CompactPartyFrame, which Blizzard.lua banishes with
+-- a dedicated entry (plus an out-of-combat re-hide hook, since EditMode's
+-- apply path re-shows it) — so the notice branches on
+-- WM.UseRaidStylePartyFrames() (Compat.lua) and tells those users the
+-- setting is what's hiding their party frames, instead of pointing at frames
+-- that do not exist.
 --------------------------------------------------------------------------------
 
 local _, WM = ...
@@ -41,6 +50,15 @@ local CELL_W, CELL_H = 127, 110
 local GAP = 6
 local TOOL_H = 92
 local GRID_Y = TOOL_H + 8
+
+local NO_RAID_TEXT = "You are not in a raid. Party members stay on the party frames at the right edge of the world."
+-- Raid-style-party-frames users have no party frames anywhere (header
+-- caveat) — evaluated at render time, since the setting can flip mid-session.
+local NO_RAID_TEXT_RSPF = "You are not in a raid. The Use Raid-Style Party Frames setting is hiding your party frames — turn it off to see your party at the right edge of the world."
+
+local function NoRaidText()
+	return WM.UseRaidStylePartyFrames() and NO_RAID_TEXT_RSPF or NO_RAID_TEXT
+end
 
 local panel, notice
 local cells = {}        -- i -> secure cell for unit "raid"..i
@@ -152,11 +170,15 @@ local function RefreshAllVisuals()
 	if not cells[1] then
 		-- Mid-combat login: the secure build is still queued (Bags.lua's
 		-- combat-notice pattern) — say so instead of showing a blank grid.
-		notice:SetText("The raid grid will appear when combat ends.")
+		-- Promise the grid only to raiders; a non-raider would otherwise wait
+		-- out combat for a grid that never appears.
+		notice:SetText(IsInRaid()
+			and "The raid grid will appear when combat ends."
+			or NoRaidText())
 		notice:Show()
 		return
 	end
-	notice:SetText("You are not in a raid. Party members stay on the party frames at the right edge of the world.")
+	notice:SetText(NoRaidText())
 	notice:SetShown(not IsInRaid())
 	for i = 1, MAX_RAID do
 		local cell = cells[i]
@@ -414,7 +436,7 @@ WM.OnInit(function()
 	notice:SetPoint("TOP", 0, -WM.Px(GRID_Y + 60))
 	notice:SetWidth(WM.Px(900))
 	notice:SetJustifyH("CENTER")
-	notice:SetText("You are not in a raid. Party members stay on the party frames at the right edge of the world.")
+	notice:SetText(NoRaidText())
 	notice:SetTextColor(0.7, 0.7, 0.75)
 
 	-- All 40 secure cells are created once, up front: creation and the unit

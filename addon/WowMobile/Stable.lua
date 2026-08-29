@@ -64,10 +64,14 @@ local function TapSlot(index, purchased, hasPet)
 	ClickStablePet(index)
 	-- Defensive: a refused placement (e.g. dead pet, level lock) can leave
 	-- the pet on the cursor with no visible cursor UI on a phone. A stable
-	-- pet's cursor kind is NOT observable via GetCursorInfo (no "pet" kind
-	-- exists on this client), so clear unconditionally — a no-op on an
-	-- already-empty cursor.
-	ClearCursor()
+	-- pet IS observable via GetCursorInfo — it reports kind "pet" (the
+	-- default frame's own OnHide keys off exactly that: classic_era
+	-- PetStable.xml, 'if (cursorType == "pet") then ClearCursor()') — so
+	-- clear only a stranded pet, never an unrelated payload someone lifted
+	-- (e.g. a MoveMode carry) before tapping here.
+	if GetCursorInfo() == "pet" then
+		ClearCursor()
+	end
 	selectedIndex = nil
 	Render()
 end
@@ -163,10 +167,13 @@ WM.OnInit(function()
 	local Kit = WM.SheetKit
 	sheet = Kit.CreateSheet("stable", "Stable")
 	sheet.OnDismiss = function()
-		-- Mirror the banished default frame's OnHide: end the session and
-		-- never strand a pet on the invisible cursor. GetCursorInfo has no
-		-- "pet" kind to key on, so clear unconditionally (no-op when empty).
-		ClearCursor()
+		-- Mirror the banished default frame's OnHide (classic_era
+		-- PetStable.xml): it clears a carried pet — GetCursorInfo() == "pet"
+		-- — before ending the session, so no pet is ever stranded on the
+		-- invisible cursor; any other cursor payload is left alone.
+		if GetCursorInfo() == "pet" then
+			ClearCursor()
+		end
 		ClosePetStables() -- PET_STABLE_CLOSED then hides the sheet
 	end
 

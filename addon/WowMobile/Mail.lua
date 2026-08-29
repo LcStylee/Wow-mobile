@@ -384,6 +384,13 @@ RenderSend = function()
 			UIErrorsFrame:AddMessage("COD needs an attached item.", 1, 0.3, 0.3)
 			return
 		end
+		-- Postage is paid by the sender in EVERY mode (the official frame
+		-- disables Send whenever GetSendMailPrice() > GetMoney(), COD or not);
+		-- attached money additionally must be affordable on non-COD sends.
+		if (GetSendMailPrice() or 30) > GetMoney() then
+			UIErrorsFrame:AddMessage("Can't afford the postage.", 1, 0.3, 0.3)
+			return
+		end
 		if not codMode and copper + (GetSendMailPrice() or 30) > GetMoney() then
 			UIErrorsFrame:AddMessage("Can't afford money + postage.", 1, 0.3, 0.3)
 			return

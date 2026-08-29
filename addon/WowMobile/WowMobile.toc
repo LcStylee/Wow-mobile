@@ -22,9 +22,10 @@
 # mail wrappers) require it loaded before
 # them. The round-3 interaction
 # sheets (Stable/Inspect/Reader — event-driven replacements for banished
-# default frames) and the Social/Raid/CharacterPanel panels also build on
-# SheetKit's stack/text-field kit, so they sit with the other SheetKit
-# consumers. WorldMap reflows
+# default frames) and the Social panel also build on SheetKit's stack/
+# text-field kit, so they sit with the other SheetKit consumers; Raid and
+# CharacterPanel need only Core/Deck/Viewport (and MoveMode for
+# CharacterPanel's gear cells). WorldMap reflows
 # Blizzard's map over the deck (ARCHITECTURE §4); Talents reflows
 # Blizzard_TalentUI into the world square. LootSheet/RollFrames only need
 # Core/Deck/Viewport (they replace default frames banished in Blizzard.lua).

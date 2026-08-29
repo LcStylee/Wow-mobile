@@ -22,8 +22,9 @@
 -- sheet is the gear grid with full tooltips. Talents and the inspect honor
 -- tab need their own async data flows on top (the vanilla-era default UI
 -- has no inspect-talent view at all), and are deliberately left out.
--- Item names can lag the item cache; rows show "..." until a re-render
--- (UNIT_INVENTORY_CHANGED / GET_ITEM_INFO_RECEIVED) fills them.
+-- Quality border colors come from GetItemInfo and can lag the item cache;
+-- they fill in on the UNIT_INVENTORY_CHANGED / GET_ITEM_INFO_RECEIVED
+-- re-renders (icons and tooltips are server-backed and never lag).
 --
 -- The unit token stays live only while it points at the same player: the
 -- sheet closes on PLAYER_TARGET_CHANGED (for "target"-token inspects) and on

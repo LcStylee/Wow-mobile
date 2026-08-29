@@ -3,10 +3,12 @@
 -- Deck-filling character sheet with four touch tabs:
 --   Gear       — equipped item grid (tap/hover = tooltip, per-slot durability
 --                bars, long-press = MoveMode pickup) + core stats column,
---   Reputation — collapsible faction headers + standing-colored progress bars;
---                the watched faction (1.12 DOES have SetWatchedFactionIndex —
---                ReputationFrame.xml calls it — and GetFactionInfo's 11th
---                return reports the watch state) is marked on its row,
+--   Reputation — collapsible faction headers + standing-colored progress bars.
+--                The watched-faction machinery IS genuine 1.12 (isWatched is
+--                GetFactionInfo's 11th return, SetWatchedFactionIndex exists —
+--                sources in the rep-tab block comment); tap a faction row to
+--                watch/unwatch it, feeding the deck's own watch bar
+--                (XPBar.lua's rep bar) — same gesture as the Era port,
 --   Skills    — collapsible skill headers + rank/max bars,
 --   Honor     — 1.12 rank system (UnitPVPRank + GetPVPRankInfo) with rank
 --                progress and session/yesterday/week/lifetime stats.
@@ -143,17 +145,27 @@ end
 
 --------------------------------------------------------------------------------
 -- Reputation tab
--- 1.12 GetFactionInfo(i) (vanilla FrameXML ReputationFrame.lua reads exactly
--- this shape): name, description, standingID, barMin, barMax, barValue,
--- atWarWith, canToggleAtWar, isHeader, isCollapsed, isWatched — the 11th
--- return is the WATCH state, not a child flag (child factions are a later
--- addition; 1.12 lists are flat, so no indenting). Headers toggle via
+-- 1.12 GetFactionInfo(i): name, description, standingID, barMin, barMax,
+-- barValue, atWarWith, canToggleAtWar, isHeader, isCollapsed, isWatched —
+-- ELEVEN returns, verified against genuine 1.12 FrameXML (Interface 11200):
+-- ReputationFrame.lua line 51 reads "..., isHeader, isCollapsed, isWatched =
+-- GetFactionInfo(factionIndex)", ReputationFrame.xml line 842 calls
+-- SetWatchedFactionIndex(GetSelectedFaction()) (and 0 to clear), and
+-- ReputationFrame.lua ships ReputationWatchBar_Update/GetWatchedFactionInfo
+-- for the stock watch bar. So the whole watched-faction machinery IS vanilla
+-- 1.12, not a later addition: the accent color and "watched" tag below do
+-- appear on the real client, and tapping a faction row toggles the watch via
+-- SetWatchedFactionIndex(i) (0 clears) — Era-parity gesture. The bar it
+-- feeds is the deck's own: XPBar.lua's rep bar stands in for the stock
+-- ReputationWatchBar, which is parented to MainMenuBar
+-- (ReputationFrame.xml:869) and banished with it (Blizzard.lua). The toggle
+-- repaints directly (re-render + WM.RefreshWatchedRep) because 1.12 promises
+-- no UPDATE_FACTION for a pure watch flip. Headers toggle via
 -- Expand/CollapseFactionHeader(i) — the toggle shifts every index below it,
 -- and the resulting UPDATE_FACTION re-renders the list. Standing names come
 -- from the FACTION_STANDING_LABEL<id> globals, bar colors from
--- FACTION_BAR_COLORS — both 1.12 FrameXML. The watched faction (set via
--- SetWatchedFactionIndex, which 1.12 DOES have — ReputationFrame.xml calls
--- it) is surfaced with an accent name color and a "watched" tag.
+-- FACTION_BAR_COLORS — both genuine 1.12 FrameXML. Lists are flat (child
+-- factions are a later addition), so no indenting.
 --------------------------------------------------------------------------------
 
 local repScroller
@@ -178,6 +190,7 @@ local function AcquireRepRow(n)
 	if row then return row end
 	row = CreateFrame("Frame", nil, repScroller.child)
 	row:SetHeight(WM.Px(REP_ROW_H))
+	row:EnableMouse(true) -- tap = watch toggle (script set per render)
 	WM.SkinFrame(row, { 0.07, 0.07, 0.09, 1 })
 	row.name = WM.CreateText(row, 28)
 	row.name:SetPoint("TOPLEFT", row, "TOPLEFT", WM.Px(16), -WM.Px(10))
@@ -232,7 +245,26 @@ local function RenderReputation()
 			row:SetPoint("TOPLEFT", repScroller.child, "TOPLEFT", 0, -WM.Px(y))
 			row:SetPoint("TOPRIGHT", repScroller.child, "TOPRIGHT", 0, -WM.Px(y))
 			row.name:SetText(name or "")
-			-- Surface the watch state (pooled rows — set the color BOTH ways).
+			-- Tap toggles the watched faction (block comment above): watch
+			-- this row, or un-watch it if it already is. Long-press (right
+			-- click) is left alone per the addon-wide convention.
+			if SetWatchedFactionIndex then
+				local index = i
+				local watched = isWatched
+				row:SetScript("OnMouseUp", function()
+					if arg1 == "LeftButton" then
+						SetWatchedFactionIndex(watched and 0 or index)
+						RenderReputation() -- isWatched flips silently on 1.12
+						if WM.RefreshWatchedRep then WM.RefreshWatchedRep() end
+					end
+				end)
+			else
+				row:SetScript("OnMouseUp", nil)
+			end
+			-- Mark the watched faction — isWatched is a genuine 1.12 return
+			-- (11th; ReputationFrame.lua:51, see the block comment), so the
+			-- marker appears on the real client too.
+			-- Pooled rows — set the color BOTH ways.
 			if isWatched then
 				row.name:SetTextColor(1, 0.82, 0)
 			else
@@ -253,7 +285,7 @@ local function RenderReputation()
 			end
 			local span = (barMax or 0) - (barMin or 0)
 			row.bar:SetMinMaxValues(0, span > 0 and span or 1)
-			row.bar:SetValue(span > 0 and ((barValue or 0) - barMin) or 1)
+			row.bar:SetValue(span > 0 and ((barValue or 0) - (barMin or 0)) or 1)
 			row:Show()
 			y = y + REP_ROW_H + 6
 		end
@@ -265,6 +297,7 @@ local function RenderReputation()
 		row:SetPoint("TOPLEFT", repScroller.child, "TOPLEFT", 0, 0)
 		row:SetPoint("TOPRIGHT", repScroller.child, "TOPRIGHT", 0, 0)
 		row.name:SetText("No known factions.")
+		row:SetScript("OnMouseUp", nil) -- pooled: no stale watch toggle
 		row.name:SetTextColor(0.92, 0.92, 0.92)
 		row.standing:SetText("")
 		row.bar:SetMinMaxValues(0, 1)

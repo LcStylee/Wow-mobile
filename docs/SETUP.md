@@ -56,7 +56,7 @@ checklist; in windowed mode the same checklist appears on the dashboard:
 
 ```
 [1/5] World of Warcraft ..... chosen: C:\...\_classic_era_\WowClassic.exe (Classic Era) — from 4 found
-[2/5] WowMobile addon ....... installed (24 files, up to date)
+[2/5] WowMobile addon ....... installed (38 files, up to date)
 [3/5] Portrait resolution ... Config.wtf OK (1080x1920 windowed)
 [4/5] FFmpeg ................ found: h264_nvenc available
 [5/5] Game running .......... window found
@@ -350,6 +350,40 @@ With the addon enabled you'll see the world in a square up top and the control
 deck below. Everything in the deck is tap-and-go; inside the world square use
 the joystick (bottom-left) to move, drag to look, tap to target, long-press to
 right-click, pinch to zoom.
+
+What the touch UI covers in play (full per-system matrix:
+[COVERAGE.md](COVERAGE.md)):
+
+- **The deck** holds the paged action bars, a second bar, the player/target
+  frames (tap = target, long-press = the unit menu), pet bar, cast bar, XP bar,
+  chat strip, and a bottom menu row. On Classic Era the row is
+  Spells / Talents / Char / Quests / Social / Raid / Map / Config plus a bags
+  button; on the 1.12 port the same panels fit six buttons — **long-press**
+  "Char" for Social and "Quests" for Raid, as the two-line labels show.
+- **NPC and world interactions open by themselves** as full-width touch sheets
+  the moment you interact: gossip and quests, merchants (Buy / Sell / Buyback
+  tabs + repair-all), trainers, looting (Take all; master-loot picker when you
+  are the master looter), need/greed roll rows, the auction house
+  (Browse / Sell / My Auctions), professions and enchanting, mail
+  (Inbox with Collect-all / Send), the bank, player trades, the hunter stable,
+  and readable books, plaques and letters. Closing a sheet (the X) walks away
+  from the NPC cleanly.
+- **Moving items is long-press based:** long-press a bag item, equipped piece,
+  spell or action to pick it up onto the cursor — a carry bar appears above the
+  deck with a big Cancel, valid drop targets glow green, and a tap places or
+  swaps. Stacks first ask "Take how many?" with a − / + / Max / All stepper.
+  The same gesture feeds the auction sell slot, mail attachments and trade
+  slots (their sheets also embed your bag list, so you never have to leave
+  them). Money amounts are tap steppers, and anything that spends money or
+  destroys something asks for a confirming second tap. On Classic Era, item
+  moves are blocked during combat (a notice says so); the 1.12 client has no
+  such restriction.
+- **Typing** (chat, auction search, mail recipient/subject, add-friend) goes
+  through the phone keyboard: tap the field, then open the keyboard with the
+  edge rail's **Aa** key.
+- A few rare flows keep Blizzard's own windows, enlarged for touch instead of
+  rebuilt: the flight map, tabard designer, petitions, macro and key-binding
+  editors, the BG scoreboard, and the Esc game menu.
 
 Type `/wm` in chat (phone quick rail: **Aa** opens the keyboard) for the
 addon's commands:

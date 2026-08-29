@@ -50,7 +50,7 @@ The world viewport is configurable (`WowMobile` saved variable
 `viewport.height`, default 1080) for phones with different aspect ratios. The
 wire protocol carries no viewport field, so the phone client mirrors the value
 in its own **World viewport** setting (`worldViewportPx`, settings sheet,
-default 1080); the two must be changed together (see SETUP.md §6) or the
+default 1080); the two must be changed together (see SETUP.md §5) or the
 client's world/deck gesture split desyncs from the addon's actual layout.
 
 ### 2. Streaming: WebRTC, not a custom transport
@@ -151,7 +151,7 @@ client from it, so the released `wowstreamd.exe` is fully self-contained.
 | `installer/` | NSIS script producing `WowMobile-Setup.exe` (Start Menu/Desktop shortcuts, uninstaller) | `makensis` compile check (CI) |
 | `assets/` | App icon (`wowmobile.ico` + PNG source + generator); baked into the exe via the committed `rsrc_windows_amd64.syso` | — |
 | `.github/workflows/` | CI on every push/PR; tag-triggered release of `WowMobile-Setup.exe` + `wowstreamd.exe` | workflow runs on GitHub Actions |
-| `docs/` | This document, setup guide | — |
+| `docs/` | This document, setup guide, touch UI coverage matrix | — |
 
 ## Trust & security model
 

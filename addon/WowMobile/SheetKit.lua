@@ -553,9 +553,15 @@ end
 --------------------------------------------------------------------------------
 
 -- Big EditBox: tap focuses it, and the streaming client's keyboard (edge-rail
--- Aa) then delivers real keystrokes into the focused box — the same entry
--- path as the rescued chat edit box (Chat.lua). Enter commits (f.onEnter) and
--- drops focus so the phone keyboard can fold; Escape just drops focus.
+-- Aa) then delivers real keystrokes into the focused box — the same keystroke
+-- stream the rescued chat edit box receives (Chat.lua). The client brackets
+-- every keyboard submission with two VK_RETURN taps (client keyboard.js:
+-- "opens the chat box" / "sends the line"), so Enter here is stateful to
+-- speak that protocol: an Enter arriving before anything has been typed
+-- since focus (the opening bracket) is consumed — it only selects the
+-- field's old text so the incoming characters replace it — while an Enter
+-- after typing (the closing bracket) commits (f.onEnter) and drops focus so
+-- the phone keyboard can fold. Escape just drops focus.
 function Kit.CreateTextField(parent, wPx, placeholder, maxLetters)
 	local f = CreateFrame("EditBox", nil, parent)
 	f:SetSize(WM.Px(wPx), WM.Px(96))
@@ -575,14 +581,26 @@ function Kit.CreateTextField(parent, wPx, placeholder, maxLetters)
 		hint:SetShown(f:GetText() == "" and not f:HasFocus())
 	end
 
+	local typed = false -- user keystrokes since focus gain (Enter protocol above)
 	f:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 	f:SetScript("OnEnterPressed", function(self)
+		if not typed then
+			-- The keyboard's opening RETURN: consume it, select the old text
+			-- so the incoming characters replace it.
+			self:HighlightText()
+			return
+		end
+		typed = false
 		self:ClearFocus()
 		if f.onEnter then f.onEnter(self:GetText()) end
 	end)
-	f:SetScript("OnEditFocusGained", UpdateHint)
+	f:SetScript("OnEditFocusGained", function()
+		typed = false
+		UpdateHint()
+	end)
 	f:SetScript("OnEditFocusLost", UpdateHint)
-	f:SetScript("OnTextChanged", function()
+	f:SetScript("OnTextChanged", function(self, userInput)
+		if userInput then typed = true end
 		UpdateHint()
 		if f.onChanged then f.onChanged(f:GetText()) end
 	end)

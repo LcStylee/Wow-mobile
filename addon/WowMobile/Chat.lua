@@ -7,7 +7,7 @@
 --     windows are banished),
 --   * ChatFrame1's edit box is rescued BEFORE its parent is banished,
 --     restyled large, and re-anchored over the chat strip — typing arrives
---     via the streaming client's keyboard (edge-rail Enter opens it).
+--     via the streaming client's keyboard (edge-rail Aa opens it).
 --------------------------------------------------------------------------------
 
 local _, WM = ...

@@ -15,9 +15,12 @@
 -- 8..128). MoveMode's split stepper is TALLER (x 500..1072, y 8..308): while
 -- it is open, rows hop up to y=316 (MoveMode.SplitShown/onSplitToggle wiring
 -- below) so Need/Greed/Pass are never buried under the stepper on the shared
--- DIALOG strata. Accepted transient overlap: with a full party the
--- PartyMemberFrame3/4 band (x 690..960, y ~690..1050, Blizzard.lua) sits
--- under active roll rows; rolls only exist in groups, live at most ~60 s and
+-- DIALOG strata. Accepted transient overlap: with a full party the lower
+-- half of the re-homed PartyFrame stack (x ~672..960, y ~690..1050,
+-- Blizzard.lua — the era pooled PartyMemberFrameTemplate is 128 UI units
+-- wide, Classic/PartyFrameTemplates.xml, so 128*2.5*0.9 = 288 px left of the
+-- x=960 right edge at the 0.9 cap) sits under active roll rows; rolls only
+-- exist in groups, live at most ~60 s and
 -- draw above on DIALOG strata, so the covered party frames are briefly
 -- untappable — the deliberate tradeoff for keeping rolls in thumb reach.
 --

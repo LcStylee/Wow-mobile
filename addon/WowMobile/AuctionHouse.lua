@@ -405,6 +405,19 @@ RenderSell = function()
 		st.Text("Deposit: " .. WM.FormatMoney(Deposit())
 			.. "   ·   Your money: " .. WM.FormatMoney(GetMoney()), 28)
 
+		-- PostAuction applies the entered bid/buyout to EACH stack (per-stack
+		-- prices — official StartPost semantics). With several stacks that is
+		-- a classic mispricing footgun (entering the intended TOTAL posts
+		-- every stack at N× the price), so spell the math out before the tap.
+		local nStacks = numStacksStepper.Get()
+		if nStacks > 1 then
+			local perBuyout = buyoutMoney.GetCopper()
+			st.Text("|cffffcc33Prices are PER STACK:|r posts " .. nStacks
+				.. " auctions of " .. stackStepper.Get() .. " each"
+				.. (perBuyout > 0 and (" — total buyout "
+					.. WM.FormatMoney(perBuyout * nStacks)) or ""), 28)
+		end
+
 		local bid, buyout = bidMoney.GetCopper(), buyoutMoney.GetCopper()
 		local problem
 		if bid <= 0 then

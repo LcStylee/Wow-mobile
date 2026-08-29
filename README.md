@@ -26,10 +26,31 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
 - **Portrait touch UI, not a shrunken desktop.** The addon anchors the 3D world
   to a 1080x1080 square and rebuilds everything else in a bottom control deck:
-  large `SecureActionButtonTemplate` action bars, unit frames, cast bar, XP bar,
-  minimap, chat, and fullscreen touch panels for spellbook, character sheet,
-  quest log, talents, bags, and the world map. NPC dialogue (gossip, quests,
-  merchants, trainers) opens as full-width bottom sheets with big touch targets.
+  large `SecureActionButtonTemplate` action bars (paged for stances, forms and
+  possession), player/target unit frames with long-press unit menus, pet bar,
+  cast bar, buff/debuff rows with tap-to-cancel, XP bar, minimap, chat with a
+  phone-keyboard edit box, and deck panels for the spellbook, character sheet
+  (gear / reputation / skills / honor), quest log, bags, friends & guild, and a
+  40-man raid grid with ready checks and raid markers. Talents and the world
+  map stay Blizzard's frames, reflowed to touch size.
+- **Every interactive system covered.** NPC dialogue (gossip, quests, merchants
+  with buy/sell/buyback/repair, trainers) opens as full-width bottom sheets with
+  big touch targets — and so does everything else you'd normally drive with a
+  mouse: looting (with Take-all and master-loot assignment), need/greed roll
+  rows, the full auction house (browse with filters, multi-stack selling,
+  cancelling), professions and enchanting, mail (inbox with Collect-all, sending
+  with attachments and COD), the bank, player-to-player trading, the hunter
+  stable, inspecting other players, and readable books and letters. Rare flows
+  (flight map, tabard designer, petitions, macros/keybindings, BG scoreboard)
+  keep Blizzard's own frames, boosted to touch scale. The per-system matrix for
+  both addon variants is in [docs/COVERAGE.md](docs/COVERAGE.md).
+- **Drag & drop, rebuilt for touch.** Long-press (= right-click) picks a bag
+  item, equipped piece, spell or action up onto the real game cursor; a carry
+  bar above the deck shows what you're holding with a big Cancel, valid drop
+  targets glow green, and a tap places or swaps it — onto bars, bags, gear
+  slots, the bank, or the auction/mail/trade slots. Stacks first ask "Take how
+  many?" via a stepper; money is entered with tap steppers, and anything that
+  spends or destroys takes a confirming second tap.
 - **Low-latency WebRTC streaming.** Zero-copy `ddagrab` desktop-duplication
   capture into `h264_nvenc` on NVIDIA GPUs (frames never leave the GPU before
   encode); automatic fallback chain to AMD AMF, Intel QSV, or software x264 via
@@ -172,7 +193,7 @@ and leaves the bottom 44% of the screen — natural thumb territory — for pure
 controls that cost the encoder almost nothing. The square's height is tunable
 per phone (`/wm viewport`, mirrored by the client's **World viewport** setting
 in the HUD — set both to the same value, see the
-[setup guide](docs/SETUP.md#6-first-run-in-game)).
+[setup guide](docs/SETUP.md#5-first-run-in-game)).
 
 **Can someone else on my network hijack the stream?**
 They would need the pairing token (128 random bits, shown only on your PC), and
@@ -197,7 +218,7 @@ self-contained.
 | `embed.go` | Root embed package: `go:embed` of `client/`, `client/host/`, `addon/WowMobile/`, and `addon/WowMobile_Vanilla/` |
 | `installer/` | NSIS script that packages `wowstreamd.exe` into `WowMobile-Setup.exe` |
 | `assets/` | App icon artwork (`wowmobile.ico`) and its generator |
-| `docs/` | [Architecture](docs/ARCHITECTURE.md) and [setup guide](docs/SETUP.md) |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md), [setup guide](docs/SETUP.md), and the [touch UI coverage matrix](docs/COVERAGE.md) |
 
 ## License
 

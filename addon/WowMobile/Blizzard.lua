@@ -16,12 +16,11 @@
 
 local _, WM = ...
 
--- PartyMemberFrame is 120x53 UI UNITS, not px: at ~2.5 physical px per UI
--- unit (1080 px window / ~432-unit UIParent at the addon's uiScale) that is
--- already ~300x133 px unscaled. 0.9 yields ~270x119 px frames — inside the
--- ~120-145 px touch band. This is the scale CEILING: the re-home below
--- shrinks it further when a reduced viewport.height can't fit the full chain
--- (arithmetic at the re-home).
+-- Party-frame scale CEILING: at ~2.5 physical px per UI unit (1080 px window
+-- / ~432-unit UIParent at the addon's uiScale) the member frames land in the
+-- ~120-145 px touch band at 0.9. The re-home below shrinks further when a
+-- reduced viewport.height can't fit the full stack (arithmetic at the
+-- re-home).
 local PARTY_SCALE = 0.9
 
 WM.OnInit(function()
@@ -90,45 +89,118 @@ WM.OnInit(function()
 	-- aura rows. Re-home them on the right edge, scaled to touch size: below
 	-- the minimap cluster (top at y=330, x right edge 960 — the ranges the
 	-- budget table in Minimap.lua reserves for them, left of the quick-bar
-	-- column at x>=976). Only PartyMemberFrame1
-	-- needs re-anchoring — 2..4 chain-anchor to it in Blizzard's XML — but
-	-- every frame needs its own SetScale (scale does not travel via anchors).
+	-- column at x>=976).
 	--
-	-- y-budget (physical px from the square's top, at 2.5 px/UI-unit): each
-	-- member's vertical pitch is <=80 UI units (53-unit frame + the <=27-unit
-	-- chain gap that holds the pet frame) -> 80 * 2.5 = 200 px at scale 1.0,
-	-- so a full party chained from y=330 ends by 330 + 4*200*scale px, pet
-	-- frames included. The square's height is configurable (viewport.height,
-	-- Config bounds 648..~1130), so the scale is solved per height:
+	-- On the 1.15 client the member frames are anonymous POOLED children of
+	-- the PartyFrame container — Blizzard_UnitFrame Shared/PartyFrame.lua
+	-- builds them from a CreateFramePool; the vanilla PartyMemberFrame1..4
+	-- globals no longer exist — so the CONTAINER is what gets re-homed: one
+	-- SetScale/SetPoint on it carries every pooled member (scale and position
+	-- propagate to children), and the container itself is insecure — the
+	-- secure targeting machinery lives on the member buttons, untouched. The
+	-- reflow still rides the out-of-combat queue with the rest of this file's
+	-- layout work.
+	--
+	-- POSITION OWNER (era 1.15): PartyFrame is an EditMode unit-frame system —
+	-- classic_era Blizzard_UnitFrame Shared/PartyFrame.xml inherits
+	-- EditModeUnitFrameSystemTemplate, and Blizzard_EditMode loads on era
+	-- (AllowLoadGameType classic). It is NOT a UIParent-managed frame (absent
+	-- from UIPARENT_MANAGED_FRAME_POSITIONS on this client), so the classic
+	-- ignoreFramePositionManager flag is a no-op for it. Instead
+	-- EditModeManagerFrame re-applies the saved layout's anchor AND scale on
+	-- every layout apply (EditModeSystemMixin:ApplySystemAnchor does
+	-- ClearAllPoints+SetPoint from systemInfo.anchorInfo; the FrameSize setting
+	-- re-applies SetScale) — including the login-time EDIT_MODE_LAYOUTS_UPDATED
+	-- (server-sent, lands AFTER this file's PLAYER_LOGIN re-home and Viewport's
+	-- PLAYER_ENTERING_WORLD apply), DISPLAY_SIZE_CHANGED, edit-mode enter/exit,
+	-- layout switches, and the raid-style-party-frames toggle. A set-once
+	-- re-home therefore snaps back to the square's top-left at EditMode's
+	-- scale; the hooks after ReflowParty below RE-ASSERT it after every apply.
+	--
+	-- Caveat: with "Use Raid-Style Party Frames" enabled (era exposes the
+	-- EditMode-backed setting) PartyFrameMixin:ShouldShow() hides the pooled
+	-- member frames entirely and the party renders on CompactPartyFrame — a
+	-- child of PartyFrame created at Blizzard-addon load, NOT part of the
+	-- CompactRaidFrameManager/Container pair, so it needs (and gets) its own
+	-- banish + re-hide hook below. Raid.lua's no-raid notice branches on
+	-- WM.UseRaidStylePartyFrames() (Compat.lua) so those users are told the
+	-- setting, not pointed at frames that don't exist.
+	--
+	-- y-budget (physical px from the square's top, at 2.5 px/UI-unit): the
+	-- container's vertical layout spans <=320 UI units for a full party (4
+	-- members at <=80 units of pitch each, pet frames included) -> <=800 px at
+	-- scale 1.0. The square's height is configurable (viewport.height, Config
+	-- bounds 648..~1130), so the scale is solved per height:
 	-- 330 + 800*scale <= height - 6  =>  scale = (height - 336) / 800, capped
-	-- at PARTY_SCALE. Default 1080 -> 0.93 -> capped 0.9 (chain ends 1050,
-	-- matching the budget table in Minimap.lua); the 648 floor -> 0.39 (chain
+	-- at PARTY_SCALE. Default 1080 -> 0.93 -> capped 0.9 (stack ends 1050,
+	-- matching the budget table in Minimap.lua); the 648 floor -> 0.39 (stack
 	-- ends 642). Either way the secure unit buttons never overhang the control
 	-- deck and steal its taps. Registered as a Viewport reflower so /wm
 	-- viewport re-solves it; the reflow closure is guaranteed out of combat.
 	local function ReflowParty(heightPx)
-		local first = PartyMemberFrame1
-		if not first then return end
+		local pf = PartyFrame
+		if not pf then return end
 		local scale = (heightPx - 336) / 800
 		if scale > PARTY_SCALE then scale = PARTY_SCALE end
 		-- Unreachable through Config (bounds floor 648 -> 0.39); guards a
 		-- hand-edited SavedVariables height, where SetScale(<=0) would error.
 		if scale < 0.1 then scale = 0.1 end
-		for i = 1, MAX_PARTY_MEMBERS or 4 do
-			local f = _G["PartyMemberFrame" .. i]
-			if f then
-				f:SetScale(scale)
-				f.ignoreFramePositionManager = true -- keep any manager pass off our anchor
-			end
-		end
-		first:ClearAllPoints()
+		pf:SetScale(scale)
+		-- No ignoreFramePositionManager here: on this client PartyFrame is
+		-- EditMode-owned, not UIParent-managed (see POSITION OWNER above) —
+		-- persistence comes from the re-assert hooks below, not a flag.
+		pf:ClearAllPoints()
 		-- SetPoint offsets are in the frame's own (scaled) space; divide
 		-- so the offsets stay 120/330 physical px (right edge fixed at x=960,
 		-- left of the quick-bar column, at every scale).
-		first:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
+		pf:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
 			-WM.Px(120) / scale, -WM.Px(330) / scale)
+		-- The pooled member template ships HitRectInsets (7,85,6,7) that
+		-- shrink the tappable area to roughly the portrait (~81x90 physical
+		-- px at the 0.9 cap — under the 90 px minimum). Zero them so the
+		-- whole 128x53-unit frame takes taps (legal out of combat — this
+		-- closure is guaranteed out of combat — same technique as the
+		-- TaxiButton padding below). Runs on every reflow, so pool frames
+		-- acquired after a roster change get covered by the re-assert hooks.
+		if pf.PartyMemberFramePool then
+			for f in pf.PartyMemberFramePool:EnumerateActive() do
+				f:SetHitRectInsets(0, 0, 0, 0)
+			end
+		end
 	end
 	WM.Viewport.OnApply(ReflowParty)
+	-- Re-assert after every EditMode layout apply (see POSITION OWNER above):
+	-- hooksecurefunc runs after the hooked body, so the re-home lands on top
+	-- of EditMode's ClearAllPoints/SetPoint/SetScale within the same apply.
+	-- The reflow itself is only SetScale/SetPoint on the insecure container —
+	-- neither re-enters UpdateSystem/UpdateLayoutInfo — but the reentrancy
+	-- flag keeps that an invariant rather than an accident, and the keyed
+	-- OutOfCombat entry coalesces the login burst (UpdateLayoutInfo + the
+	-- EDIT_MODE_LAYOUTS_UPDATED event fire together) into one queued reflow
+	-- if a layout apply arrives mid-combat.
+	local reflowing = false
+	local function QueueReflowParty()
+		if reflowing then return end
+		WM.OutOfCombat("party-rehome", function()
+			reflowing = true
+			ReflowParty(WM.Viewport.HeightPx())
+			reflowing = false
+		end)
+	end
+	if PartyFrame and PartyFrame.UpdateSystem then
+		-- Per-system apply: covers every path EditModeSystemMixin funnels
+		-- through (anchor + size re-application for this frame alone).
+		hooksecurefunc(PartyFrame, "UpdateSystem", QueueReflowParty)
+	end
+	if EditModeManagerFrame and EditModeManagerFrame.UpdateLayoutInfo then
+		-- Whole-layout apply (login, layout switch, edit-mode exit).
+		hooksecurefunc(EditModeManagerFrame, "UpdateLayoutInfo", QueueReflowParty)
+	end
+	-- Server-sent layout push (arrives at/after PLAYER_ENTERING_WORLD, i.e.
+	-- after the initial re-home below AND Viewport's first Apply). TryOn: the
+	-- event is in the era APIDocumentation, but a build without EditMode must
+	-- not error at RegisterEvent.
+	WM.TryOn("EDIT_MODE_LAYOUTS_UPDATED", QueueReflowParty)
 	-- This OnInit runs before Viewport's (toc order), i.e. before the first
 	-- Apply — do the initial re-home directly.
 	WM.OutOfCombat(function() ReflowParty(WM.Viewport.HeightPx()) end)
@@ -242,6 +314,23 @@ WM.OnInit(function()
 	-- since no default raid frame is left to display them.
 	WM.BanishFrame(_G["CompactRaidFrameManager"])
 	WM.BanishFrame(_G["CompactRaidFrameContainer"])
+	-- CompactPartyFrame is NOT part of that pair: it is created at
+	-- Blizzard-addon load as a child of PartyFrame (CompactRaidFrameContainer
+	-- mixin AddGroup("PARTY")) and carries the "Use Raid-Style Party Frames"
+	-- rendering, so without its own banish it would sit at the square's
+	-- top-left as live secure unit buttons eating taps. EditMode's apply
+	-- path re-Shows it, so re-hide out of combat after every UpdateVisibility.
+	local cpf = _G["CompactPartyFrame"]
+	if cpf then
+		WM.BanishFrame(cpf)
+		if cpf.UpdateVisibility then
+			hooksecurefunc(cpf, "UpdateVisibility", function()
+				WM.OutOfCombat("cpf-rehide", function()
+					if cpf:IsShown() then cpf:Hide() end
+				end)
+			end)
+		end
+	end
 
 	-- Economy frames replaced by the round-2 touch sheets (Bank.lua / Mail.lua
 	-- / Trade.lua). Same banish technique as LootFrame and doubly load-bearing

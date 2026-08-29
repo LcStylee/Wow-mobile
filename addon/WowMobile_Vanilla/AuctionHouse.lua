@@ -163,15 +163,18 @@ local function AcquireBrowseRow(i)
 			this.index, this.amount, this.itemLabel, this.rawName
 		confirm.Ask("Bid " .. WM.FormatMoney(amount) .. " on " .. label ..
 			"?", "Place bid", function()
-			local name, _, _, _, _, _, minBid, minIncrement, _, bidAmount =
-				GetAuctionItemInfo("list", index)
+			local name, _, _, _, _, _, minBid, minIncrement, _, bidAmount,
+				highBidder = GetAuctionItemInfo("list", index)
 			-- Recompute the required bid the same way RenderBrowse did; a
 			-- mismatch also catches someone outbidding this auction while
 			-- the confirm was up (the captured amount would be stale).
+			-- highBidder is re-checked too: a list re-render behind the
+			-- confirm can land a player-is-winning auction on this index,
+			-- and bidding there would be gold against the player's own bid.
 			local hasBid = bidAmount ~= nil and bidAmount > 0
 			local nextBid = hasBid and (bidAmount + (minIncrement or 0)) or (minBid or 0)
 			if nextBid < 1 then nextBid = 1 end
-			if name ~= rawName or nextBid ~= amount then
+			if name ~= rawName or nextBid ~= amount or highBidder then
 				WM.Print("Auction list changed — bid cancelled. Check the row and retry.")
 				return
 			end
@@ -190,8 +193,12 @@ local function RenderBrowse()
 	local shown, total = GetNumAuctionItems("list")
 	local playerName = UnitName("player")
 	for i = 1, shown do
+		-- 11th return: on 1.12 highBidder is a FLAG meaning the PLAYER is the
+		-- current high bidder (not a name). The default AuctionFrameBrowse
+		-- disables its Bid button on it — re-bidding would spend
+		-- bidAmount+minIncrement against the player's own winning bid.
 		local name, texture, count, quality, canUse, _, minBid,
-			minIncrement, buyoutPrice, bidAmount, _, owner =
+			minIncrement, buyoutPrice, bidAmount, highBidder, owner =
 			GetAuctionItemInfo("list", i)
 		local row = AcquireBrowseRow(i)
 		row.index = i
@@ -204,7 +211,9 @@ local function RenderBrowse()
 		row.line2:SetText((owner or "?") .. " · " ..
 			TimeLeftText(GetAuctionItemTimeLeft("list", i)))
 		local hasBid = bidAmount and bidAmount > 0
-		row.line3:SetText((hasBid and "Bid " or "Starts ") ..
+		row.line3:SetText((hasBid
+				and (highBidder and "|cff33cc33Your bid|r " or "Bid ")
+				or "Starts ") ..
 			WM.FormatMoney(hasBid and bidAmount or minBid))
 		local nextBid = hasBid and (bidAmount + (minIncrement or 0)) or (minBid or 0)
 		if nextBid < 1 then nextBid = 1 end
@@ -213,7 +222,10 @@ local function RenderBrowse()
 		row.bidBtn.itemLabel = label
 		row.bidBtn.rawName = name -- for the Confirm-time revalidation
 		row.bidBtn.label:SetText("Bid\n" .. WM.FormatMoney(nextBid))
-		WM.SetButtonEnabled(row.bidBtn, not mine and GetMoney() >= nextBid)
+		-- `not highBidder`: never offer a bid on an auction the player is
+		-- already winning (see the GetAuctionItemInfo comment above).
+		WM.SetButtonEnabled(row.bidBtn,
+			not mine and not highBidder and GetMoney() >= nextBid)
 		row.buyoutBtn.index = i
 		row.buyoutBtn.itemLabel = label
 		row.buyoutBtn.rawName = name -- for the Confirm-time revalidation
@@ -266,11 +278,26 @@ local function UpdateFilterLabels()
 	usableBtn.label:SetText(usableOnly and "Usable: yes" or "Usable: all")
 end
 
-local function Requery()
+-- Applies a filter change and requeries at page 0. The filter buttons are
+-- NOT throttle-gated the way the ticker gates Search/Prev/Next, so a quick
+-- second tap routinely hits the refused SendQuery path — and committing the
+-- new filter anyway would leave classIndex/qualityIndex/usableOnly and the
+-- labels describing the NEW filter while page/morePages/the visible list
+-- still belong to the OLD query (a later Next would then paginate the new
+-- filter with the old query's page math). So the change is passed IN and
+-- only committed when the query actually sends; on refusal every piece of
+-- state, labels included, still describes the list on screen.
+local function Requery(newClass, newQuality, newUsable)
+	local oldClass, oldQuality, oldUsable = classIndex, qualityIndex, usableOnly
 	local oldPage = page
+	classIndex, qualityIndex, usableOnly = newClass, newQuality, newUsable
 	page = 0
 	UpdateFilterLabels()
-	if not SendQuery() then page = oldPage end
+	if not SendQuery() then
+		classIndex, qualityIndex, usableOnly = oldClass, oldQuality, oldUsable
+		page = oldPage
+		UpdateFilterLabels()
+	end
 end
 
 local function AcquireCatRow(i)
@@ -282,9 +309,9 @@ local function AcquireCatRow(i)
 	row.label:SetJustifyH("LEFT")
 	row.label:SetWidth(WM.Px(700))
 	row:SetScript("OnClick", function()
-		classIndex = this.classIndex
+		local newClass = this.classIndex
 		catOverlay:Hide()
-		Requery()
+		Requery(newClass, qualityIndex, usableOnly)
 	end)
 	catRows[i] = row
 	return row
@@ -370,8 +397,15 @@ end
 
 local function LoadSellFromBag(bag, slot)
 	if GetAuctionSellItemInfo() then
-		ClickAuctionSellItemButton() -- lift the current item out...
-		ClearCursor()                -- ...and home to its bag slot
+		-- Lift the current item out; ClearCursor is EXPECTED to home it to
+		-- its bag slot. Unlike the mail/trade slots (attachment stays locked
+		-- in the bag, homing certain), the auction slot truly holds the item
+		-- and 1.12's homing here is unverified — if this client returns it to
+		-- the sell slot instead, the Click below swaps and the displaced item
+		-- is adopted as a cancellable carry (NoteSlotDrop): nothing is lost
+		-- either way.
+		ClickAuctionSellItemButton()
+		ClearCursor()
 	end
 	PickupContainerItem(bag, slot)
 	if CursorHasItem() then
@@ -638,12 +672,13 @@ WM.OnInit(function()
 
 	searchBox = WM.CreateEditBox(browseArea, 540, 90, 40)
 	searchBox:SetPoint("TOPLEFT", browseArea, "TOPLEFT", 0, 0)
-	searchBox:SetScript("OnEnterPressed", function()
-		this:ClearFocus()
+	-- The phone keyboard's closing Enter (Core's edit-box protocol has already
+	-- dropped focus) runs the search, same as the Search button.
+	searchBox.onEnter = function()
 		local oldPage = page
 		page = 0
 		if not SendQuery() then page = oldPage end
-	end)
+	end
 	searchBtn = WM.CreateTouchButton(browseArea, 200, 90, "Search", 28)
 	searchBtn:SetPoint("LEFT", searchBox, "RIGHT", WM.Px(8), 0)
 	searchBtn:SetScript("OnClick", function()
@@ -661,20 +696,25 @@ WM.OnInit(function()
 	qualityBtn:SetScript("OnClick", function()
 		-- Cycle any -> Good(2) -> Rare(3) -> Epic(4) -> any; passed straight
 		-- through as QueryAuctionItems' qualityIndex (minimum quality).
+		-- Computed locally and handed to Requery, which commits it only if
+		-- the throttle lets the query send.
+		local newQuality
 		if qualityIndex == nil then
-			qualityIndex = 2
+			newQuality = 2
 		elseif qualityIndex >= 4 then
-			qualityIndex = nil
+			newQuality = nil
 		else
-			qualityIndex = qualityIndex + 1
+			newQuality = qualityIndex + 1
 		end
-		Requery()
+		Requery(classIndex, newQuality, usableOnly)
 	end)
 	usableBtn = WM.CreateTouchButton(browseArea, 340, 90, "Usable: all", 24)
 	usableBtn:SetPoint("LEFT", qualityBtn, "RIGHT", WM.Px(8), 0)
 	usableBtn:SetScript("OnClick", function()
-		usableOnly = usableOnly and nil or 1
-		Requery()
+		-- Explicit two-way toggle: `usableOnly and nil or 1` would always
+		-- yield 1 (Lua's `a and nil or c` falls through to c for BOTH truthy
+		-- and nil a), sticking the filter ON after the first tap.
+		Requery(classIndex, qualityIndex, (not usableOnly) and 1 or nil)
 	end)
 	resultText = WM.CreateText(browseArea, 26)
 	resultText:SetPoint("LEFT", usableBtn, "RIGHT", WM.Px(20), 0)

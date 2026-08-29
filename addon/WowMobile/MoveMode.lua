@@ -55,8 +55,10 @@ WM.MoveMode = MoveMode
 -- it. Accepted transient overlaps while move mode is active:
 --   * on reduced viewport heights the lowest quick-bar slot can sit under the
 --     bar (QuickBar keeps slot bottoms inside the square, down to its edge),
---   * with a full party, PartyMemberFrame4's bottom (x 690..960, chain ends
---     ~1050 at default height, Blizzard.lua) is briefly covered.
+--   * with a full party, the re-homed PartyFrame stack's bottom (x ~672..960
+--     — 128-UI-unit-wide pooled member frames at the 0.9 cap, arithmetic in
+--     RollFrames.lua — stack ends ~1050 at default height, Blizzard.lua) is
+--     briefly covered.
 -- Both draw below this bar's DIALOG strata and move mode is a deliberate,
 -- short-lived state, so no permanent budget is claimed.
 --------------------------------------------------------------------------------

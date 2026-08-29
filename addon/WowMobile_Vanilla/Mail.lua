@@ -195,6 +195,13 @@ end
 
 local function CloseDetail()
 	openMail = nil
+	-- A confirm raised from this detail must not outlive the mail it refers
+	-- to: the confirm overlay is a child of the SHEET (not the detail), so
+	-- hiding the detail alone would leave a money-destructive "Pay and take"
+	-- or "Delete" confirm standing after MAIL_INBOX_UPDATE has already
+	-- decided the index no longer shows the same mail. Belt — the
+	-- Confirm-time revalidation in each callback is the braces.
+	if confirm then confirm:Hide() end
 	detail:Hide()
 end
 
@@ -586,12 +593,25 @@ WM.OnInit(function()
 	detail.takeItem:SetPoint("BOTTOMLEFT", detail, "BOTTOMLEFT", WM.Px(12), WM.Px(130))
 	detail.takeItem:SetScript("OnClick", function()
 		if not openMail then return end
-		local index = openMail.index
+		local index, sender, subject = openMail.index, openMail.sender, openMail.subject
 		local _, _, _, _, _, cod = GetInboxHeaderInfo(index)
 		if cod and cod > 0 then
 			confirm.Ask("Taking this item pays the sender " ..
 				WM.FormatMoney(cod) .. " (cash on delivery). Continue?",
 				"Pay and take", function()
+					-- Confirm-time revalidation (the AuctionHouse.lua pattern):
+					-- inbox indices shift while the confirm is up — an emptied
+					-- mail auto-deletes, a background collect-all step removes
+					-- mails, and the 10 s CheckInbox re-request surfaces newly
+					-- delivered mail at the top of the newest-first list. Pay
+					-- only if this index still holds the SAME mail with the
+					-- SAME COD amount; otherwise abort with nothing spent.
+					local _, _, sNow, jNow, _, codNow = GetInboxHeaderInfo(index)
+					if sNow ~= sender or jNow ~= subject or codNow ~= cod then
+						WM.Print("Mail: inbox changed — nothing was paid. Reopen the mail and retry.")
+						CloseDetail()
+						return
+					end
 					TakeInboxItem(index)
 				end)
 		else
@@ -601,13 +621,23 @@ WM.OnInit(function()
 	detail.takeMoney = WM.CreateTouchButton(detail, 516, 110, "Take money", 30)
 	detail.takeMoney:SetPoint("BOTTOMRIGHT", detail, "BOTTOMRIGHT", -WM.Px(12), WM.Px(130))
 	detail.takeMoney:SetScript("OnClick", function()
-		if openMail then TakeInboxMoney(openMail.index) end
+		if not openMail then return end
+		-- Same confirm-time revalidation as take-item/delete: an index shift
+		-- (auto-deleted emptied mail, background collect, the 10 s refresh)
+		-- must not loot a different letter's money.
+		local index = openMail.index
+		local _, _, sender, subject = GetInboxHeaderInfo(index)
+		if sender ~= openMail.sender or subject ~= openMail.subject then
+			WM.Print("Your inbox changed — reopen the mail and retry.")
+			return
+		end
+		TakeInboxMoney(index)
 	end)
 	detail.deleteBtn = WM.CreateTouchButton(detail, 516, 110, "Delete", 30)
 	detail.deleteBtn:SetPoint("BOTTOMLEFT", detail, "BOTTOMLEFT", WM.Px(12), WM.Px(12))
 	detail.deleteBtn:SetScript("OnClick", function()
 		if not openMail then return end
-		local index = openMail.index
+		local index, sender, subject = openMail.index, openMail.sender, openMail.subject
 		if this.isReturn then
 			ReturnInboxItem(index)
 			CloseDetail()
@@ -616,6 +646,19 @@ WM.OnInit(function()
 			local warn = (money and money > 0 or hasItem)
 				and " Its money/item is destroyed with it!" or ""
 			confirm.Ask("Delete this mail?" .. warn, "Delete", function()
+				-- Confirm-time revalidation — same rationale as the COD path
+				-- above: indices shift while the confirm is up, and a blind
+				-- DeleteInboxItem would destroy a DIFFERENT mail's money/item.
+				-- money/hasItem are compared too: sender+subject alone can't
+				-- tell apart look-alike mails (two AH sale notices), same as
+				-- the AH cancel path comparing prices, not just names.
+				local _, _, sNow, jNow, mNow, _, _, hNow = GetInboxHeaderInfo(index)
+				if sNow ~= sender or jNow ~= subject
+					or mNow ~= money or (not hNow) ~= (not hasItem) then
+					WM.Print("Mail: inbox changed — nothing was deleted. Reopen the mail and retry.")
+					CloseDetail()
+					return
+				end
 				DeleteInboxItem(index)
 				CloseDetail()
 			end)

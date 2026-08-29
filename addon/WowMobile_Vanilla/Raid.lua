@@ -92,7 +92,13 @@ local function OpenRaidUnitMenu(cell)
 	-- set on FriendsDropDown beyond initialize/displayMode, matching
 	-- RaidGroupButton_OnClick. RaidFrameDropDown_Initialize is Blizzard_RaidUI
 	-- (LoD, but loaded whenever in a raid); nil-checked for odd builds.
-	if FriendsDropDown and RaidFrameDropDown_Initialize then
+	-- cell.name/cell.id guard mirrors Blizzard's RaidGroupButton_OnClick
+	-- ("if ( this.id and this.name )"): if the roster entry evaporated
+	-- between paint and tap, the initializer would feed nil into
+	-- UnitPopup_ShowMenu and name-concatenating menu actions could error —
+	-- fall through to a plain target attempt instead.
+	if FriendsDropDown and RaidFrameDropDown_Initialize
+			and cell.name and cell.id then
 		-- Pre-clear like RaidGroupButton_OnClick's RightButton branch does:
 		-- 1.12 ToggleDropDownMenu CLOSES the list when it is visible and
 		-- UIDROPDOWNMENU_OPEN_MENU is this same dropdown's name — and all 40
@@ -349,12 +355,15 @@ local function OverlayOnUpdate()
 end
 
 local function CreateOverlay()
-	-- FULLSCREEN_DIALOG + decisive level bump BEFORE children are created —
-	-- the Core confirm-overlay technique, so no open sheet/panel out-levels
-	-- the Ready buttons.
+	-- FULLSCREEN_DIALOG + decisive level bump BEFORE children are created.
+	-- +40, deliberately ABOVE the +20 the sheet confirm overlays use
+	-- (Core.lua CreateConfirmOverlay): if READY_CHECK fires while a money
+	-- confirm is up (COD take, AH bid), the ready prompt must
+	-- deterministically draw and hit-test on top; the confirm reappears
+	-- intact when this overlay hides.
 	local o = CreateFrame("Frame", "WowMobileReadyCheckOverlay", UIParent)
 	o:SetFrameStrata("FULLSCREEN_DIALOG")
-	o:SetFrameLevel(o:GetFrameLevel() + 20)
+	o:SetFrameLevel(o:GetFrameLevel() + 40)
 	o:SetPoint("TOPLEFT", WM.Deck, "TOPLEFT", 0, 0)
 	o:SetPoint("BOTTOMRIGHT", WM.Deck, "BOTTOMRIGHT", 0, 0)
 	o:EnableMouse(true)

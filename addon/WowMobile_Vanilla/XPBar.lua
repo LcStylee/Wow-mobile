@@ -1,12 +1,18 @@
 --------------------------------------------------------------------------------
 -- WowMobile (Vanilla 1.12) · XPBar
--- The XP block above the main action bar. Fixed block height so the deck
--- anchor chain stays static. At max level the XP bar shows a full "Level N"
--- bar.
+-- The XP + watched-reputation block above the main action bar. Fixed block
+-- height so the deck anchor chain stays static. At max level the XP bar shows
+-- a full "Level N" bar; the rep bar hides entirely when no faction is watched.
 --
--- 1.12 has no watched-faction API (GetWatchedFactionInfo and the rep bar
--- under the XP bar are TBC-era additions), so the block is XP-only here; the
--- guard keeps a future backport from erroring.
+-- The watched-faction machinery is genuine 1.12, not a TBC addition: vanilla
+-- FrameXML's ReputationWatchBar_Update reads GetWatchedFactionInfo and
+-- ReputationFrame.xml:842 sets the watch via SetWatchedFactionIndex
+-- (line-level sources in CharacterPanel.lua's rep-tab block comment). So the
+-- `if GetWatchedFactionInfo` guard below DOES fire on the real 1.12 client
+-- and the rep bar renders — the guard only lets an odd build lacking the API
+-- degrade to XP-only instead of erroring. CharacterPanel's Rep tab is where
+-- the watch is toggled (this bar is the stand-in for the stock
+-- ReputationWatchBar, whose MainMenuBar parent this layout banishes).
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
@@ -80,13 +86,17 @@ WM.OnInit(function()
 	xpBar:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
 	xpBar:SetPoint("TOPRIGHT", block, "TOPRIGHT", 0, 0)
 
-	-- Watched-faction bar only on clients that have the API (not 1.12).
+	-- GetWatchedFactionInfo is genuine 1.12 (see header), so this fires on
+	-- the real client; the guard only covers odd builds lacking the API.
 	if GetWatchedFactionInfo then
 		repBar = MakeBar(block, 30)
 		repBar:SetPoint("BOTTOMLEFT", block, "BOTTOMLEFT", 0, 0)
 		repBar:SetPoint("BOTTOMRIGHT", block, "BOTTOMRIGHT", 0, 0)
 		UpdateRep()
 		WM.On("UPDATE_FACTION", UpdateRep)
+		-- CharacterPanel's watch toggle repaints through this hook — 1.12
+		-- promises no UPDATE_FACTION for a pure watch flip.
+		WM.RefreshWatchedRep = UpdateRep
 	end
 
 	UpdateXP()
