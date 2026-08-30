@@ -113,6 +113,7 @@ func run(ui *appUI) error {
 		return nil
 	}
 	if cfg.Setup {
+		resolveFitResolution(cfg, nil) // fill Width/Height for the printout
 		window.PrintSetup(os.Stdout, cfg.Width, cfg.Height)
 		return nil
 	}
@@ -135,6 +136,11 @@ func run(ui *appUI) error {
 	if err := runFirstRunWizard(cfg, ui, status, log); err != nil {
 		return err
 	}
+	// --resolution fit is normally resolved inside the wizard; --skip-setup
+	// (and non-Windows dev runs) still need concrete numbers for capture and
+	// the hello geometry, so measure here as the fallback.
+	resolveFitResolution(cfg, log)
+	status.SetResolution(fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
 
 	plat, err := newPlatform(cfg, log)
 	if err != nil {
@@ -184,7 +190,7 @@ func run(ui *appUI) error {
 	videoSup := capture.NewSupervisor("video", capCfg, videoArgv,
 		func(stdout io.Reader) error {
 			parser := capture.NewAnnexBParser(func(au capture.AccessUnit) {
-				meter.Add(len(au.Data))
+				meter.Add(len(au.Data), au.Keyframe)
 				mgr.WriteVideoAU(au)
 			})
 			defer parser.Flush()
@@ -268,7 +274,15 @@ func run(ui *appUI) error {
 	status.SetConnectedFunc(mgr.SessionConnected)
 	status.SetStatsFunc(func() hoststatus.Stream {
 		st := meter.Snapshot()
-		return hoststatus.Stream{Kbps: st.Kbps, FPS: st.CaptureFPS, EncodeMs: st.PipelineDelayMs}
+		return hoststatus.Stream{
+			Kbps: st.Kbps, FPS: st.CaptureFPS, EncodeMs: st.PipelineDelayMs,
+			// Capture diagnostics: a black phone screen is diagnosable at a
+			// glance — 0 captured = capture dead; captured but not sent =
+			// write path; stale keyframe = IDR path.
+			FramesCaptured:    st.FramesCaptured,
+			FramesSent:        mgr.FramesSent(),
+			LastKeyframeAgeMs: st.LastKeyframeAgeMs,
+		}
 	})
 	status.SetRunning(true)
 
@@ -334,6 +348,30 @@ func trayTooltipLoop(ctx context.Context, setTooltip func(string), connected fun
 		case <-t.C:
 			update()
 		}
+	}
+}
+
+// resolveFitResolution fills cfg.Width/Height when --resolution fit was not
+// resolved by the wizard (--skip-setup, --setup, or a non-Windows dev run):
+// the same monitor-fit math the wizard uses, or the 1080x1920 design
+// resolution where nothing can be measured. No-op once the numbers are set.
+// log may be nil (the --setup printout path).
+func resolveFitResolution(cfg *config.Config, log *slog.Logger) {
+	if cfg.Width != 0 || !cfg.ResolutionIsFit {
+		return
+	}
+	if w, h, workW, workH, ok := measureFitResolution(); ok {
+		cfg.Width, cfg.Height = w, h
+		if log != nil {
+			log.Info("monitor-fit resolution", "resolution", fmt.Sprintf("%dx%d", w, h),
+				"work_area", fmt.Sprintf("%dx%d", workW, workH))
+		}
+		fmt.Println(window.FitDescription(w, h, workW, workH))
+		return
+	}
+	cfg.Width, cfg.Height = 1080, 1920
+	if log != nil {
+		log.Info("monitor work area not measurable; using the 1080x1920 design resolution")
 	}
 }
 

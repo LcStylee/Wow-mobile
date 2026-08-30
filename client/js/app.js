@@ -45,6 +45,11 @@ class App {
 
   #probeTimer = null;
   #statsTimer = null;
+  // Stream-health counters (seconds, from the 1 Hz stats loop): consecutive
+  // intervals with video bytes flowing but zero decoded frames (codec
+  // mismatch class), and with zero bytes at all (capture-dead class).
+  #stalledDecodeSecs = 0;
+  #noDataSecs = 0;
   #reconnectTimer = null;
   #disconnectGraceTimer = null;
   #backoffIndex = 0;
@@ -105,7 +110,7 @@ class App {
     // Token priority: URL (fresh pairing) > localStorage (return visit).
     // The URL copy is scrubbed so screenshots/history don't leak it.
     const url = new URL(location.href);
-    const fromUrl = url.searchParams.get('token');
+    const fromUrl = url.searchParams.get('token')?.trim();
     if (fromUrl) {
       url.searchParams.delete('token');
       history.replaceState(null, '', url);
@@ -122,6 +127,10 @@ class App {
       // Storage blocked: pairing still works via URL token or manual entry.
     }
     const token = fromUrl ?? saved;
+    // Return visits with a stored token also rebind the manifest, so a later
+    // Add to Home Screen still captures the self-pairing launch URL
+    // (#persistToken already bound it on the fresh-pairing path).
+    if (token && !fromUrl) this.#bindManifestToToken(token);
     if (token) this.start(token);
     else this.#showConnectScreen();
   }
@@ -344,6 +353,8 @@ class App {
   #startStatsLoop() {
     clearInterval(this.#statsTimer);
     this.#lastStats = null;
+    this.#stalledDecodeSecs = 0;
+    this.#noDataSecs = 0;
     this.#statsTimer = setInterval(async () => {
       const pc = this.#pc;
       if (!pc || pc.connectionState !== 'connected') return;
@@ -359,10 +370,13 @@ class App {
         const prev = this.#lastStats;
         if (prev && stat.timestamp > prev.timestamp) {
           const dtSec = (stat.timestamp - prev.timestamp) / 1000;
+          const bytesDelta = stat.bytesReceived - prev.bytesReceived;
+          const framesDelta = stat.framesDecoded - prev.framesDecoded;
           this.#hud.setStreamStats({
-            kbps: ((stat.bytesReceived - prev.bytesReceived) * 8) / dtSec / 1000,
-            fps: (stat.framesDecoded - prev.framesDecoded) / dtSec,
+            kbps: (bytesDelta * 8) / dtSec / 1000,
+            fps: framesDelta / dtSec,
           });
+          this.#updateVideoDiagnostic(bytesDelta, framesDelta);
         }
         this.#lastStats = {
           timestamp: stat.timestamp,
@@ -372,6 +386,38 @@ class App {
         break;
       }
     }, STATS_INTERVAL_MS);
+  }
+
+  /**
+   * Black-screen triage from getStats deltas, in plain language. Bytes
+   * flowing while decoded frames stay 0 for >3 s means the phone cannot
+   * decode what it receives (codec/profile mismatch); no bytes at all for
+   * >3 s means nothing is being captured/sent. A single decoded frame clears
+   * the banner. Thresholds are in whole 1 Hz stats intervals.
+   */
+  #updateVideoDiagnostic(bytesDelta, framesDelta) {
+    if (framesDelta > 0) {
+      this.#stalledDecodeSecs = 0;
+      this.#noDataSecs = 0;
+      this.#hud.setVideoDiagnostic(null);
+      return;
+    }
+    if (bytesDelta > 0) {
+      this.#stalledDecodeSecs += 1;
+      this.#noDataSecs = 0;
+    } else {
+      this.#noDataSecs += 1;
+      this.#stalledDecodeSecs = 0;
+    }
+    if (this.#stalledDecodeSecs > 3) {
+      this.#hud.setVideoDiagnostic(
+        "Receiving video data but your phone can't decode it — codec mismatch; update the PC app.",
+      );
+    } else if (this.#noDataSecs > 3) {
+      this.#hud.setVideoDiagnostic(
+        'No video data arriving — check the PC app: is the WoW window visible and capture running?',
+      );
+    }
   }
 
   // ---- teardown / reconnect ----------------------------------------------
@@ -418,8 +464,11 @@ class App {
     this.#video.srcObject = null;
     this.#stream = null;
     this.#lastStats = null;
+    this.#stalledDecodeSecs = 0;
+    this.#noDataSecs = 0;
     this.#hud.setRtt(null);
     this.#hud.setStreamStats({});
+    this.#hud.setVideoDiagnostic(null);
 
     if (doDelete && this.#session) deleteSession(this.#session);
     this.#session = null;
@@ -516,15 +565,33 @@ class App {
 
   #wireConnectScreen() {
     const form = document.getElementById('connect-form');
+    const input = document.getElementById('connect-token');
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const token = document.getElementById('connect-token').value.trim();
+      const token = input.value.trim();
       if (!token) return;
       // Belt to start()'s braces: no further submits while an attempt is
       // pending. Re-enabled whenever the connect screen is shown again.
       document.getElementById('connect-submit').disabled = true;
       this.#persistToken(token);
       this.start(token);
+    });
+    // Big PASTE affordance: the 32-char token is miserable to type on glass.
+    // clipboard.readText needs a secure context + permission; every failure
+    // path degrades to focusing the field so the OS paste menu works.
+    document.getElementById('connect-paste').addEventListener('click', async () => {
+      try {
+        const text = (await navigator.clipboard.readText()).trim();
+        if (text) {
+          input.value = text;
+          input.focus();
+          return;
+        }
+      } catch {
+        // Unsupported or denied — fall through to the manual hint.
+      }
+      input.focus();
+      this.#hud.toast('Clipboard unavailable — long-press the field and Paste.');
     });
   }
 
@@ -533,6 +600,22 @@ class App {
       localStorage.setItem(TOKEN_KEY, token);
     } catch {
       // Private mode: pairing works for this visit only.
+    }
+    this.#bindManifestToToken(token);
+  }
+
+  /**
+   * Point the manifest link at the token-bound variant. The server, seeing a
+   * matching ?token, serves the manifest with start_url "/?token=<token>"
+   * (no-store), so Add to Home Screen captures a launch URL that self-pairs —
+   * installed PWAs (iOS especially) run in their own storage partition where
+   * the localStorage token saved in the browser does not exist, which is why
+   * the home-screen app used to open on the token entry screen.
+   */
+  #bindManifestToToken(token) {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (link && token) {
+      link.href = `manifest.webmanifest?token=${encodeURIComponent(token)}`;
     }
   }
 

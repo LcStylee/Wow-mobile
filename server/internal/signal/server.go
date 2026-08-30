@@ -18,6 +18,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,12 @@ func init() {
 
 // Server owns the HTTP listener and the session auth state.
 type Server struct {
-	addr      string
+	addr string
+	// token is kept alongside its hash solely to build the token-bound
+	// manifest's start_url (handleManifest); every comparison still goes
+	// through tokenHash + constant-time compare, and the raw value is never
+	// logged.
+	token     string
 	tokenHash [32]byte
 	noTLS     bool
 	mgr       *rtc.Manager
@@ -101,6 +107,7 @@ type sessionAuth struct {
 func New(addr, token string, noTLS bool, embeddedClient fs.FS, clientDirFlag string, mgr *rtc.Manager, log *slog.Logger) *Server {
 	return &Server{
 		addr:      addr,
+		token:     token,
 		tokenHash: sha256.Sum256([]byte(token)),
 		noTLS:     noTLS,
 		mgr:       mgr,
@@ -134,6 +141,11 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /api/session", s.handleCreateSession)
 	mux.HandleFunc("POST /api/session/{id}/offer", s.handleOffer)
 	mux.HandleFunc("DELETE /api/session/{id}", s.handleDelete)
+	// The manifest gets its own handler so ?token=<pairing token> can serve
+	// the token-bound variant (start_url carries the token, making an
+	// installed PWA open pre-paired); the exact-path pattern outranks the
+	// catch-all file server below.
+	mux.HandleFunc("GET /manifest.webmanifest", s.handleManifest)
 	mux.Handle("/", http.FileServerFS(s.clientFS))
 	s.registerHostRoutes(mux)
 
@@ -294,6 +306,61 @@ func terminalQR(content string) string {
 	// border (quiet zone) around them, phone cameras scan this on both dark-
 	// and light-background terminals.
 	return code.ToSmallString(false)
+}
+
+// handleManifest serves the PWA manifest. Without a token query parameter it
+// serves the on-disk file byte-for-byte, exactly as the file server used to.
+// With ?token=<t> matching the pairing token (constant-time, via the hash),
+// it serves the TOKEN-BOUND variant: "start_url": "/?token=<token>" with
+// scope unchanged, so Add to Home Screen captures a launch URL that
+// self-pairs — installed PWAs (iOS above all) get their own storage
+// partition, where the token saved during the in-browser scan is absent.
+//
+// Security posture: the token already rides the pairing URL this page was
+// opened from, so echoing it back to the SAME holder leaks nothing new; a
+// wrong or missing token gets the tokenless manifest (no oracle beyond the
+// constant-time compare). The tokened variant is Cache-Control: no-store so
+// no shared cache can hand it to another client, and the token is never
+// logged (this handler logs nothing).
+func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
+	data, err := fs.ReadFile(s.clientFS, "manifest.webmanifest")
+	if err != nil {
+		http.Error(w, "manifest unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/manifest+json")
+
+	q := r.URL.Query().Get("token")
+	if q != "" {
+		// Any tokened URL variant must never be cached beyond this response.
+		w.Header().Set("Cache-Control", "no-store")
+		got := sha256.Sum256([]byte(q))
+		if subtle.ConstantTimeCompare(got[:], s.tokenHash[:]) == 1 {
+			if bound, ok := tokenBoundManifest(data, s.token); ok {
+				w.Write(bound) //nolint:errcheck
+				return
+			}
+			// Malformed embedded manifest: fall through to the raw bytes —
+			// a working tokenless manifest beats a 500 on install.
+		}
+	}
+	w.Write(data) //nolint:errcheck
+}
+
+// tokenBoundManifest rewrites the manifest's start_url to the self-pairing
+// "/?token=<token>" launch URL, leaving every other field (scope included)
+// untouched. ok is false when the manifest is not valid JSON.
+func tokenBoundManifest(manifest []byte, token string) ([]byte, bool) {
+	var m map[string]any
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return nil, false
+	}
+	m["start_url"] = "/?token=" + url.QueryEscape(token)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // handleCreateSession implements POST /api/session: constant-time token

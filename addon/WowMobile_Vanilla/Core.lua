@@ -60,6 +60,82 @@ function WM.UpdatePxFactor()
 end
 
 --------------------------------------------------------------------------------
+-- Crash guard (Lua 5.0 port of the Classic Era version)
+-- Every module-init callback (WM.OnInit) and every event dispatch (WM.On)
+-- runs under pcall: one broken module must never take the rest of the deck
+-- down or kill the dispatcher loop mid-iteration. The FIRST error per module
+-- (module = the .lua file named in the error message) is recorded and
+-- surfaced as a red banner at the top of the deck; /wm errors lists all of
+-- them, /wm status summarizes health (Config.lua). Zero overhead when
+-- healthy: no OnUpdate work, and the banner frame is created lazily on the
+-- first error. (pcall is Lua 5.0-native; no varargs/'#'/string.match here.)
+--------------------------------------------------------------------------------
+
+local moduleErrors = {} -- file -> first error message
+local moduleErrorOrder = {} -- files in first-seen order
+local errorBanner
+
+-- Extract the failing module (file) from a Lua error string, which the
+-- runtime opens with "Interface\AddOns\WowMobile_Vanilla\<File>.lua:<line>:".
+local function ErrorModule(msg)
+	local _, _, file = string.find(msg, "([^\\/:]+%.lua)")
+	return file or "unknown"
+end
+
+local function ShowErrorBanner(file, msg)
+	if not errorBanner then
+		errorBanner = CreateFrame("Frame", "WowMobileErrorBanner", UIParent)
+		errorBanner:SetFrameStrata("DIALOG")
+		errorBanner:EnableMouse(false) -- never eat taps; /wm handles actions
+		errorBanner:SetHeight(WM.Px(72))
+		local bg = errorBanner:CreateTexture(nil, "BACKGROUND")
+		bg:SetAllPoints(errorBanner)
+		bg:SetTexture(0.55, 0.10, 0.10, 0.95) -- 1.12: SetTexture(r,g,b,a) tints
+		errorBanner.text = errorBanner:CreateFontString(nil, "OVERLAY")
+		errorBanner.text:SetFont(WM.FONT, WM.Px(24), "")
+		errorBanner.text:SetTextColor(1, 0.9, 0.9)
+		errorBanner.text:SetPoint("TOPLEFT", errorBanner, "TOPLEFT", WM.Px(16), -WM.Px(8))
+		errorBanner.text:SetPoint("BOTTOMRIGHT", errorBanner, "BOTTOMRIGHT", -WM.Px(16), WM.Px(8))
+		errorBanner.text:SetJustifyH("CENTER")
+	end
+	-- Top of the deck = bottom of the world square; before Viewport has run
+	-- (or if Viewport itself failed) fall back to the top of the screen.
+	errorBanner:ClearAllPoints()
+	if WM.WorldSquare then
+		errorBanner:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", WM.WorldSquare, "BOTTOMRIGHT", 0, 0)
+	else
+		errorBanner:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+	end
+	errorBanner.text:SetText(string.format(
+		"WoW Mobile hit an error in %s: %s — /wm errors for details, /wm reload to retry",
+		file, msg))
+	errorBanner:Show()
+end
+
+-- ReportError records err (any pcall failure) against its module; only the
+-- first error per module is kept, so a broken event handler cannot flood
+-- memory or repaint the banner on every event.
+function WM.ReportError(err)
+	local msg = tostring(err)
+	local file = ErrorModule(msg)
+	if moduleErrors[file] then return end
+	moduleErrors[file] = msg
+	table.insert(moduleErrorOrder, file)
+	ShowErrorBanner(file, msg)
+	-- Also line it into chat history for scrollback (banner shows only the
+	-- most recent module's error).
+	WM.Print("|cffff4040error in " .. file .. ":|r " .. msg)
+end
+
+-- GetErrors returns (orderedFiles, file->message) for /wm errors and
+-- /wm status. The tables are live; callers must not mutate them.
+function WM.GetErrors()
+	return moduleErrorOrder, moduleErrors
+end
+
+--------------------------------------------------------------------------------
 -- Event bus (1.12 handler convention: read the event/argN globals)
 --------------------------------------------------------------------------------
 
@@ -70,7 +146,12 @@ dispatcher:SetScript("OnEvent", function()
 	local list = handlers[event]
 	if not list then return end
 	for i = 1, table.getn(list) do
-		list[i](event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+		-- Crash guard: a throwing handler is reported once (per module) and
+		-- the remaining handlers for this event still run.
+		local ok, err = pcall(list[i], event, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+		if not ok then
+			WM.ReportError(err)
+		end
 	end
 end)
 
@@ -112,7 +193,12 @@ end
 
 WM.On("PLAYER_LOGIN", function()
 	for i = 1, table.getn(inits) do
-		inits[i]()
+		-- Crash guard: a failed module init is recorded and bannered, and
+		-- every later module still initializes (no cascade).
+		local ok, err = pcall(inits[i])
+		if not ok then
+			WM.ReportError(err)
+		end
 	end
 	inits = {} -- PLAYER_LOGIN fires once per session; free the closures
 end)

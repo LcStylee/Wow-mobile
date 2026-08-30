@@ -2,7 +2,7 @@
 // are always live — /api/ requests are never intercepted, let alone cached.
 // Bump CACHE on any shell change; activation drops older caches.
 
-const CACHE = 'wowmobile-shell-v2';
+const CACHE = 'wowmobile-shell-v3';
 
 const SHELL = [
   './',
@@ -49,6 +49,15 @@ self.addEventListener('fetch', (event) => {
     url.origin !== self.location.origin ||
     url.pathname.startsWith('/api/')
   ) {
+    return;
+  }
+  // The token-bound manifest (manifest.webmanifest?token=...) must reach the
+  // server live: it is served no-store with a per-token start_url, and the
+  // ignoreSearch cache-first below would otherwise answer it with the cached
+  // tokenless copy, breaking the self-pairing Add to Home Screen flow.
+  // (Tokened NAVIGATIONS stay cacheable — the token rides the page URL there,
+  // and the cached shell reads it from location just fine.)
+  if (url.pathname.endsWith('/manifest.webmanifest') && url.searchParams.has('token')) {
     return;
   }
   // Cache-first for the shell; network for anything uncached. A navigation

@@ -28,8 +28,13 @@ func PrintSetup(w io.Writer, width, height int) {
      SET gxWindow "1"
      SET gxMaximize "0"
      SET gxWindowedResolution "%dx%d"
+     SET checkAddonVersion "0"
 
-   %dx%d must equal wowstreamd's --resolution so touch coordinates map 1:1.
+   %dx%d must equal wowstreamd's capture resolution so touch coordinates map
+   1:1 — the default --resolution fit computed it as the largest 9:16 window
+   fitting your primary monitor (a window taller than the monitor cannot be
+   captured). checkAddonVersion "0" = "Load out of date AddOns", so a game
+   patch never silently disables the addon.
    (1.12-era private-server clients predate gxWindowedResolution — write
    SET gxResolution "..." there instead; the wizard picks the right one.)
 

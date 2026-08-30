@@ -50,6 +50,19 @@ type AnnexBParser struct {
 	au       []byte // access unit under construction
 	auHasVCL bool
 	auIsIDR  bool
+	auHasSPS bool
+	auHasPPS bool
+
+	// Cached copies of the newest SPS/PPS seen on the stream. None of the
+	// supported encoders repeat parameter sets on periodic (GOP) IDRs — only
+	// the very first frame after an encoder (re)start carries them — but a
+	// browser that joins or PLI-recovers on a later IDR cannot decode without
+	// them: the picture stays black even though bytes flow. emit therefore
+	// prepends the cached sets to every keyframe access unit that lacks its
+	// own, making every IDR a true join point.
+	spsCache []byte
+	ppsCache []byte
+	prefixed []byte // scratch for the SPS/PPS-prefixed keyframe (reused)
 }
 
 // maxNALUBytes bounds memory if the stream desynchronizes (e.g. ffmpeg writes
@@ -119,6 +132,8 @@ func (p *AnnexBParser) Flush() {
 	p.au = p.au[:0]
 	p.auHasVCL = false
 	p.auIsIDR = false
+	p.auHasSPS = false
+	p.auHasPPS = false
 }
 
 func (p *AnnexBParser) handleNALU(nalu []byte) {
@@ -144,9 +159,16 @@ func (p *AnnexBParser) handleNALU(nalu []byte) {
 
 	p.au = append(p.au, 0, 0, 0, 1)
 	p.au = append(p.au, nalu...)
-	if isVCL {
+	switch {
+	case isVCL:
 		p.auHasVCL = true
 		p.auIsIDR = p.auIsIDR || typ == nalSliceIDR
+	case typ == nalSPS:
+		p.auHasSPS = true
+		p.spsCache = append(p.spsCache[:0], nalu...) // nalu aliases p.buf: copy
+	case typ == nalPPS:
+		p.auHasPPS = true
+		p.ppsCache = append(p.ppsCache[:0], nalu...)
 	}
 }
 
@@ -181,10 +203,31 @@ func prefixStartsNewAU(prefix []byte) (startsNew, decided bool) {
 }
 
 func (p *AnnexBParser) emit() {
-	p.onAU(AccessUnit{Data: p.au, Keyframe: p.auIsIDR})
+	data := p.au
+	// SPS/PPS ride with EVERY keyframe access unit (see the cache fields):
+	// a keyframe missing either set gets the cached copies prepended, in
+	// SPS-then-PPS order, so any IDR is decodable by a fresh joiner. Non-IDR
+	// units are never touched.
+	if p.auIsIDR && (!p.auHasSPS || !p.auHasPPS) && len(p.spsCache) > 0 && len(p.ppsCache) > 0 {
+		pre := p.prefixed[:0]
+		if !p.auHasSPS {
+			pre = append(pre, 0, 0, 0, 1)
+			pre = append(pre, p.spsCache...)
+		}
+		if !p.auHasPPS {
+			pre = append(pre, 0, 0, 0, 1)
+			pre = append(pre, p.ppsCache...)
+		}
+		pre = append(pre, p.au...)
+		p.prefixed = pre
+		data = pre
+	}
+	p.onAU(AccessUnit{Data: data, Keyframe: p.auIsIDR})
 	p.au = p.au[:0]
 	p.auHasVCL = false
 	p.auIsIDR = false
+	p.auHasSPS = false
+	p.auHasPPS = false
 }
 
 // indexStartCode returns the offset of the first 00 00 01 sequence in b, or -1.

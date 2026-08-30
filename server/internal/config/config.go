@@ -23,30 +23,46 @@ const (
 	EncoderX264  = "x264"
 )
 
+// ResolutionFit is the --resolution value (and default) that sizes the
+// window to the largest 9:16 portrait client area fitting the primary
+// monitor's work area. A 1080x1920 design window cannot physically fit a
+// landscape 1920x1080 monitor — Windows clamps it, the user sees only the
+// top rows, and desktop-region capture of the off-screen rest goes black —
+// so fitting is the default and an explicit WxH is sanity-checked by the
+// wizard.
+const ResolutionFit = "fit"
+
 // Config is the fully parsed, validated runtime configuration.
 type Config struct {
 	Addr             string // listen address for the signaling/https server
 	Token            string // pairing token; generated when not supplied
 	TokenIsGenerated bool
-	Width            int
-	Height           int
-	FPS              int
-	BitrateKbps      int
-	Encoder          string // one of the Encoder* constants
-	WindowTitle      string
-	ClientDir        string // as given on the command line; resolved by the signal server
-	NoTLS            bool
-	FFmpegPath       string // empty = look up "ffmpeg" in PATH
-	Audio            bool
-	Setup            bool   // --setup: print WoW configuration help and exit
-	WowDir           string // --wow-dir: WoW game directory (skips wizard auto-detection)
-	GameExe          string // --game-exe: exact game executable (private servers); beats --wow-dir
-	Yes              bool   // --yes: first-run wizard accepts every default without prompting
-	ChooseGame       bool   // --choose-game: always show the game-install picker, even over a remembered choice
-	SkipSetup        bool   // --skip-setup: skip the first-run wizard entirely
-	Version          bool   // --version: print the version and exit
-	ForceConsole     bool   // --console: force console mode (Windows GUI builds)
-	ForceGUI         bool   // --gui: force GUI mode even from a terminal (Windows)
+	// Width/Height are the capture resolution. Zero when ResolutionIsFit and
+	// not yet resolved — the wizard (or main's fallback) measures the monitor
+	// and fills them before anything consumes the geometry.
+	Width  int
+	Height int
+	// ResolutionIsFit records that --resolution was "fit" (the default): the
+	// concrete Width/Height are computed at wizard time from the primary
+	// monitor's work area instead of being taken from the flag.
+	ResolutionIsFit bool
+	FPS             int
+	BitrateKbps     int
+	Encoder         string // one of the Encoder* constants
+	WindowTitle     string
+	ClientDir       string // as given on the command line; resolved by the signal server
+	NoTLS           bool
+	FFmpegPath      string // empty = look up "ffmpeg" in PATH
+	Audio           bool
+	Setup           bool   // --setup: print WoW configuration help and exit
+	WowDir          string // --wow-dir: WoW game directory (skips wizard auto-detection)
+	GameExe         string // --game-exe: exact game executable (private servers); beats --wow-dir
+	Yes             bool   // --yes: first-run wizard accepts every default without prompting
+	ChooseGame      bool   // --choose-game: always show the game-install picker, even over a remembered choice
+	SkipSetup       bool   // --skip-setup: skip the first-run wizard entirely
+	Version         bool   // --version: print the version and exit
+	ForceConsole    bool   // --console: force console mode (Windows GUI builds)
+	ForceGUI        bool   // --gui: force GUI mode even from a terminal (Windows)
 }
 
 // Parse parses argv (without the program name). Usage/errors go to errOut.
@@ -58,7 +74,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	var resolution string
 	fs.StringVar(&cfg.Addr, "addr", ":8443", "listen address for the signaling server")
 	fs.StringVar(&cfg.Token, "token", "", "pairing token (default: randomly generated and printed at startup)")
-	fs.StringVar(&resolution, "resolution", "1080x1920", "capture resolution WIDTHxHEIGHT; must match the WoW window client size")
+	fs.StringVar(&resolution, "resolution", ResolutionFit, "capture resolution: \"fit\" (default) sizes the WoW window to the largest 9:16 portrait rect that fits the primary monitor; an explicit WIDTHxHEIGHT must match the WoW window client size")
 	fs.IntVar(&cfg.FPS, "fps", 60, "capture/encode frame rate")
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")
@@ -91,9 +107,13 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	}
 
 	var err error
-	cfg.Width, cfg.Height, err = ParseResolution(resolution)
-	if err != nil {
-		return nil, err
+	if resolution == ResolutionFit {
+		cfg.ResolutionIsFit = true // Width/Height stay 0 until measured
+	} else {
+		cfg.Width, cfg.Height, err = ParseResolution(resolution)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if cfg.FPS < 1 || cfg.FPS > 240 {
 		return nil, fmt.Errorf("--fps %d out of range 1..240", cfg.FPS)

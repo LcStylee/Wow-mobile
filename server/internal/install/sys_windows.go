@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -207,4 +208,58 @@ func (winSystem) LaunchGame(exePath string) error {
 	cmd := exec.Command(exePath)
 	cmd.Dir = filepath.Dir(exePath)
 	return cmd.Start()
+}
+
+var (
+	sysUser32                 = windows.NewLazySystemDLL("user32.dll")
+	procSystemParametersInfoW = sysUser32.NewProc("SystemParametersInfoW")
+	procAdjustWindowRectEx    = sysUser32.NewProc("AdjustWindowRectEx")
+)
+
+// winRect mirrors the Win32 RECT (left, top, right, bottom).
+type winRect struct{ left, top, right, bottom int32 }
+
+const (
+	spiGetWorkArea = 0x0030 // SPI_GETWORKAREA
+	// WS_OVERLAPPEDWINDOW: the caption + thick-frame style a windowed
+	// (gxWindow=1, gxMaximize=0) WoW gets, so AdjustWindowRectEx measures the
+	// decorations of the actual window being fitted.
+	wsOverlappedWindow = 0x00CF0000
+)
+
+// PrimaryWorkArea measures the primary monitor's work area — the desktop
+// minus the taskbar and app bars, which is exactly the space a non-maximized
+// window can occupy. Physical pixels: main.go opts the process into
+// per-monitor DPI awareness (and the manifest already declares it) before any
+// geometry is read, so no virtualization skews this.
+func (winSystem) PrimaryWorkArea() (int, int, bool) {
+	var rc winRect
+	ret, _, _ := procSystemParametersInfoW.Call(spiGetWorkArea, 0, uintptr(unsafe.Pointer(&rc)), 0)
+	if ret == 0 {
+		return 0, 0, false
+	}
+	w := int(rc.right - rc.left)
+	h := int(rc.bottom - rc.top)
+	if w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
+// WindowDecorationExtents measures how much width/height the window frame
+// (borders + title bar) adds around a client area for WoW's windowed style,
+// via AdjustWindowRectEx on an empty rect. If the call fails, the documented
+// conservative fallback margins apply — erring a few pixels large only makes
+// the fitted window marginally smaller, never non-fitting.
+func (winSystem) WindowDecorationExtents() (int, int) {
+	var rc winRect // zero client rect: the adjusted rect IS the decoration
+	ret, _, _ := procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rc)), wsOverlappedWindow, 0, 0)
+	dw := int(rc.right - rc.left)
+	dh := int(rc.bottom - rc.top)
+	if ret == 0 || dw <= 0 || dh <= 0 || dw > 200 || dh > 300 {
+		// Failure or an implausible measurement: conservative documented
+		// margins (8 px borders each side, 32 px title bar + borders).
+		return window.FallbackDecorationW, window.FallbackDecorationH
+	}
+	return dw, dh
 }

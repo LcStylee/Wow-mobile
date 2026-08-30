@@ -46,6 +46,7 @@
         <h2 class="mt">Live status</h2>
         <dl id="live">
           <div><dt>Encoder</dt><dd id="encoder">–</dd></div>
+          <div><dt>Window</dt><dd id="resolution">–</dd></div>
           <div><dt>Client</dt><dd id="client-type">–</dd></div>
           <div><dt>Phone</dt><dd id="phone">not connected</dd></div>
         </dl>
@@ -57,6 +58,11 @@
           <div class="stat"><b id="s-kbps">–</b><span>kbps</span></div>
           <div class="stat"><b id="s-fps">–</b><span>fps</span></div>
           <div class="stat"><b id="s-enc">–</b><span>enc&nbsp;ms</span></div>
+          <!-- Capture diagnostics: a black phone screen is triaged here —
+               0 captured = capture dead; captured≠sent = write path;
+               stale keyframe = IDR path. -->
+          <div class="stat"><b id="s-frames">–</b><span>cap&nbsp;/&nbsp;sent</span></div>
+          <div class="stat"><b id="s-idr">–</b><span>last&nbsp;IDR</span></div>
         </div>
       </section>
     </div>

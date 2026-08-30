@@ -17,7 +17,7 @@ func TestEnsureSettingsPreservesUnrelatedLinesAndOrder(t *testing.T) {
 		t.Fatal("expected changes")
 	}
 	got := string(out)
-	wantOut := "SET hwDetect \"0\"\nSET gxWindow \"1\"\nSET textLocale \"enUS\"\nSET gxMaximize \"0\"\nSET gxWindowedResolution \"1080x1920\"\n"
+	wantOut := "SET hwDetect \"0\"\nSET gxWindow \"1\"\nSET textLocale \"enUS\"\nSET gxMaximize \"0\"\nSET gxWindowedResolution \"1080x1920\"\nSET checkAddonVersion \"0\"\n"
 	if got != wantOut {
 		t.Fatalf("minimal edit violated:\n got: %q\nwant: %q", got, wantOut)
 	}
@@ -33,7 +33,7 @@ func TestEnsureSettingsCRLFPreserved(t *testing.T) {
 	if strings.Contains(strings.ReplaceAll(got, "\r\n", ""), "\n") {
 		t.Fatalf("mixed line endings introduced: %q", got)
 	}
-	wantOut := "SET hwDetect \"0\"\r\nSET gxWindow \"1\"\r\nSET gxMaximize \"0\"\r\nSET gxWindowedResolution \"1080x1920\"\r\n"
+	wantOut := "SET hwDetect \"0\"\r\nSET gxWindow \"1\"\r\nSET gxMaximize \"0\"\r\nSET gxWindowedResolution \"1080x1920\"\r\nSET checkAddonVersion \"0\"\r\n"
 	if got != wantOut {
 		t.Fatalf("CRLF edit wrong:\n got: %q\nwant: %q", got, wantOut)
 	}
@@ -46,7 +46,7 @@ func TestEnsureSettingsNoTrailingNewlineAppend(t *testing.T) {
 	if !strings.HasPrefix(got, "SET textLocale \"enUS\"\nSET gxWindow") {
 		t.Fatalf("append after missing trailing newline broken: %q", got)
 	}
-	if !strings.HasSuffix(got, "SET gxWindowedResolution \"1080x1920\"\n") {
+	if !strings.HasSuffix(got, "SET gxWindowedResolution \"1080x1920\"\nSET checkAddonVersion \"0\"\n") {
 		t.Fatalf("appended block wrong: %q", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestEnsureSettingsIdempotent(t *testing.T) {
 
 func TestFreshConfigIsCRLFOnlyWantedLines(t *testing.T) {
 	got := string(FreshConfig(want1080))
-	wantOut := "SET gxWindow \"1\"\r\nSET gxMaximize \"0\"\r\nSET gxWindowedResolution \"1080x1920\"\r\n"
+	wantOut := "SET gxWindow \"1\"\r\nSET gxMaximize \"0\"\r\nSET gxWindowedResolution \"1080x1920\"\r\nSET checkAddonVersion \"0\"\r\n"
 	if got != wantOut {
 		t.Fatalf("fresh config:\n got: %q\nwant: %q", got, wantOut)
 	}

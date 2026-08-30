@@ -66,6 +66,7 @@
     }
 
     $("encoder").textContent = st.encoder || "probing…";
+    $("resolution").textContent = st.resolution || "–";
     $("client-type").textContent = CLIENT_TYPE_LABELS[st.clientType] || "–";
     // The change-game affordance only makes sense once a game was chosen.
     $("game-hint").hidden = !st.clientType;
@@ -91,6 +92,14 @@
       $("s-kbps").textContent = Math.round(stream.kbps || 0);
       $("s-fps").textContent = Math.round(stream.fps || 0);
       $("s-enc").textContent = (stream.encodeMs || 0).toFixed(1);
+      // Capture diagnostics: total access units captured vs. handed to the
+      // WebRTC track, and how stale the newest keyframe is (healthy 2 s GOP
+      // keeps it under ~2 s; "–" until the first IDR).
+      $("s-frames").textContent =
+        (stream.framesCaptured || 0) + "/" + (stream.framesSent || 0);
+      const idrMs = stream.lastKeyframeAgeMs;
+      $("s-idr").textContent =
+        idrMs == null || idrMs < 0 ? "–" : (idrMs / 1000).toFixed(1) + "s";
     }
   }
 

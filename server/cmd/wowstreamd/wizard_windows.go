@@ -61,6 +61,7 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		VanillaAddonFS: vanillaAddonFS,
 		Width:          cfg.Width,
 		Height:         cfg.Height,
+		ResolutionFit:  cfg.ResolutionIsFit,
 		WindowTitle:    cfg.WindowTitle,
 		WowDirFlag:     cfg.WowDir,
 		GameExeFlag:    cfg.GameExe,
@@ -76,6 +77,11 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 	if cfg.FFmpegPath == "" {
 		cfg.FFmpegPath = res.FFmpegPath
 	}
+	// The wizard decided the capture resolution (monitor-fitted under
+	// --resolution fit, possibly the confirmed explicit value otherwise);
+	// adopt it so capture, injection mapping, and the hello geometry all use
+	// the same number Config.wtf was written with.
+	cfg.Width, cfg.Height = res.Width, res.Height
 	return nil
 }
 

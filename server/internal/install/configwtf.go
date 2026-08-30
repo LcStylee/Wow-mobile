@@ -18,6 +18,15 @@ type Setting struct {
 	Value string
 }
 
+// checkAddonVersionOff disables the client's out-of-date-addon gate. After
+// any game patch the interface number in the addon's .toc lags the client and
+// WoW then silently refuses to load the addon (no error, just the stock UI —
+// on a phone that reads as "everything broke"). checkAddonVersion "0" is the
+// CVar behind the AddOns screen's "Load out of date AddOns" checkbox; writing
+// it here means a patch never silently disables the touch UI. Both client
+// generations (1.12 and Classic Era) honor the same CVar name.
+var checkAddonVersionOff = Setting{Name: "checkAddonVersion", Value: "0"}
+
 // PortraitSettings returns the Config.wtf lines required for streaming a
 // windowed portrait WoW Classic Era at width x height (docs/SETUP.md step 1).
 func PortraitSettings(width, height int) []Setting {
@@ -25,6 +34,7 @@ func PortraitSettings(width, height int) []Setting {
 		{Name: "gxWindow", Value: "1"},
 		{Name: "gxMaximize", Value: "0"},
 		{Name: "gxWindowedResolution", Value: fmt.Sprintf("%dx%d", width, height)},
+		checkAddonVersionOff,
 	}
 }
 
@@ -39,6 +49,7 @@ func PortraitSettingsFor(ct ClientType, width, height int) []Setting {
 			{Name: "gxWindow", Value: "1"},
 			{Name: "gxMaximize", Value: "0"},
 			{Name: "gxResolution", Value: fmt.Sprintf("%dx%d", width, height)},
+			checkAddonVersionOff,
 		}
 	}
 	return PortraitSettings(width, height)

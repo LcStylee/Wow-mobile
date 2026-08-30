@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+
+	"github.com/LcStylee/Wow-mobile/server/internal/window"
 )
 
 // NewSystem returns a stub System on non-Windows platforms. The wizard only
@@ -31,4 +33,8 @@ func (stubSystem) ProbeEncoder(string) (string, bool) { return "", false }
 func (stubSystem) GameWindowPresent(string) bool      { return false }
 func (stubSystem) LaunchGame(string) error {
 	return errors.New("launching WoW is Windows-only")
+}
+func (stubSystem) PrimaryWorkArea() (int, int, bool) { return 0, 0, false }
+func (stubSystem) WindowDecorationExtents() (int, int) {
+	return window.FallbackDecorationW, window.FallbackDecorationH
 }

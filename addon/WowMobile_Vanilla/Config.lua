@@ -141,8 +141,41 @@ local function PrintHelp()
 	WM.Print(string.format("  /wm viewport <%d..%d>  — world-square height in design px (1080 = full-width square)", lo, hi))
 	WM.Print("  /wm scale <0.64..1.0>  — uiScale cvar override")
 	WM.Print("  /wm settings  — open the touch settings panel")
+	WM.Print("  /wm status  — viewport/deck/module health")
+	WM.Print("  /wm errors  — list recorded module errors")
 	WM.Print("  /wm reset  — restore defaults")
 	WM.Print("  /wm reload  — reload the UI")
+end
+
+-- /wm errors: every recorded module error (first per module; Core crash
+-- guard). Lua 5.0: table.getn, no '#'.
+local function PrintErrors()
+	local order, map = WM.GetErrors()
+	local n = table.getn(order)
+	if n == 0 then
+		WM.Print("no module errors recorded — all modules healthy")
+		return
+	end
+	WM.Print(string.format("%d module(s) hit errors (/wm reload to retry):", n))
+	for i = 1, n do
+		WM.Print("  " .. order[i] .. ": " .. map[order[i]])
+	end
+end
+
+-- /wm status: one-glance health — viewport geometry, deck presence, errors.
+local function PrintStatus()
+	local lo, hi = Config.HeightBounds()
+	local vp = (WM.db and WM.db.viewport and WM.db.viewport.height) or 1080
+	WM.Print(string.format("viewport: %d px (bounds %d..%d) — mirror this in the phone's World viewport setting", vp, lo, hi))
+	WM.Print("world square: " .. (WM.WorldSquare and "ok" or "MISSING (Viewport failed)"))
+	WM.Print("deck: " .. (WM.Deck and "ok" or "MISSING (Deck failed)"))
+	local order = WM.GetErrors()
+	local n = table.getn(order)
+	if n == 0 then
+		WM.Print("modules: healthy (no errors recorded)")
+	else
+		WM.Print(string.format("modules: %d with errors — /wm errors for details", n))
+	end
 end
 
 SLASH_WOWMOBILE1 = "/wm"
@@ -155,6 +188,10 @@ SlashCmdList["WOWMOBILE"] = function(msg)
 		Config.SetHeight(cmdArg)
 	elseif cmd == "scale" then
 		Config.SetScale(cmdArg)
+	elseif cmd == "errors" then
+		PrintErrors()
+	elseif cmd == "status" then
+		PrintStatus()
 	elseif cmd == "reset" then
 		Config.Reset()
 	elseif cmd == "reload" then

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/LcStylee/Wow-mobile/server/internal/window"
 )
 
 // fakeSys is a scriptable System.
@@ -27,6 +29,9 @@ type fakeSys struct {
 	windowPresent bool
 	launched      []string
 	launchShows   bool // LaunchGame makes the window appear
+	workW, workH  int  // PrimaryWorkArea; 0,0 = not measurable (the default)
+	decorW        int  // WindowDecorationExtents; 0 = the conservative fallback
+	decorH        int
 }
 
 func (f *fakeSys) RegistryWowPath() (string, bool) { return f.registry, f.registry != "" }
@@ -45,7 +50,16 @@ func (f *fakeSys) RunWingetInstall(io.Writer) error {
 	return f.wingetErr
 }
 func (f *fakeSys) ProbeEncoder(string) (string, bool) { return f.encoder, f.encoder != "" }
-func (f *fakeSys) GameWindowPresent(string) bool      { return f.windowPresent }
+func (f *fakeSys) PrimaryWorkArea() (int, int, bool) {
+	return f.workW, f.workH, f.workW > 0 && f.workH > 0
+}
+func (f *fakeSys) WindowDecorationExtents() (int, int) {
+	if f.decorW > 0 || f.decorH > 0 {
+		return f.decorW, f.decorH
+	}
+	return window.FallbackDecorationW, window.FallbackDecorationH
+}
+func (f *fakeSys) GameWindowPresent(string) bool { return f.windowPresent }
 func (f *fakeSys) LaunchGame(exe string) error {
 	f.launched = append(f.launched, exe)
 	if f.launchShows {
@@ -820,5 +834,144 @@ func TestRememberedGameExeIgnoresStaleWowPathUnderMarker(t *testing.T) {
 	opts := &Options{Store: store}
 	if got := rememberedGameExe(opts); got != "" {
 		t.Fatalf("rememberedGameExe = %q, want \"\": a stale wow_path must never stand in for a vanished explicit choice", got)
+	}
+}
+
+// --- monitor-fit resolution (resolveResolution) -----------------------------
+
+// --resolution fit: the wizard measures the work area, computes the largest
+// 9:16 client area, feeds it to every consumer (Result + Config.wtf), prints
+// it plainly, and persists it.
+func TestResolutionFitComputedFromWorkArea(t *testing.T) {
+	wow := makeWowDir(t, false)
+	sys := &fakeSys{pathFFmpeg: "/usr/bin/ffmpeg", windowPresent: true,
+		workW: 1920, workH: 1032} // 1080p monitor with a 48 px taskbar
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
+	opts := baseOpts(t, wow, sys, p)
+	opts.ResolutionFit = true
+	opts.Width, opts.Height = 0, 0
+	out := opts.Out.(*bytes.Buffer)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	// FitPortraitClient(1920, 1032, 16, 48) = 552x984 (see window/fit_test.go).
+	if res.Width != 552 || res.Height != 984 {
+		t.Fatalf("fitted resolution = %dx%d, want 552x984", res.Width, res.Height)
+	}
+	if !strings.Contains(out.String(), "portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 work area") {
+		t.Fatalf("fit not announced plainly:\n%s", out.String())
+	}
+	cfg, err := os.ReadFile(filepath.Join(wow, "WTF", "Config.wtf"))
+	if err != nil || !SettingsSatisfied(cfg, PortraitSettings(552, 984)) {
+		t.Fatalf("Config.wtf not written with the fitted resolution: %q err=%v", cfg, err)
+	}
+	if got := opts.Store.Get(KeyResolution); got != "552x984" {
+		t.Fatalf("fitted resolution not persisted: %q", got)
+	}
+}
+
+// An explicit --resolution that cannot fit the monitor warns loudly, names
+// the fitted alternative, and — on a declined keep — switches to it.
+func TestResolutionExplicitOversizedSwitchesOnDecline(t *testing.T) {
+	wow := makeWowDir(t, false)
+	sys := &fakeSys{pathFFmpeg: "/usr/bin/ffmpeg", windowPresent: true,
+		workW: 1920, workH: 1032}
+	// Confirm #1: keep the oversized value? -> no. #2: create Config.wtf.
+	p := &scriptPrompter{t: t, confirms: []bool{false, true}}
+	opts := baseOpts(t, wow, sys, p) // Width/Height = 1080x1920 explicit
+	out := opts.Out.(*bytes.Buffer)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "WARNING: --resolution 1080x1920 cannot fit your 1920x1032 work area") {
+		t.Fatalf("missing loud warning:\n%s", text)
+	}
+	if !strings.Contains(text, "552x984") {
+		t.Fatalf("warning must name the fitted alternative:\n%s", text)
+	}
+	if res.Width != 552 || res.Height != 984 {
+		t.Fatalf("declined keep must switch to the fit, got %dx%d", res.Width, res.Height)
+	}
+}
+
+// --yes keeps the explicit flag value (logged), never silently substituting.
+func TestResolutionExplicitOversizedYesKeeps(t *testing.T) {
+	wow := makeWowDir(t, true) // Config.wtf pre-satisfied at 1080x1920
+	sys := &fakeSys{pathFFmpeg: "/usr/bin/ffmpeg", windowPresent: true,
+		workW: 1920, workH: 1032}
+	p := &scriptPrompter{t: t} // no prompts allowed under --yes
+	opts := baseOpts(t, wow, sys, p)
+	opts.Yes = true
+	out := opts.Out.(*bytes.Buffer)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	if res.Width != 1080 || res.Height != 1920 {
+		t.Fatalf("--yes must keep the explicit resolution, got %dx%d", res.Width, res.Height)
+	}
+	if !strings.Contains(out.String(), "keeping --resolution 1080x1920 (--yes") {
+		t.Fatalf("--yes keep not logged:\n%s", out.String())
+	}
+}
+
+// An explicit resolution that fits is used silently — no warning, no prompt.
+func TestResolutionExplicitFittingIsSilent(t *testing.T) {
+	wow := makeGameDir(t, GameExeName, false)
+	if err := os.MkdirAll(filepath.Join(wow, "WTF"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wow, "WTF", "Config.wtf"),
+		FreshConfig(PortraitSettings(540, 960)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sys := &fakeSys{pathFFmpeg: "/usr/bin/ffmpeg", windowPresent: true,
+		workW: 1920, workH: 1032}
+	p := &scriptPrompter{t: t} // any prompt fails the test
+	opts := baseOpts(t, wow, sys, p)
+	opts.Width, opts.Height = 540, 960
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Width != 540 || res.Height != 960 {
+		t.Fatalf("fitting explicit resolution changed: %dx%d", res.Width, res.Height)
+	}
+	if strings.Contains(opts.Out.(*bytes.Buffer).String(), "WARNING") {
+		t.Fatalf("fitting resolution must not warn:\n%s", opts.Out.(*bytes.Buffer).String())
+	}
+}
+
+// Fit with an unmeasurable monitor: the persisted previous fit wins, then the
+// 1080x1920 design default.
+func TestResolutionFitUnmeasurableFallsBack(t *testing.T) {
+	sys := &fakeSys{} // workW/workH zero: not measurable
+	p := &scriptPrompter{t: t}
+	opts := baseOpts(t, "", sys, p)
+	opts.ResolutionFit = true
+	opts.Width, opts.Height = 0, 0
+	if err := resolveResolution(&opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Width != 1080 || opts.Height != 1920 {
+		t.Fatalf("design fallback wrong: %dx%d", opts.Width, opts.Height)
+	}
+
+	opts2 := baseOpts(t, "", sys, p)
+	opts2.ResolutionFit = true
+	opts2.Width, opts2.Height = 0, 0
+	opts2.Store.Set(KeyResolution, "600x1066")
+	if err := resolveResolution(&opts2); err != nil {
+		t.Fatal(err)
+	}
+	if opts2.Width != 600 || opts2.Height != 1066 {
+		t.Fatalf("persisted fit fallback wrong: %dx%d", opts2.Width, opts2.Height)
 	}
 }

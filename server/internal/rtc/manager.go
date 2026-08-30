@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -66,6 +67,10 @@ type Manager struct {
 
 	kfMu            sync.Mutex
 	lastKeyframeReq time.Time
+
+	// framesSent counts video samples handed to the track (capture
+	// diagnostics: captured-but-not-sent means the write path is broken).
+	framesSent atomic.Uint64
 }
 
 // ErrNoSession is returned for operations on an unknown/replaced session id.
@@ -156,8 +161,14 @@ func NewManager(opts Options) (*Manager, error) {
 func (m *Manager) WriteVideoAU(au capture.AccessUnit) {
 	if err := m.videoTrack.WriteSample(media.Sample{Data: au.Data, Duration: m.frameDur}); err != nil {
 		m.opts.Logger.Warn("video WriteSample failed", "err", err)
+		return
 	}
+	m.framesSent.Add(1)
 }
+
+// FramesSent is the total video samples successfully written to the track —
+// the "sent" half of the capture diagnostics on the host dashboard.
+func (m *Manager) FramesSent() uint64 { return m.framesSent.Load() }
 
 // WriteAudio feeds one Opus packet.
 func (m *Manager) WriteAudio(packet []byte, duration time.Duration) {

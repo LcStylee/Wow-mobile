@@ -32,6 +32,7 @@ export class Hud {
       audio: $('btn-audio'),
       sheet: $('sheet'),
       toast: $('toast'),
+      diag: $('diag'),
     };
 
     $('btn-settings').addEventListener('click', () => {
@@ -132,6 +133,17 @@ export class Hud {
   setServerStats({ encodeMs }) {
     this.#els.enc.textContent =
       encodeMs == null ? 'enc –' : `enc ${encodeMs.toFixed(1)} ms`;
+  }
+
+  /**
+   * Persistent stream-health banner (black-screen diagnosis from app.js's
+   * getStats deltas). Pass a plain-language message to show it, null/'' to
+   * clear. Unlike toast() it stays until cleared — a codec mismatch does not
+   * fix itself in 3.5 s.
+   */
+  setVideoDiagnostic(message) {
+    this.#els.diag.textContent = message || '';
+    this.#els.diag.hidden = !message;
   }
 
   setAudio(on) {

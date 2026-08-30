@@ -11,6 +11,7 @@ import (
 	"github.com/LcStylee/Wow-mobile/server/internal/capture"
 	"github.com/LcStylee/Wow-mobile/server/internal/config"
 	"github.com/LcStylee/Wow-mobile/server/internal/input"
+	"github.com/LcStylee/Wow-mobile/server/internal/install"
 	"github.com/LcStylee/Wow-mobile/server/internal/window"
 	"github.com/LcStylee/Wow-mobile/server/internal/wininput"
 )
@@ -68,6 +69,23 @@ func makeProcessDPIAware(log *slog.Logger) {
 		return
 	}
 	log.Warn("could not make process DPI-aware; capture rect and input mapping will be wrong on scaled displays")
+}
+
+// measureFitResolution measures the primary monitor's work area and window
+// decorations (the same install.System calls the wizard uses) and returns the
+// largest fitting 9:16 portrait client area — the --resolution fit fallback
+// for runs that skipped the wizard. makeProcessDPIAware has not necessarily
+// run yet, but the manifest already makes the process per-monitor-v2 aware,
+// so the metrics are physical pixels either way.
+func measureFitResolution() (w, h, workW, workH int, ok bool) {
+	sys := install.NewSystem()
+	workW, workH, ok = sys.PrimaryWorkArea()
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+	dw, dh := sys.WindowDecorationExtents()
+	w, h, ok = window.FitPortraitClient(workW, workH, dw, dh)
+	return w, h, workW, workH, ok
 }
 
 // newPlatform locates the WoW window up front (failing fast with guidance if

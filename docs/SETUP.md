@@ -55,9 +55,10 @@ near-instant when already satisfied. In a terminal it prints the classic
 checklist; in windowed mode the same checklist appears on the dashboard:
 
 ```
+portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 work area
 [1/5] World of Warcraft ..... chosen: C:\...\_classic_era_\WowClassic.exe (Classic Era) — from 4 found
 [2/5] WowMobile addon ....... installed (38 files, up to date)
-[3/5] Portrait resolution ... Config.wtf OK (1080x1920 windowed)
+[3/5] Portrait resolution ... Config.wtf OK (552x984 windowed)
 [4/5] FFmpeg ................ found: h264_nvenc available
 [5/5] Game running .......... window found
 ```
@@ -100,10 +101,19 @@ checklist; in windowed mode the same checklist appears on the dashboard:
    load there, so nothing is copied into its `AddOns` folder.
 3. **Sets the portrait window** in `<game>\WTF\Config.wtf`
    (`SET gxWindow "1"`, `SET gxMaximize "0"`, and
-   `SET gxWindowedResolution "1080x1920"` — following `--resolution`; 1.12
-   clients get `SET gxResolution` instead), after writing a `Config.wtf.bak`
-   backup and preserving every other line. WoW rewrites this file on exit, so
-   if the game is running the wizard offers to wait for it to close first.
+   `SET gxWindowedResolution "<WxH>"` — 1.12 clients get `SET gxResolution`
+   instead), after writing a `Config.wtf.bak` backup and preserving every
+   other line. The resolution follows `--resolution`, whose default `fit`
+   measures your primary monitor and picks the **largest 9:16 portrait
+   window that actually fits it** (a fixed 1080x1920 window cannot fit a
+   landscape 1080p monitor — Windows would cut it off and the capture would
+   go black). An explicit `--resolution WxH` that cannot fit is called out
+   with the fitted alternative and needs your confirmation to keep. The step
+   also writes `SET checkAddonVersion "0"` (the "Load out of date AddOns"
+   CVar): without it, the first game patch silently disables the addon and
+   the phone shows the stock UI with no explanation. WoW rewrites this file
+   on exit, so if the game is running the wizard offers to wait for it to
+   close first.
 4. **Finds FFmpeg** — `--ffmpeg` flag, `PATH`, remembered path, or winget's
    package directory. If absent, it offers to run
    `winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements`
@@ -216,10 +226,17 @@ Scan to pair:
    - **iOS**: Safari → Share → **Add to Home Screen**. (Must be Safari; and do
      this *after* accepting the certificate.)
    - **Android**: Chrome → menu (⋮) → **Add to Home screen** / **Install app**.
+
+   Open the pairing link in the browser first, then install: the page binds
+   the install to your pairing token (the installed app's launch URL carries
+   it), so the home-screen app opens **pre-paired** even though installed
+   apps get their own separate storage (iOS especially).
 4. Open the installed app and **tap to play** — it goes fullscreen, locks
    portrait, keeps the screen awake, and starts streaming. The token is
    remembered on the phone; the pairing screen only reappears if the token
-   changes (it's random per server run unless you pin `--token`).
+   changes (it's random per server run unless you pin `--token` — with a
+   pinned token the installed app never asks again). If you do land on the
+   token screen, the big **Paste token** button reads it from the clipboard.
 
 Video starts muted (browser autoplay rules). If you ran with `--audio`, tap
 **Snd off** in the HUD to unmute.
@@ -231,8 +248,12 @@ installs, or running with `--skip-setup`.
 
 ### 1. Put WoW in a portrait window
 
-WoW must run **windowed** at exactly the resolution `wowstreamd` captures
-(default `1080x1920`) so touch coordinates map 1:1 onto the game.
+WoW must run **windowed** at exactly the resolution `wowstreamd` captures so
+touch coordinates map 1:1 onto the game. The default `--resolution fit`
+computes that resolution from your primary monitor (the largest 9:16 portrait
+window that fits the work area — e.g. `552x984` on a 1920x1080 monitor with a
+taskbar); run `wowstreamd --setup` to see the exact numbers for your PC, and
+substitute them for the `552x984` example below.
 
 1. **Quit WoW completely** — the game rewrites `Config.wtf` on exit and would
    overwrite your edits.
@@ -248,16 +269,22 @@ WoW must run **windowed** at exactly the resolution `wowstreamd` captures
    ```
    SET gxWindow "1"
    SET gxMaximize "0"
-   SET gxWindowedResolution "1080x1920"
+   SET gxWindowedResolution "552x984"
+   SET checkAddonVersion "0"
    ```
+
+   (`checkAddonVersion "0"` = "Load out of date AddOns": without it a game
+   patch silently disables the addon.)
 
 If you later run the server with a different `--resolution`, change
 `gxWindowedResolution` to match. `wowstreamd --setup` prints these same
 instructions (with your chosen resolution filled in) any time you need them.
 
 The window will be a tall sliver on a landscape monitor — that's expected. You
-play on the phone; the PC window just needs to exist, stay visible, and not be
-minimized.
+play on the phone; the PC window just needs to exist, stay visible, not be
+minimized, and **fit on the monitor** — a window taller than the screen cannot
+be captured (the off-screen rows do not exist on the desktop), which is
+exactly why `fit` is the default.
 
 ### 2. Install the WowMobile addon
 
@@ -323,7 +350,7 @@ The defaults are right for most setups. All flags:
 |---|---|---|
 | `--addr` | `:8443` | Listen address for the HTTPS signaling server |
 | `--token` | random per run | Pairing token; pass your own to keep it stable across restarts |
-| `--resolution` | `1080x1920` | Capture size; **must equal** the WoW window client size |
+| `--resolution` | `fit` | `fit` sizes the window to the largest 9:16 portrait rect fitting your primary monitor; an explicit `WxH` **must equal** the WoW window client size (and is sanity-checked against the monitor) |
 | `--fps` | `60` | Capture/encode frame rate (1–240) |
 | `--bitrate-kbps` | `8000` | Video bitrate, CBR (500–100000) |
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
@@ -425,7 +452,8 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 | Addon step says `... (WowMobile_Vanilla, 1.12 port)` | Normal on a 1.12 private-server client: the wizard installed the 1.12 port of the addon instead of the Classic Era one. Enable **WoW Mobile (Vanilla)** at character select — see [Private servers](#private-servers-112-clients). |
 | Wizard: winget is not available | The wizard prints manual instructions: install FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) or [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), then add its `bin` to `PATH` or pass `--ffmpeg C:\path\to\ffmpeg.exe`. |
 | Wizard: Config.wtf changes not applied | WoW was running (it rewrites `Config.wtf` on exit). Close WoW, restart `wowstreamd`, and accept the update — the original is kept as `Config.wtf.bak`. |
-| Black or frozen video, connection fine | The WoW window is minimized or on a locked/secure desktop — capture needs it visible. Restore the window and leave it on-screen. If it just launched or moved monitors, the encoder restarts within a few seconds. |
+| Black video on the phone, or the WoW window looks cut off / "everything crammed into a square" on the PC | The window is bigger than the monitor — a fixed `--resolution` (e.g. `1080x1920`) taller than a landscape monitor gets clamped by Windows: you see only the top rows on the PC, and the capture reads the window's **desktop** region, whose off-screen rows do not exist — hence black. Use the default `--resolution fit` (re-run the wizard so it rewrites `Config.wtf`), which picks the largest 9:16 window that fits your monitor. The dashboard's **cap / sent** and **last IDR** stats (and the phone's on-screen banner) tell you which side is failing. |
+| Black or frozen video, connection fine | The WoW window is minimized or on a locked/secure desktop — capture needs it visible. Restore the window and leave it on-screen. If it just launched or moved monitors, the encoder restarts within a few seconds. Phone shows "Receiving video data but your phone can't decode it"? Codec mismatch — update the PC app. "No video data arriving"? Capture is dead — check the window and the dashboard's frames counters. |
 | `no visible window with "World of Warcraft" in its title` at startup | WoW isn't running, is minimized, or has a different title. Start WoW first (windowed, not minimized) or let wizard step 5 launch it. If the title truly differs, pass the actual text via `--window-title`. |
 | Phone can't reach the URL at all | Phone on cellular or a guest/isolated SSID, or the firewall is blocking port 8443. Same Wi-Fi network, and allow `wowstreamd.exe` for private networks in Windows Defender Firewall. |
 | High latency or stutter | Check the HUD: high **ms** = network (move to 5 GHz, get the PC on Ethernet, reduce Wi-Fi congestion); high **enc** = encoder (use `--encoder nvenc`/`amf`/`qsv` instead of software x264). Lowering quality to 4 Mbps in settings helps on weak links. The dashboard's **Encoder** line (or console log `encoder auto-selected encoder=x264`) showing software x264 means no hardware encoder was found in your FFmpeg build. |

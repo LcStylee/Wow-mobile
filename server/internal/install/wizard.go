@@ -26,7 +26,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LcStylee/Wow-mobile/server/internal/config"
 	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
+	"github.com/LcStylee/Wow-mobile/server/internal/window"
 )
 
 // wizardSteps is the step count in the "[n/5]" progress prefix.
@@ -99,6 +101,16 @@ type System interface {
 	GameWindowPresent(titleSubstr string) bool
 	// LaunchGame starts the game executable without waiting for it.
 	LaunchGame(exePath string) error
+	// PrimaryWorkArea returns the primary monitor's work area (the desktop
+	// minus taskbar/appbars, SPI_GETWORKAREA) in physical pixels; ok is false
+	// when it cannot be measured (non-Windows, or the call failed).
+	PrimaryWorkArea() (w, h int, ok bool)
+	// WindowDecorationExtents returns the total width/height the window frame
+	// adds around a client area for the overlapped style windowed WoW uses
+	// (borders + title bar, via AdjustWindowRectEx), falling back to a
+	// documented conservative margin (window.FallbackDecoration*) when the
+	// exact measurement is unavailable.
+	WindowDecorationExtents() (dw, dh int)
 }
 
 // Prompter asks the user. The console implementation honors --yes and
@@ -140,7 +152,13 @@ type Options struct {
 	AddonFS        fs.FS // embedded Classic Era addon rooted at the WowMobile folder
 	VanillaAddonFS fs.FS // embedded 1.12 port rooted at the WowMobile_Vanilla folder
 
-	Width, Height int    // --resolution, for Config.wtf
+	// Width/Height carry an explicit --resolution WxH; zero when
+	// ResolutionFit is set — resolveResolution then fills them from the
+	// monitor's work area before any step consumes them.
+	Width, Height int
+	// ResolutionFit mirrors config.Config.ResolutionIsFit: size the window to
+	// the largest 9:16 portrait client area fitting the primary monitor.
+	ResolutionFit bool
 	WindowTitle   string // --window-title, for the game-running check
 	WowDirFlag    string // --wow-dir override, "" = auto-detect
 	GameExeFlag   string // --game-exe override: exact game executable, beats everything
@@ -176,6 +194,11 @@ type Result struct {
 	GameDir    string     // its directory — Interface\ and WTF\ live beneath it
 	ClientType ClientType // classicEra or legacy (1.12 private server)
 	FFmpegPath string     // located ffmpeg executable
+	// Width/Height are the decided capture resolution: the monitor-fitted
+	// value under --resolution fit, or the (possibly confirmed-oversized)
+	// explicit flag value. Capture, Config.wtf, and the hello geometry all
+	// use this one number.
+	Width, Height int
 }
 
 // LegacyAddonNote is the explanation shown (dashboard note + console print +
@@ -208,6 +231,14 @@ func Run(opts Options) (res *Result, err error) {
 			opts.Status.SetStep(current, hoststatus.StateFailed, err.Error())
 		}
 	}()
+
+	// The capture resolution is decided before any step consumes it: the
+	// Config.wtf step writes it, and the caller feeds it to capture and the
+	// hello geometry — one number everywhere.
+	if err = resolveResolution(&opts); err != nil {
+		return nil, err
+	}
+	res.Width, res.Height = opts.Width, opts.Height
 
 	begin(StepGame)
 	var streamOnly bool
@@ -252,6 +283,109 @@ func stepLine(out io.Writer, n int, label, result string) {
 		dots = 3
 	}
 	fmt.Fprintf(out, "[%d/%d] %s %s %s\n", n, wizardSteps, label, strings.Repeat(".", dots), result)
+}
+
+// resolveResolution decides the capture resolution before the steps run.
+//
+// --resolution fit (the default): measure the primary monitor's work area,
+// subtract the window decoration extents, and take the largest 9:16 portrait
+// client area that fits (window.FitPortraitClient) — a 1080x1920 design
+// window cannot fit a landscape 1920x1080 monitor: Windows clamps it, the
+// user sees only the top rows, and desktop-region capture of the off-screen
+// remainder goes black. The computed WxH is printed plainly, mirrored to the
+// dashboard, and persisted (KeyResolution) so every consumer — Config.wtf,
+// the capture pipeline, the hello geometry — agrees on one number.
+//
+// An explicit --resolution WxH is honored but sanity-checked against the same
+// work area: an oversized value gets a loud warning naming the fitted
+// alternative and requires confirmation to keep (GUI mode: a message box via
+// the dialog Prompter; --yes keeps the explicit flag value, logged).
+func resolveResolution(opts *Options) error {
+	workW, workH, workOK := opts.Sys.PrimaryWorkArea()
+	decorW, decorH := opts.Sys.WindowDecorationExtents()
+
+	if !opts.ResolutionFit {
+		// Explicit flag: keep it unless it provably cannot fit the monitor.
+		if !workOK || (opts.Width+decorW <= workW && opts.Height+decorH <= workH) {
+			opts.Status.SetResolution(fmt.Sprintf("%dx%d", opts.Width, opts.Height))
+			return nil
+		}
+		fitW, fitH, fitOK := window.FitPortraitClient(workW, workH, decorW, decorH)
+		alt := "no smaller 9:16 window fits either"
+		if fitOK {
+			alt = fmt.Sprintf("the largest fitting portrait window is %dx%d", fitW, fitH)
+		}
+		fmt.Fprintf(opts.Out,
+			"WARNING: --resolution %dx%d cannot fit your %dx%d work area (window frame included).\n"+
+				"  The WoW window will be cut off at the monitor edge and the capture can go black — %s.\n",
+			opts.Width, opts.Height, workW, workH, alt)
+		if opts.Yes {
+			// --yes promised the explicit flag value; keep it and say so.
+			fmt.Fprintf(opts.Out, "  keeping --resolution %dx%d (--yes: explicit flag value wins)\n", opts.Width, opts.Height)
+			return nil
+		}
+		question := fmt.Sprintf("--resolution %dx%d is larger than your monitor. Keep it anyway?", opts.Width, opts.Height)
+		if fitOK {
+			question = fmt.Sprintf("--resolution %dx%d is larger than your monitor. Keep it anyway? (No switches to the fitted %dx%d)",
+				opts.Width, opts.Height, fitW, fitH)
+		}
+		// Default No: the fitted value is the one that actually works; a
+		// non-interactive session without --yes also lands on it safely.
+		keep, err := opts.Prompt.Confirm(question, false)
+		if err != nil {
+			return err
+		}
+		if keep || !fitOK {
+			fmt.Fprintf(opts.Out, "  keeping --resolution %dx%d as confirmed\n", opts.Width, opts.Height)
+			opts.Status.SetResolution(fmt.Sprintf("%dx%d", opts.Width, opts.Height))
+			return nil
+		}
+		opts.Width, opts.Height = fitW, fitH
+		fmt.Fprintf(opts.Out, "  using %s\n", window.FitDescription(fitW, fitH, workW, workH))
+		opts.Status.SetResolution(fmt.Sprintf("%dx%d", fitW, fitH))
+		return nil
+	}
+
+	// --resolution fit (default).
+	if workOK {
+		if w, h, ok := window.FitPortraitClient(workW, workH, decorW, decorH); ok {
+			opts.Width, opts.Height = w, h
+			fmt.Fprintf(opts.Out, "%s\n", window.FitDescription(w, h, workW, workH))
+			opts.Status.SetResolution(fmt.Sprintf("%dx%d", w, h))
+			persistResolution(opts, w, h)
+			return nil
+		}
+		fmt.Fprintf(opts.Out, "  work area %dx%d is too small to fit a portrait window; ", workW, workH)
+	}
+	// No measurable (or usable) work area: reuse the last fitted value if one
+	// was persisted, else fall back to the 1080x1920 design resolution.
+	if w, h, err := ParseStoredResolution(opts.Store.Get(KeyResolution)); err == nil {
+		opts.Width, opts.Height = w, h
+		fmt.Fprintf(opts.Out, "using the previously fitted portrait window %dx%d (monitor not measurable right now)\n", w, h)
+		opts.Status.SetResolution(fmt.Sprintf("%dx%d", w, h))
+		return nil
+	}
+	opts.Width, opts.Height = 1080, 1920
+	fmt.Fprintln(opts.Out, "using the 1080x1920 design resolution (monitor work area not measurable; pass --resolution WxH if the window does not fit)")
+	opts.Status.SetResolution("1080x1920")
+	return nil
+}
+
+// ParseStoredResolution parses a persisted "WxH" value (KeyResolution) with
+// the same bounds as the --resolution flag; errors for "" or malformed input.
+func ParseStoredResolution(s string) (w, h int, err error) {
+	if s == "" {
+		return 0, 0, errors.New("no stored resolution")
+	}
+	return config.ParseResolution(s)
+}
+
+func persistResolution(opts *Options, w, h int) {
+	val := fmt.Sprintf("%dx%d", w, h)
+	if opts.Store.Get(KeyResolution) != val {
+		opts.Store.Set(KeyResolution, val)
+		saveStore(opts)
+	}
 }
 
 // stepLocateGame finds the game executable. The flags (--game-exe, --wow-dir)

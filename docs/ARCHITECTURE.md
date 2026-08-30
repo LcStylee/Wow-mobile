@@ -6,7 +6,8 @@ UI rebuilt for portrait touch. Three components, one repo:
 ```
 ┌─────────────────────────── Windows Gaming PC ───────────────────────────┐
 │                                                                         │
-│  WoW Classic (windowed, 1080x1920 portrait)                             │
+│  WoW Classic (windowed portrait, largest 9:16 rect fitting the monitor; │
+│  │            1080x1920 design space)                                   │
 │  └─ addon/WowMobile  → portrait touch UI, 1080x1080 world viewport      │
 │                                                                         │
 │  server/ (wowstreamd.exe, Go)                                           │
@@ -28,12 +29,23 @@ UI rebuilt for portrait touch. Three components, one repo:
 
 ### 1. Portrait 1080x1920 with a 1080x1080 world viewport
 
-WoW runs **windowed** at `1080x1920` (set via `Config.wtf`:
-`SET gxWindowedResolution "1080x1920"`, or the server's `--setup` helper). The
-addon then shrinks the 3D world (`WorldFrame`) to a **1080x1080 square anchored
-to the top** of the window. The bottom **1080x840 strip is the "control deck"**:
-a pure-2D region owned entirely by the addon (action bars, unit frames, bags,
-panels) over a black background.
+**1080x1920 is the DESIGN space, not necessarily the real window.** A
+1080x1920 window physically cannot fit a landscape 1920x1080 monitor: Windows
+clamps it, only the top ~1080 rows exist on the desktop, and capturing the
+off-screen remainder goes black. The default `--resolution fit` therefore
+sizes the actual window to the **largest 9:16 portrait client area that fits
+the primary monitor's work area** (e.g. `552x984` on a 1920x1080 monitor with
+a taskbar); every layout constant below stays expressed in 1080x1920 design
+pixels and scales down uniformly (`WM.Px`, the client's `DESIGN_WIDTH`). An
+explicit `--resolution WxH` is still honored, after a wizard sanity check
+against the monitor.
+
+WoW runs **windowed** at the fitted resolution (set via `Config.wtf`:
+`SET gxWindowedResolution "<WxH>"`, or the server's `--setup` helper). The
+addon then shrinks the 3D world (`WorldFrame`) to a **square anchored to the
+top** of the window (1080x1080 in design px). The bottom **1080x840 design-px
+strip is the "control deck"**: a pure-2D region owned entirely by the addon
+(action bars, unit frames, bags, panels) over a black background.
 
 Why:
 
@@ -66,8 +78,12 @@ periodic IDR, CBR) → Annex-B NALU splitter → pion TrackLocalStaticSample
 ```
 
 Recovery points are periodic IDRs (2 s GOP) plus keyframe-on-demand: a PLI
-from the client triggers an encoder restart, whose first frame is a fresh
-IDR + SPS/PPS. Intra-refresh was deliberately rejected — a browser (re)joining
+from the client (or a track being added/connected) triggers an encoder
+restart, whose first frame is a fresh IDR + SPS/PPS. The Annex-B splitter
+additionally caches the newest SPS/PPS and attaches them to every keyframe
+access unit that lacks its own — the supported encoders do not repeat
+parameter sets on periodic IDRs, and a browser joining on one would otherwise
+stay black. Intra-refresh was deliberately rejected — a browser (re)joining
 mid-stream cannot decode a rolling refresh wavefront at all; it needs a full
 IDR, so intra-refresh would break mid-join and PLI recovery outright.
 

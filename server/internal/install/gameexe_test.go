@@ -205,4 +205,11 @@ func TestPortraitSettingsForClientType(t *testing.T) {
 	if _, has := l["gxWindowedResolution"]; has {
 		t.Fatalf("legacy must not write gxWindowedResolution: %v", l)
 	}
+	// Both generations disable the out-of-date-addon gate: a game patch must
+	// never silently turn the touch UI off (SETUP.md documents this line).
+	for _, m := range []map[string]string{c, l} {
+		if m["checkAddonVersion"] != "0" {
+			t.Fatalf("checkAddonVersion \"0\" missing: %v", m)
+		}
+	}
 }

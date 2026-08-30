@@ -103,7 +103,13 @@
       <p id="connect-note" class="note" hidden></p>
       <input id="connect-token" type="text" autocomplete="off" autocapitalize="off"
              spellcheck="false" placeholder="pairing token" required>
+      <!-- Big paste affordance: the token is far too long to type on a phone.
+           navigator.clipboard.readText where available; app.js falls back to
+           focusing the field with a hint otherwise. -->
+      <button id="connect-paste" type="button">Paste token</button>
       <button id="connect-submit" type="submit">Connect</button>
+      <p class="tip">Tip: open the link from the QR code once in your browser,
+         then Add to Home Screen — the installed app remembers everything.</p>
     </form>
   </div>
 
@@ -114,6 +120,10 @@
       <p>Tap to play — goes fullscreen and locks portrait.</p>
     </div>
   </div>
+
+  <!-- Stream-health banner: plain-language diagnosis when video bytes and
+       decoded frames disagree (codec mismatch / capture dead). hud.js owns it. -->
+  <div id="diag" hidden></div>
 
   <div id="toast" hidden></div>
 

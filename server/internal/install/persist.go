@@ -35,6 +35,10 @@ const (
 	// picker's default candidate, and the confirmed pick is persisted with
 	// the marker.
 	KeyGameChosen = "game_chosen"
+	// KeyResolution records the most recently computed --resolution fit value
+	// ("WxH"): the fallback when the monitor cannot be measured on a later
+	// run, and a visible record of what Config.wtf/capture were sized to.
+	KeyResolution = "fit_resolution"
 	// KeyLegacyNoticeShown records that the one-time GUI notice about the
 	// 1.12 addon variant (LegacyAddonNote: WowMobile_Vanilla installed, enable
 	// it at character select) was already shown (the dashboard note and the

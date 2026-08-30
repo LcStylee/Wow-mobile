@@ -100,6 +100,13 @@ func (s *session) negotiate(offerSDP string) (_ string, retErr error) {
 	if err != nil {
 		return "", fmt.Errorf("adding video track: %w", err)
 	}
+	// A session's track starting mid-stream must get an IDR immediately, not
+	// after up to a 2 s GOP: demand one right when the track is added, on top
+	// of the peer-connected demand below. Both funnel through
+	// requestKeyframe's cooldown (keyframeMinInterval) and the supervisor's
+	// fresh-process exemption, so the pair can never become a restart storm —
+	// and a demand suppressed by either guard is retried by the browser's PLI.
+	s.mgr.requestKeyframe("video track added")
 	go forwardRTCP(videoSender, func() { s.mgr.requestKeyframe("client PLI/FIR") })
 	if s.mgr.audioTrack != nil {
 		audioSender, err := pc.AddTrack(s.mgr.audioTrack)

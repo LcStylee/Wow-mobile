@@ -296,3 +296,64 @@ func TestExpGolombEmulationPrevention(t *testing.T) {
 		t.Fatalf("ue = %d, want 128 (0x03 wrongly skipped)", got)
 	}
 }
+
+// SPS/PPS must ride with EVERY keyframe access unit: none of the supported
+// encoders repeat parameter sets on periodic GOP IDRs, but a browser joining
+// (or PLI-recovering) on such an IDR cannot decode without them — the classic
+// "bytes flow, screen stays black" failure. The parser caches the newest
+// SPS/PPS and prepends them to keyframes that lack their own.
+func TestAnnexBAttachesCachedSPSPPSToBareKeyframes(t *testing.T) {
+	c := &collector{}
+	p := NewAnnexBParser(c.collect)
+
+	// Opening IDR carries its own SPS/PPS; a GOP later the encoder emits a
+	// bare IDR (the real-world nvenc/x264 behavior without repeat-headers).
+	p.Write(stream(sps, pps, idrSlice0, pSlice0, idrSlice0, pSlice0))
+	p.Flush()
+
+	if len(c.aus) != 4 {
+		t.Fatalf("got %d access units, want 4", len(c.aus))
+	}
+	// AU0: already has the parameter sets — must NOT be double-prefixed.
+	if !bytes.Equal(c.aus[0].Data, stream(sps, pps, idrSlice0)) {
+		t.Errorf("AU0 = % x\nwant SPS+PPS+IDR untouched", c.aus[0].Data)
+	}
+	// AU2: the bare mid-stream IDR gains the cached SPS+PPS, in that order.
+	if !c.aus[2].Keyframe {
+		t.Fatal("AU2 must be the mid-stream keyframe")
+	}
+	if !bytes.Equal(c.aus[2].Data, stream(sps, pps, idrSlice0)) {
+		t.Errorf("AU2 = % x\nwant cached SPS+PPS prepended to the bare IDR", c.aus[2].Data)
+	}
+	// Non-IDR units stay untouched.
+	if !bytes.Equal(c.aus[1].Data, stream(pSlice0)) || !bytes.Equal(c.aus[3].Data, stream(pSlice0)) {
+		t.Errorf("P-frame AUs must not gain parameter sets: % x / % x", c.aus[1].Data, c.aus[3].Data)
+	}
+}
+
+// A NEWER SPS/PPS pair replaces the cache (bitrate restarts re-emit possibly
+// different sets), and a keyframe before any SPS/PPS ever appeared is passed
+// through unmodified rather than prefixed with nothing.
+func TestAnnexBSPSPPSCacheFreshness(t *testing.T) {
+	c := &collector{}
+	p := NewAnnexBParser(c.collect)
+
+	// Keyframe before any parameter set: emitted as-is.
+	p.Write(stream(idrSlice0, pSlice0))
+	// Then a full IDR with sets, then a bare IDR: must get the NEW sets.
+	sps2 := []byte{0x67, 0x42, 0xE0, 0x20, 0xBB}
+	p.Write(withStartCode(true, sps2))
+	p.Write(stream(pps, idrSlice0, idrSlice0))
+	p.Flush()
+
+	if len(c.aus) != 4 {
+		t.Fatalf("got %d access units, want 4", len(c.aus))
+	}
+	if !bytes.Equal(c.aus[0].Data, stream(idrSlice0)) {
+		t.Errorf("pre-SPS keyframe must pass through untouched: % x", c.aus[0].Data)
+	}
+	if !bytes.Equal(c.aus[3].Data, stream(sps2, pps, idrSlice0)) {
+		t.Errorf("bare IDR must carry the NEWEST cached sets:\n got % x\nwant % x",
+			c.aus[3].Data, stream(sps2, pps, idrSlice0))
+	}
+}

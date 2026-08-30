@@ -50,6 +50,17 @@ test('worldSquareFrac clamps the degenerate over-tall viewport', () => {
   assert.equal(worldSquareFrac(1920, 1080), 1); // landscape capture
 });
 
+test('worldSquareFrac tracks a monitor-fitted capture resolution', () => {
+  // --resolution fit on a 1920x1032 work area yields 552x984 (server
+  // window.FitPortraitClient): the world region at the default viewport is
+  // the top width x width square of THAT frame — no 1080/1920 hardcoding.
+  const frac = worldSquareFrac(552, 984);
+  assert.ok(Math.abs(frac - 552 / 984) < 1e-12);
+  // On-screen: square height equals the video content width after fitContain.
+  const r = fitContain(390, 900, 552, 984);
+  assert.ok(Math.abs(frac * r.h - r.w) < 1e-9);
+});
+
 test('clamp pins to the interval bounds', () => {
   assert.equal(clamp(5, 0, 10), 5);
   assert.equal(clamp(-1, 0, 10), 0);

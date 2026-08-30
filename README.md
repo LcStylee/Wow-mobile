@@ -3,7 +3,8 @@
 Play **your own World of Warcraft Classic Era** on your phone — streamed live from
 your Windows gaming PC, with the entire UI rebuilt for portrait touch.
 
-Your PC runs the game in a portrait 1080x1920 window. The `WowMobile` addon
+Your PC runs the game in a portrait 9:16 window sized to fit your monitor
+(the UI is designed in 1080x1920 and scales down). The `WowMobile` addon
 reshapes the interface into a phone layout: the 3D world in a square viewport up
 top, and a "control deck" of thumb-sized action bars, unit frames, bags, and
 panels below. `wowstreamd` captures that window with FFmpeg, streams it over

@@ -384,6 +384,24 @@ button {
   color: var(--danger) !important;
 }
 
+/* Secondary connect-screen action (Paste): quieter than the accent Connect. */
+#connect-paste {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-weight: 700;
+  border: 1px solid var(--panel-border);
+}
+
+/* Install tip under the connect form: informational, not the danger note. */
+#connect-form .tip {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 2px 0 0;
+  max-width: none;
+}
+
 #overlay-start {
   background: rgba(5, 5, 9, 0.35);
 }
@@ -401,6 +419,27 @@ button {
 
 .start-card p {
   margin-bottom: 0;
+}
+
+/* ---- stream-health banner ------------------------------------------------- */
+
+/* Persistent (until cleared) plain-language diagnosis of a black stream;
+   sits above the HUD strip, below overlays/toasts. */
+#diag {
+  position: fixed;
+  top: calc(52px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: rgba(90, 16, 16, 0.92);
+  border: 1px solid var(--danger);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  z-index: 55;
+  pointer-events: none;
 }
 
 /* ---- toast ---------------------------------------------------------------- */

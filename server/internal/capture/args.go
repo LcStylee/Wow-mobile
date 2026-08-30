@@ -128,7 +128,16 @@ func (c Config) inputArgs() []string {
 // encoderArgs builds the encoder half. All variants share CBR at the requested
 // bitrate with a two-frame VBV buffer, a 2 s GOP, and no B-frames, and emit
 // constrained-baseline H.264 to match the SDP (packetization-mode=1,
-// profile-level-id 42e01f).
+// profile-level-id 42e01f) — phone browsers, iOS Safari above all, hard-reject
+// anything above baseline. Per-encoder -profile:v spellings (each verified
+// against its ffmpeg option table): h264_nvenc and h264_qsv accept "baseline"
+// (with -bf 0 the emitted bitstream is constrained-baseline conformant),
+// h264_amf has an explicit "constrained_baseline", libx264's "baseline" IS
+// constrained baseline (x264 sets constraint_set1_flag). The level is left to
+// the encoder on purpose: pinning the SDP's 3.1 would cap 1080-wide 60 fps
+// frames below their real requirement, and the SDP's
+// level-asymmetry-allowed=1 already tells the receiver to accept whatever
+// level the sender needs.
 func (c Config) encoderArgs() []string {
 	kbps := strconv.Itoa(c.BitrateKbps) + "k"
 	// Two frames of VBV: small enough that a single burst cannot add more

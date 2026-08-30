@@ -3,10 +3,12 @@ package signal
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +166,104 @@ func TestHostURLFollowsBindAddress(t *testing.T) {
 		if got := s.HostURL(); got != tc.want {
 			t.Errorf("HostURL(addr=%q noTLS=%v) = %q, want %q", tc.addr, tc.noTLS, got, tc.want)
 		}
+	}
+}
+
+// --- token-bound manifest (PWA self-pairing launch) --------------------------
+
+const testManifestJSON = `{
+  "name": "WoW Mobile",
+  "id": "wowmobile",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen"
+}`
+
+func manifestServer(t *testing.T) *Server {
+	t.Helper()
+	client := fstest.MapFS{
+		"index.html":           &fstest.MapFile{Data: []byte("hi")},
+		"manifest.webmanifest": &fstest.MapFile{Data: []byte(testManifestJSON)},
+	}
+	return New(":0", "sekrit-token", true, client, "", nil, testLogger())
+}
+
+func getManifest(t *testing.T, s *Server, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/manifest.webmanifest"+query, nil)
+	s.handleManifest(rec, req)
+	return rec
+}
+
+// A matching ?token gets the token-bound manifest: start_url self-pairs, the
+// scope and every other field survive, and the response is no-store so no
+// cache can replay the tokened variant to another client.
+func TestManifestTokenBound(t *testing.T) {
+	s := manifestServer(t)
+	rec := getManifest(t, s, "?token=sekrit-token")
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("tokened manifest must be no-store, got %q", cc)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/manifest+json" {
+		t.Fatalf("Content-Type %q", ct)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("tokened manifest not JSON: %v", err)
+	}
+	if m["start_url"] != "/?token=sekrit-token" {
+		t.Fatalf("start_url = %v, want the self-pairing launch URL", m["start_url"])
+	}
+	if m["scope"] != "./" || m["name"] != "WoW Mobile" || m["display"] != "fullscreen" {
+		t.Fatalf("other manifest fields must be untouched: %v", m)
+	}
+}
+
+// No token: the manifest is served byte-for-byte as the file server would,
+// with no cache restriction added.
+func TestManifestTokenlessUnchanged(t *testing.T) {
+	s := manifestServer(t)
+	rec := getManifest(t, s, "")
+	if rec.Code != 200 || rec.Body.String() != testManifestJSON {
+		t.Fatalf("tokenless manifest changed: status %d body %q", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "" {
+		t.Fatalf("tokenless manifest must not gain cache headers, got %q", cc)
+	}
+}
+
+// A wrong token gets the tokenless manifest (never an oracle, never the real
+// token) — but still no-store, so the wrong-token URL variant is not cached.
+func TestManifestWrongTokenServedTokenless(t *testing.T) {
+	s := manifestServer(t)
+	rec := getManifest(t, s, "?token=wrong")
+	if rec.Code != 200 || rec.Body.String() != testManifestJSON {
+		t.Fatalf("wrong-token manifest must be the stock one: status %d body %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sekrit-token") {
+		t.Fatal("wrong token must never receive the real token")
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("tokened URL variants must be no-store, got %q", cc)
+	}
+}
+
+// The mux wires the manifest handler ahead of the static file server: a GET
+// through the full route table must hit the token-bound logic.
+func TestManifestRouteRegistered(t *testing.T) {
+	s := manifestServer(t)
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.listener.Close()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/manifest.webmanifest?token=sekrit-token", nil)
+	s.httpServer.Handler.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `"/?token=sekrit-token"`) {
+		t.Fatalf("mux did not route to the manifest handler: %q", rec.Body.String())
 	}
 }

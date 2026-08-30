@@ -37,11 +37,22 @@ type Phone struct {
 	UserAgent string `json:"userAgent"`
 }
 
-// Stream is the live capture/encode reading.
+// Stream is the live capture/encode reading, including the capture
+// diagnostics that make a black phone screen debuggable at a glance: total
+// access units out of ffmpeg vs. samples handed to the WebRTC track, and how
+// stale the last keyframe is (a healthy 2 s GOP keeps it under ~2000 ms;
+// "no keyframe yet" is -1).
 type Stream struct {
 	Kbps     float64 `json:"kbps"`
 	FPS      float64 `json:"fps"`
 	EncodeMs float64 `json:"encodeMs"`
+	// FramesCaptured counts access units delivered by ffmpeg since startup.
+	FramesCaptured uint64 `json:"framesCaptured"`
+	// FramesSent counts video samples written to the WebRTC track.
+	FramesSent uint64 `json:"framesSent"`
+	// LastKeyframeAgeMs is the age of the newest captured IDR; -1 until one
+	// has been seen (0 frames + -1 here = capture never produced anything).
+	LastKeyframeAgeMs float64 `json:"lastKeyframeAgeMs"`
 }
 
 // Status aggregates everything the dashboard shows. Create with New.
@@ -50,6 +61,7 @@ type Status struct {
 	version    string
 	steps      []Step
 	encoder    string
+	resolution string // decided capture resolution "WxH" (monitor-fitted or explicit)
 	clientType string
 	addonNote  string
 	pairingURL string
@@ -99,6 +111,17 @@ func (s *Status) SetEncoder(encoder string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.encoder = encoder
+}
+
+// SetResolution records the decided capture resolution ("590x1048") — the
+// monitor-fitted portrait window, or the explicit --resolution value.
+func (s *Status) SetResolution(res string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resolution = res
 }
 
 // SetClientType records "classicEra"/"legacy" for the dashboard.
@@ -192,6 +215,7 @@ type snapshot struct {
 	Running    bool   `json:"running"`
 	Steps      []Step `json:"steps"`
 	Encoder    string `json:"encoder"`
+	Resolution string `json:"resolution"`
 	ClientType string `json:"clientType"`
 	AddonNote  string `json:"addonNote"`
 	PairingURL string `json:"pairingUrl"`
@@ -210,6 +234,7 @@ func (s *Status) JSON() []byte {
 		Running:    s.running,
 		Steps:      append([]Step(nil), s.steps...),
 		Encoder:    s.encoder,
+		Resolution: s.resolution,
 		ClientType: s.clientType,
 		AddonNote:  s.addonNote,
 		PairingURL: s.pairingURL,

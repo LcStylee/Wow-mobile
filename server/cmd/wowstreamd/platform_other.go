@@ -15,3 +15,9 @@ import (
 func newPlatform(_ *config.Config, _ *slog.Logger) (*platform, error) {
 	return nil, errors.New("wowstreamd streams a Windows game and must run on the Windows gaming PC (only --setup and --help work on this OS)")
 }
+
+// measureFitResolution: no monitors to measure off Windows — --resolution fit
+// falls back to the 1080x1920 design resolution (resolveFitResolution).
+func measureFitResolution() (w, h, workW, workH int, ok bool) {
+	return 0, 0, 0, 0, false
+}
