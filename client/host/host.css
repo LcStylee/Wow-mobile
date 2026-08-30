@@ -102,6 +102,13 @@ button {
   font-size: 14px;
 }
 
+/* Misconfiguration warning (window/resolution mismatch): louder than the
+   amber note — the stream still works, but the user must act. */
+.note.error {
+  border-color: rgba(224, 82, 60, 0.55);
+  background: rgba(224, 82, 60, 0.1);
+}
+
 /* ---- layout & cards -------------------------------------------------- */
 
 #columns {

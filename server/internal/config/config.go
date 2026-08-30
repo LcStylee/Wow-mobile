@@ -74,7 +74,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	var resolution string
 	fs.StringVar(&cfg.Addr, "addr", ":8443", "listen address for the signaling server")
 	fs.StringVar(&cfg.Token, "token", "", "pairing token (default: randomly generated and printed at startup)")
-	fs.StringVar(&resolution, "resolution", ResolutionFit, "capture resolution: \"fit\" (default) sizes the WoW window to the largest 9:16 portrait rect that fits the primary monitor; an explicit WIDTHxHEIGHT must match the WoW window client size")
+	fs.StringVar(&resolution, "resolution", ResolutionFit, "capture resolution: \"fit\" (default) sizes the WoW window to the largest 9:16 portrait rect that fits the primary monitor, capped at the 1080x1920 design size; an explicit WIDTHxHEIGHT must match the WoW window client size")
 	fs.IntVar(&cfg.FPS, "fps", 60, "capture/encode frame rate")
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")

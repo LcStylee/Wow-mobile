@@ -36,6 +36,14 @@ type Options struct {
 	FPS         int
 	Audio       bool
 
+	// VideoGeometry, when set, returns the geometry the encoder is CURRENTLY
+	// producing — the game window's actual client area when it differs from
+	// the configured resolution (the capture self-heals to the real window
+	// rather than going black; see capture.EncodeSize). The hello reply uses
+	// it so the phone always letterboxes the frame it really receives; nil
+	// falls back to the static VideoWidth/VideoHeight.
+	VideoGeometry func() (w, h int)
+
 	// NewInjector creates the platform injector for a session.
 	NewInjector func() (input.Injector, error)
 	// SetActive is invoked with true when a session exists and false when

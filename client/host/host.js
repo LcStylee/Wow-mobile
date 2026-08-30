@@ -56,6 +56,13 @@
 
     renderSteps(st.steps || []);
 
+    // Live misconfiguration warning (e.g. WoW window vs. configured
+    // resolution). The stream keeps running — capture adapts to the real
+    // window — so this is a call to action, not a failure state.
+    const warning = $("warning");
+    warning.hidden = !st.warning;
+    warning.textContent = st.warning || "";
+
     const note = $("addon-note");
     note.hidden = !st.addonNote;
     note.textContent = st.addonNote || "";

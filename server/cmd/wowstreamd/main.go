@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -72,15 +73,22 @@ type appUI struct {
 type platform struct {
 	// newInjector creates the SendInput-backed injector for a session.
 	newInjector func() (input.Injector, error)
+	// clientSize returns the game window's CURRENT client area, ok=false
+	// when it cannot be read (window vanished). Called before every ffmpeg
+	// launch: the encode adapts to the real window when WoW ignored the
+	// configured resolution (capture.EncodeSize), instead of producing the
+	// black-frames-with-working-clicks failure a fixed assumed size gives.
+	clientSize func() (w, h int, ok bool)
 	// captureRect returns the game window's client rect translated into the
 	// local coordinates of the DXGI output (monitor) fully containing it,
 	// plus that output's ddagrab output_idx, when the window is usable for
-	// the zero-copy ddagrab path: client area exactly --resolution (the
-	// ddagrab graph has no scaler), entirely on one unrotated monitor of the
-	// default adapter. Returns nil to fall back to gdigrab-by-title. Called
-	// before every ffmpeg launch so restarts pick up the window's current
-	// position, and only for NVENC — the sole ddagrab consumer.
-	captureRect func() (*capture.Rect, int)
+	// the zero-copy ddagrab path: client area exactly the encW x encH the
+	// encoder will produce (the ddagrab graph has no scaler), entirely on
+	// one unrotated monitor of the default adapter. Returns nil to fall back
+	// to gdigrab-by-title. Called before every ffmpeg launch so restarts
+	// pick up the window's current position, and only for NVENC — the sole
+	// ddagrab consumer.
+	captureRect func(encW, encH int) (*capture.Rect, int)
 	// windowTitle returns the game window's exact full title for gdigrab's
 	// FindWindow-based `title=` input (the --window-title flag is only a
 	// substring). Also called before every ffmpeg launch.
@@ -174,14 +182,61 @@ func run(ui *appUI) error {
 		BitrateKbps: cfg.BitrateKbps,
 		Encoder:     encoder,
 	}
+	// geom is the geometry the encoder is currently producing — normally the
+	// configured resolution, but the capture SELF-HEALS to the game window's
+	// actual client area when WoW ignored the configured size (Config.wtf
+	// overwritten because the game was running during setup, DPI
+	// virtualization, or the client restoring its own rect). The hello reply
+	// reads it so the phone always letterboxes the frame it really receives;
+	// input injection already follows the live rect independently.
+	geom := newLiveGeometry(cfg.Width, cfg.Height)
+	// reportGeometry surfaces a window/resolution mismatch LOUDLY (log line +
+	// dashboard warning row) but only on change, so keyframe/bitrate restarts
+	// do not spam identical lines. Single caller (the supervisor's run
+	// goroutine, plus one pre-stream check below before it starts): no lock.
+	lastWarning := "\x00never-reported" // sentinel unequal to any real state
+	reportGeometry := func(actualW, actualH, encW, encH int, mismatch bool) {
+		warning := ""
+		if mismatch {
+			warning = capture.MismatchWarning(actualW, actualH, cfg.Width, cfg.Height, encW, encH)
+		}
+		if warning == lastWarning {
+			return
+		}
+		lastWarning = warning
+		status.SetWarning(warning)
+		if warning != "" {
+			log.Warn(warning)
+		} else {
+			log.Info("game window matches the configured resolution",
+				"resolution", fmt.Sprintf("%dx%d", encW, encH))
+		}
+	}
 	videoArgv := func(c capture.Config) []string {
+		// Re-read the live client rect at every launch: the encode must frame
+		// the ACTUAL window — a fixed crop of the assumed size grabs desktop
+		// (or off-screen, i.e. black) pixels. Degraded-but-visible beats black.
+		if aw, ah, ok := plat.clientSize(); ok {
+			encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
+			c.Width, c.Height = encW, encH
+			geom.set(encW, encH)
+			reportGeometry(aw, ah, encW, encH, mismatch)
+		}
 		if c.Encoder == capture.NVENC {
 			// Only NVENC consumes the ddagrab target; skipping the DXGI
 			// probe elsewhere keeps the other encoders' launches quiet.
-			c.CaptureRect, c.CaptureOutput = plat.captureRect()
+			c.CaptureRect, c.CaptureOutput = plat.captureRect(c.Width, c.Height)
 		}
 		c.WindowTitle = plat.windowTitle()
 		return c.VideoArgs()
+	}
+	// Check once before any phone connects, too: the dashboard must show the
+	// mismatch warning while the user is still staring at the QR code, not
+	// only after the first capture launch.
+	if aw, ah, ok := plat.clientSize(); ok {
+		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
+		geom.set(encW, encH)
+		reportGeometry(aw, ah, encW, encH, mismatch)
 	}
 
 	meter := capture.NewMeter(cfg.FPS)
@@ -224,6 +279,7 @@ func run(ui *appUI) error {
 	mgr, err = rtc.NewManager(rtc.Options{
 		VideoWidth:    cfg.Width,
 		VideoHeight:   cfg.Height,
+		VideoGeometry: geom.get,
 		FPS:           cfg.FPS,
 		Audio:         cfg.Audio,
 		NewInjector:   plat.newInjector,
@@ -324,6 +380,30 @@ func run(ui *appUI) error {
 	return server.Serve(runCtx)
 }
 
+// liveGeometry is the concurrency-safe holder for the geometry the encoder is
+// currently producing: written by the capture argv callback at every ffmpeg
+// launch (self-healing to the actual window client area), read by the rtc
+// hello reply. Seeded with the configured resolution so a hello racing the
+// very first capture launch still advertises a sane frame.
+type liveGeometry struct {
+	mu   sync.Mutex
+	w, h int
+}
+
+func newLiveGeometry(w, h int) *liveGeometry { return &liveGeometry{w: w, h: h} }
+
+func (g *liveGeometry) set(w, h int) {
+	g.mu.Lock()
+	g.w, g.h = w, h
+	g.mu.Unlock()
+}
+
+func (g *liveGeometry) get() (int, int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.w, g.h
+}
+
 // trayTooltipLoop keeps the tray hover text honest: "streaming" while a phone
 // is connected, "waiting for phone" otherwise.
 func trayTooltipLoop(ctx context.Context, setTooltip func(string), connected func() bool) {
@@ -369,7 +449,7 @@ func resolveFitResolution(cfg *config.Config, log *slog.Logger) {
 		fmt.Println(window.FitDescription(w, h, workW, workH))
 		return
 	}
-	cfg.Width, cfg.Height = 1080, 1920
+	cfg.Width, cfg.Height = window.DesignW, window.DesignH
 	if log != nil {
 		log.Info("monitor work area not measurable; using the 1080x1920 design resolution")
 	}

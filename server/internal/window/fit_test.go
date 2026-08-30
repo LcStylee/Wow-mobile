@@ -19,7 +19,7 @@ func TestFitPortraitClientFitsAndIsEven(t *testing.T) {
 	cases := []struct{ workW, workH, dw, dh int }{
 		{1920, 1032, 16, 48},
 		{2560, 1392, 16, 48},
-		{3840, 2112, 22, 66}, // scaled decorations on a 4K display
+		{3840, 2112, 22, 66}, // scaled decorations on a 4K display (capped)
 		{1366, 728, 16, 48},
 		{1280, 987, 17, 49}, // odd work area / odd decorations
 		{800, 1280, 16, 48}, // portrait monitor: width-limited
@@ -38,16 +38,54 @@ func TestFitPortraitClientFitsAndIsEven(t *testing.T) {
 			t.Errorf("fit(%d,%d,%d,%d): window %dx%d + decorations does not fit",
 				c.workW, c.workH, c.dw, c.dh, w, h)
 		}
-		// Aspect exact to within one even-rounding step: w in
-		// [floor(h*9/16)-1 .. h*9/16] before even rounding means the ideal
-		// width differs from w by less than 2 px (and symmetrically when
-		// width-limited).
+		if w > DesignW || h > DesignH {
+			t.Errorf("fit(%d,%d): %dx%d exceeds the %dx%d design cap",
+				c.workW, c.workH, w, h, DesignW, DesignH)
+		}
+		if w == DesignW && h == DesignH {
+			continue // capped: exactly the design aspect by construction
+		}
+		// Below the cap the fit is maximal, so the aspect is exact to within
+		// one even-rounding step: the ideal counterpart dimension differs by
+		// less than 2 px on whichever axis was the binding constraint.
 		idealW := h * aspectW / aspectH
 		idealH := w * aspectH / aspectW
 		if !(idealW-w >= 0 && idealW-w < 2) && !(idealH-h >= 0 && idealH-h < 2) {
 			t.Errorf("fit(%d,%d): %dx%d strays from 9:16 (ideal w %d / ideal h %d)",
 				c.workW, c.workH, w, h, idealW, idealH)
 		}
+	}
+}
+
+func TestFitPortraitClientCapsAtDesignResolution(t *testing.T) {
+	// A 4K monitor (field report) holds 1080x1920 with room to spare: the fit
+	// must be EXACTLY the design resolution — never larger, which would only
+	// raise encode cost for pixels the phone downscales anyway.
+	cases := []struct{ workW, workH, dw, dh int }{
+		{3840, 2112, 22, 66}, // 4K, 48 px taskbar, scaled decorations
+		{3840, 2160, 16, 48}, // 4K, no taskbar
+		{2560, 2112, 16, 48}, // 1440p rotated-adjacent tall work area
+		{1096, 1968, 16, 48}, // exactly the design size + decorations
+		{10000, 10000, 0, 0}, // absurdly large: still capped
+	}
+	for _, c := range cases {
+		w, h, ok := FitPortraitClient(c.workW, c.workH, c.dw, c.dh)
+		if !ok || w != DesignW || h != DesignH {
+			t.Errorf("fit(%d,%d,%d,%d) = %dx%d ok=%v, want exactly %dx%d",
+				c.workW, c.workH, c.dw, c.dh, w, h, ok, DesignW, DesignH)
+		}
+	}
+	// One pixel short of holding the design window: the fit must shrink, not
+	// round up past the work area.
+	w, h, ok := FitPortraitClient(DesignW+16, DesignH+48-1, 16, 48)
+	if !ok {
+		t.Fatal("just-under-design work area must still fit")
+	}
+	if w == DesignW && h == DesignH {
+		t.Fatalf("got the design size from a work area that cannot hold it")
+	}
+	if h > DesignH-1 || w+16 > DesignW+16 {
+		t.Fatalf("%dx%d does not fit the just-under-design work area", w, h)
 	}
 }
 

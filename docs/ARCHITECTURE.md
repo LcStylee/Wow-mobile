@@ -34,11 +34,28 @@ UI rebuilt for portrait touch. Three components, one repo:
 clamps it, only the top ~1080 rows exist on the desktop, and capturing the
 off-screen remainder goes black. The default `--resolution fit` therefore
 sizes the actual window to the **largest 9:16 portrait client area that fits
-the primary monitor's work area** (e.g. `552x984` on a 1920x1080 monitor with
-a taskbar); every layout constant below stays expressed in 1080x1920 design
-pixels and scales down uniformly (`WM.Px`, the client's `DESIGN_WIDTH`). An
-explicit `--resolution WxH` is still honored, after a wizard sanity check
-against the monitor.
+the primary monitor's work area, capped at 1080x1920** (e.g. `552x984` on a
+1920x1080 monitor with a taskbar; exactly `1080x1920` on a monitor that can hold it (4K, portrait 1440p) —
+the phone renders the design size pixel-for-pixel, so a larger window would
+only raise encode cost with zero phone benefit); every layout constant below
+stays expressed in 1080x1920 design pixels and scales down uniformly
+(`WM.Px`, the client's `DESIGN_WIDTH`). An explicit `--resolution WxH` is
+still honored, after a wizard sanity check against the monitor.
+
+Capture additionally **self-heals to the window WoW actually opened**: before
+every ffmpeg launch the live client rect is compared to the configured
+resolution, and on a mismatch (Config.wtf overwritten because the game was
+running during setup, DPI virtualization, the client restoring its own rect)
+the encode adopts the real client area, the `hello` advertises that real
+geometry, and the mismatch is surfaced loudly on the log and the dashboard's
+warning row — a fixed crop of the assumed size is exactly the
+black-frames-while-clicks-work failure, and degraded-but-visible beats black.
+Input injection independently maps normalized coordinates onto the live
+client rect, and the client normalizes touches against the video element's
+live intrinsic dimensions (falling back to the `hello` geometry only before
+the first frame decodes), so touch stays accurate throughout — including
+across a mid-session self-heal to a new size, which changes the stream
+without a new `hello`.
 
 WoW runs **windowed** at the fitted resolution (set via `Config.wtf`:
 `SET gxWindowedResolution "<WxH>"`, or the server's `--setup` helper). The
@@ -137,7 +154,8 @@ the addon places inside the world square (target frame, buffs at the very
 top) must be tap/long-press operable only — and left-edge frames must end
 above the joystick's capture zone (bottom-left 45% of the square; budget
 comments in `Pet.lua`/`ActionBars.lua`). Consequence for the client: it
-computes the world-square rect from the `hello` video geometry after
+computes the world-square rect from the live video geometry (the element's
+intrinsic dimensions; the `hello` geometry until the first frame) after
 object-fit letterboxing (`square height = (worldViewportPx / 1080) × video
 content width, anchored top` — width times height fraction, since the hello
 carries no viewport field and the client's World viewport setting stands in

@@ -102,15 +102,11 @@ func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
 		return nil, fmt.Errorf("reading game window geometry: %w", err)
 	}
 	log.Info("found game window", "client_rect", fmt.Sprintf("%dx%d at (%d,%d)", rc.W, rc.H, rc.X, rc.Y))
-	if rc.W != cfg.Width || rc.H != cfg.Height {
-		// Accurate for every capture path: a size mismatch always lands on a
-		// gdigrab pipeline whose scale filter resizes to --resolution —
-		// ddagrabTarget refuses mismatched geometry precisely because the
-		// ddagrab graph has no scaler and would mis-crop instead of scaling.
-		log.Warn("game window client size differs from --resolution; the stream will be scaled via gdigrab (NVENC's zero-copy ddagrab path needs an exact match) and touch precision may suffer — fix Config.wtf (see --setup)",
-			"window", fmt.Sprintf("%dx%d", rc.W, rc.H),
-			"resolution", fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
-	}
+	// A client-size/--resolution mismatch is NOT warned about here: main's
+	// per-launch geometry check (capture.EncodeSize via plat.clientSize) owns
+	// that — it adapts the encode to the actual window, updates the hello
+	// geometry, and surfaces the mismatch once on the log and the dashboard
+	// warning row, staying accurate across mid-run resizes.
 
 	// The ddagrab decision is re-evaluated before every ffmpeg launch (crash
 	// recovery, bitrate/keyframe restarts), so a moved or resized window is
@@ -125,8 +121,15 @@ func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
 		newInjector: func() (input.Injector, error) {
 			return wininput.New(tracker, log), nil
 		},
-		captureRect: func() (*capture.Rect, int) {
-			crop, idx, reason := ddagrabTarget(tracker, cfg)
+		clientSize: func() (int, int, bool) {
+			rc, err := tracker.ClientRect()
+			if err != nil {
+				return 0, 0, false
+			}
+			return rc.W, rc.H, true
+		},
+		captureRect: func(encW, encH int) (*capture.Rect, int) {
+			crop, idx, reason := ddagrabTarget(tracker, encW, encH)
 			if reason != lastReason {
 				lastReason = reason
 				if reason == "" {
@@ -152,24 +155,29 @@ func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
 }
 
 // ddagrabTarget decides whether NVENC's zero-copy ddagrab path is usable for
-// the window's current geometry. On success it returns the crop rect in the
+// the window's current geometry against the encW x encH frame the encoder
+// will produce (already adapted to the live client rect by capture.EncodeSize
+// in main's argv callback, so a mismatched-but-even window still gets the
+// zero-copy path at its own size). On success it returns the crop rect in the
 // containing DXGI output's local coordinate space plus that output's ddagrab
 // output_idx and an empty reason; otherwise a human-readable reason for
 // taking the gdigrab fallback (crop is then nil).
-func ddagrabTarget(tracker *window.Tracker, cfg *config.Config) (crop *capture.Rect, outputIdx int, reason string) {
+func ddagrabTarget(tracker *window.Tracker, encW, encH int) (crop *capture.Rect, outputIdx int, reason string) {
 	rc, err := tracker.ClientRect()
 	if err != nil {
 		return nil, 0, "window geometry unavailable: " + err.Error()
 	}
 	// The ddagrab filter graph has no scaler — the crop IS the encoded frame
 	// (capture.Config.CaptureRect invariant) — so a client area that differs
-	// from --resolution must go through gdigrab, whose scale filter resizes
-	// to the advertised geometry. Cropping cfg.Width x cfg.Height here
-	// instead would frame desktop pixels around a smaller window, cut a
-	// larger one, or run past the monitor edge and fail outright.
-	if rc.W != cfg.Width || rc.H != cfg.Height {
-		return nil, 0, fmt.Sprintf("window client area %dx%d differs from --resolution %dx%d",
-			rc.W, rc.H, cfg.Width, cfg.Height)
+	// from the encode size (an odd-sized window even-floored by EncodeSize,
+	// or a resize since the argv snapshot) must go through gdigrab, whose
+	// scale filter resizes to the advertised geometry. Cropping encW x encH
+	// here instead would frame desktop pixels around a smaller window, cut a
+	// larger one, or run past the monitor edge and fail outright — the
+	// black-frames-with-working-clicks failure.
+	if rc.W != encW || rc.H != encH {
+		return nil, 0, fmt.Sprintf("window client area %dx%d differs from the %dx%d encode size",
+			rc.W, rc.H, encW, encH)
 	}
 	// Resolve the monitor output actually containing the window — on any
 	// monitor of the default adapter, primary or not — and translate to its

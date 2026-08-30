@@ -271,11 +271,20 @@ func (s *session) handleCtrl(raw []byte) {
 		first := !s.helloSeen
 		s.helloSeen = true
 		s.mu.Unlock()
+		// Advertise the geometry the encoder is actually producing, not the
+		// configured one: when WoW ignored the configured resolution the
+		// capture self-heals to the real window (capture.EncodeSize), and a
+		// hello claiming the configured size would make the phone letterbox
+		// and gesture-map against a frame that never arrives.
+		vw, vh := s.mgr.opts.VideoWidth, s.mgr.opts.VideoHeight
+		if s.mgr.opts.VideoGeometry != nil {
+			vw, vh = s.mgr.opts.VideoGeometry()
+		}
 		s.sendCtrl(ctrlHello{
 			T:      "hello",
 			Proto:  [2]int{protoMajor, protoMinor},
 			Server: serverName,
-			Video:  ctrlVideo{W: s.mgr.opts.VideoWidth, H: s.mgr.opts.VideoHeight, FPS: s.mgr.opts.FPS},
+			Video:  ctrlVideo{W: vw, H: vh, FPS: s.mgr.opts.FPS},
 		})
 		if first {
 			go s.statsLoop()

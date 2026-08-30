@@ -872,6 +872,95 @@ func TestResolutionFitComputedFromWorkArea(t *testing.T) {
 	}
 }
 
+// A 4K monitor (the field-reported hardware) holds the 1080x1920 design
+// window with room to spare: fit must yield EXACTLY the design resolution —
+// larger only raises encode cost with zero phone benefit — and the printout
+// must say the cap is deliberate.
+func TestResolutionFitCappedAtDesignOn4K(t *testing.T) {
+	wow := makeWowDir(t, false)
+	sys := &fakeSys{pathFFmpeg: "/usr/bin/ffmpeg", windowPresent: true,
+		workW: 3840, workH: 2112} // 4K with a 48 px taskbar
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
+	opts := baseOpts(t, wow, sys, p)
+	opts.ResolutionFit = true
+	opts.Width, opts.Height = 0, 0
+	out := opts.Out.(*bytes.Buffer)
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	if res.Width != 1080 || res.Height != 1920 {
+		t.Fatalf("4K fit = %dx%d, want exactly the 1080x1920 design cap", res.Width, res.Height)
+	}
+	if !strings.Contains(out.String(), "portrait window 1080x1920 (the design resolution — fits your 3840x2112 work area with room to spare)") {
+		t.Fatalf("capped fit not announced plainly:\n%s", out.String())
+	}
+	cfg, err := os.ReadFile(filepath.Join(wow, "WTF", "Config.wtf"))
+	if err != nil || !SettingsSatisfied(cfg, PortraitSettings(1080, 1920)) {
+		t.Fatalf("Config.wtf not written with the capped resolution: %q err=%v", cfg, err)
+	}
+}
+
+// DPI-scaled decorations: WindowDecorationExtents answers for the monitor's
+// CURRENT DPI (AdjustWindowRectExForDpi — see sys_windows.go), so on a
+// 125-150%-scaled display the frame is ~20x60 to ~24x72, not the 100%-scale
+// 16x48. The fitted client area plus those REAL extents must still sit inside
+// the work area — an under-measured frame is exactly the silent
+// deck-rows-behind-the-taskbar bug (the client area still matches the
+// configured size, so no mismatch warning ever fires).
+func TestResolutionFitScaledDecorationsStayInsideWorkArea(t *testing.T) {
+	cases := []struct {
+		name                         string
+		workW, workH, decorW, decorH int
+	}{
+		{"1080p laptop at 150%", 1920, 1032, 24, 72},
+		{"1440p at 125%", 2560, 1380, 20, 60},
+		{"4K at 150% (mid-session scale change)", 3840, 2088, 24, 72},
+	}
+	for _, tc := range cases {
+		sys := &fakeSys{workW: tc.workW, workH: tc.workH, decorW: tc.decorW, decorH: tc.decorH}
+		p := &scriptPrompter{t: t}
+		opts := baseOpts(t, "", sys, p)
+		opts.ResolutionFit = true
+		opts.Width, opts.Height = 0, 0
+		if err := resolveResolution(&opts); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if opts.Width <= 0 || opts.Height <= 0 {
+			t.Fatalf("%s: no resolution resolved", tc.name)
+		}
+		if opts.Width+tc.decorW > tc.workW || opts.Height+tc.decorH > tc.workH {
+			t.Errorf("%s: fitted client %dx%d + real frame %dx%d overshoots the %dx%d work area (taskbar overlap)",
+				tc.name, opts.Width, opts.Height, tc.decorW, tc.decorH, tc.workW, tc.workH)
+		}
+	}
+}
+
+// Declining to keep an oversized explicit resolution when NO fitting
+// alternative exists keeps the value out of necessity — and must say so
+// honestly instead of claiming the user "confirmed" what they declined.
+func TestResolutionExplicitOversizedDeclineNoAlternative(t *testing.T) {
+	sys := &fakeSys{workW: 300, workH: 400}             // too small for even a 270x480 fit
+	p := &scriptPrompter{t: t, confirms: []bool{false}} // keep it anyway? -> no
+	opts := baseOpts(t, "", sys, p)
+	out := opts.Out.(*bytes.Buffer)
+
+	if err := resolveResolution(&opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Width != 1080 || opts.Height != 1920 {
+		t.Fatalf("with no alternative the explicit value must stand, got %dx%d", opts.Width, opts.Height)
+	}
+	text := out.String()
+	if !strings.Contains(text, "no fitting portrait window exists for this monitor; keeping --resolution 1080x1920 — expect a cut-off window") {
+		t.Fatalf("declined keep without an alternative must be reported honestly:\n%s", text)
+	}
+	if strings.Contains(text, "as confirmed") {
+		t.Fatalf("nothing was confirmed — the message must not claim it was:\n%s", text)
+	}
+}
+
 // An explicit --resolution that cannot fit the monitor warns loudly, names
 // the fitted alternative, and — on a declined keep — switches to it.
 func TestResolutionExplicitOversizedSwitchesOnDecline(t *testing.T) {

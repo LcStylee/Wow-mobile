@@ -214,6 +214,13 @@ var (
 	sysUser32                 = windows.NewLazySystemDLL("user32.dll")
 	procSystemParametersInfoW = sysUser32.NewProc("SystemParametersInfoW")
 	procAdjustWindowRectEx    = sysUser32.NewProc("AdjustWindowRectEx")
+	// DPI-correct decoration measurement (Win10 1607+; Find()-guarded).
+	procAdjustWindowRectExForDpi = sysUser32.NewProc("AdjustWindowRectExForDpi")
+	procGetDpiForSystem          = sysUser32.NewProc("GetDpiForSystem")
+	procMonitorFromPoint         = sysUser32.NewProc("MonitorFromPoint")
+
+	sysShcore            = windows.NewLazySystemDLL("shcore.dll")
+	procGetDpiForMonitor = sysShcore.NewProc("GetDpiForMonitor")
 )
 
 // winRect mirrors the Win32 RECT (left, top, right, bottom).
@@ -222,9 +229,12 @@ type winRect struct{ left, top, right, bottom int32 }
 const (
 	spiGetWorkArea = 0x0030 // SPI_GETWORKAREA
 	// WS_OVERLAPPEDWINDOW: the caption + thick-frame style a windowed
-	// (gxWindow=1, gxMaximize=0) WoW gets, so AdjustWindowRectEx measures the
-	// decorations of the actual window being fitted.
+	// (gxWindow=1, gxMaximize=0) WoW gets, so AdjustWindowRectEx(ForDpi)
+	// measures the decorations of the actual window being fitted.
 	wsOverlappedWindow = 0x00CF0000
+
+	monitorDefaultToPrimary = 0x1 // MONITOR_DEFAULTTOPRIMARY
+	mdtEffectiveDPI         = 0   // MDT_EFFECTIVE_DPI
 )
 
 // PrimaryWorkArea measures the primary monitor's work area — the desktop
@@ -248,18 +258,66 @@ func (winSystem) PrimaryWorkArea() (int, int, bool) {
 
 // WindowDecorationExtents measures how much width/height the window frame
 // (borders + title bar) adds around a client area for WoW's windowed style,
-// via AdjustWindowRectEx on an empty rect. If the call fails, the documented
-// conservative fallback margins apply — erring a few pixels large only makes
-// the fitted window marginally smaller, never non-fitting.
+// by adjusting an empty rect: the adjusted rect IS the decoration.
+//
+// This process is per-monitor-DPI-aware (manifest + makeProcessDPIAware), and
+// in that mode plain AdjustWindowRectEx does NOT scale to the monitor's
+// current DPI — it answers for 96 dpi (at best the session-start system DPI),
+// under-measuring the frame by ~10-25 px vertically on the 125-150%-scaled
+// displays that are the 1080p/1440p-laptop norm. An under-measured frame
+// makes the height-limited fit pick a client area whose real outer rect
+// overshoots the work area: the deck's bottom rows land behind the taskbar —
+// silently, since the client area still matches the configured size. So the
+// primary monitor's current effective DPI is fed to AdjustWindowRectExForDpi
+// (Win10 1607+ — exactly why Microsoft added it); only where that API or the
+// DPI query is unavailable does plain AdjustWindowRectEx answer. If every
+// call fails, the documented conservative fallback margins apply — erring a
+// few pixels large only makes the fitted window marginally smaller, never
+// non-fitting.
 func (winSystem) WindowDecorationExtents() (int, int) {
 	var rc winRect // zero client rect: the adjusted rect IS the decoration
-	ret, _, _ := procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rc)), wsOverlappedWindow, 0, 0)
+	var ret uintptr
+	if dpi, ok := primaryMonitorDPI(); ok && procAdjustWindowRectExForDpi.Find() == nil {
+		ret, _, _ = procAdjustWindowRectExForDpi.Call(
+			uintptr(unsafe.Pointer(&rc)), wsOverlappedWindow, 0, 0, uintptr(dpi))
+	} else {
+		ret, _, _ = procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&rc)), wsOverlappedWindow, 0, 0)
+	}
 	dw := int(rc.right - rc.left)
 	dh := int(rc.bottom - rc.top)
+	// Plausibility bounds sized for real DPI scaling: 300% (the Windows
+	// maximum preset) puts the frame around 48x144, far inside 200x300.
 	if ret == 0 || dw <= 0 || dh <= 0 || dw > 200 || dh > 300 {
 		// Failure or an implausible measurement: conservative documented
 		// margins (8 px borders each side, 32 px title bar + borders).
 		return window.FallbackDecorationW, window.FallbackDecorationH
 	}
 	return dw, dh
+}
+
+// primaryMonitorDPI returns the primary monitor's CURRENT effective DPI:
+// GetDpiForMonitor(MonitorFromPoint({0,0})) first — it tracks mid-session
+// display-scale changes and mixed-DPI setups — then GetDpiForSystem as a
+// lesser fallback (session-start system DPI). ok is false when neither API
+// exists (pre-1607), and the caller stays on plain AdjustWindowRectEx.
+func primaryMonitorDPI() (uint32, bool) {
+	if procMonitorFromPoint.Find() == nil && procGetDpiForMonitor.Find() == nil {
+		// POINT{0,0} is 8 bytes, passed by value in one register/slot — the
+		// primary monitor's origin by definition; the flag is belt and braces.
+		hmon, _, _ := procMonitorFromPoint.Call(0, monitorDefaultToPrimary)
+		if hmon != 0 {
+			var dpiX, dpiY uint32
+			hr, _, _ := procGetDpiForMonitor.Call(hmon, mdtEffectiveDPI,
+				uintptr(unsafe.Pointer(&dpiX)), uintptr(unsafe.Pointer(&dpiY)))
+			if hr == 0 && dpiY != 0 { // S_OK
+				return dpiY, true
+			}
+		}
+	}
+	if procGetDpiForSystem.Find() == nil {
+		if dpi, _, _ := procGetDpiForSystem.Call(); dpi != 0 {
+			return uint32(dpi), true
+		}
+	}
+	return 0, false
 }

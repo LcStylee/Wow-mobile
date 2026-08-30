@@ -64,6 +64,7 @@ type Status struct {
 	resolution string // decided capture resolution "WxH" (monitor-fitted or explicit)
 	clientType string
 	addonNote  string
+	warning    string // loud misconfiguration banner (e.g. window/resolution mismatch); "" = none
 	pairingURL string
 	running    bool // serving (the wizard finished and the listener is up)
 	phone      Phone
@@ -146,6 +147,19 @@ func (s *Status) SetAddonNote(note string) {
 	s.addonNote = note
 }
 
+// SetWarning sets (or, with "", clears) the dashboard's warning row — the
+// loud surface for a live misconfiguration the stream is working around,
+// e.g. "WoW window is 1080x1040 but 1080x1920 is configured". Distinct from
+// a failed step: the host keeps running, degraded but visible.
+func (s *Status) SetWarning(msg string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warning = msg
+}
+
 // SetPairingURL records the phone pairing URL (token included). The /host
 // routes that expose it are loopback-only — see signal.LoopbackOnly.
 func (s *Status) SetPairingURL(url string) {
@@ -218,6 +232,7 @@ type snapshot struct {
 	Resolution string `json:"resolution"`
 	ClientType string `json:"clientType"`
 	AddonNote  string `json:"addonNote"`
+	Warning    string `json:"warning"`
 	PairingURL string `json:"pairingUrl"`
 	Phone      Phone  `json:"phone"`
 	Stream     Stream `json:"stream"`
@@ -237,6 +252,7 @@ func (s *Status) JSON() []byte {
 		Resolution: s.resolution,
 		ClientType: s.clientType,
 		AddonNote:  s.addonNote,
+		Warning:    s.warning,
 		PairingURL: s.pairingURL,
 		Phone:      s.phone,
 	}

@@ -331,6 +331,30 @@ func TestAnnexBAttachesCachedSPSPPSToBareKeyframes(t *testing.T) {
 	}
 }
 
+// A keyframe carrying only ONE of its parameter sets in-band still gets BOTH
+// cached sets prepended, keeping the prefix in SPS-then-PPS order for every
+// combination — prepending only the missing PPS ahead of an in-band SPS would
+// invert the documented order. The duplicated set is legal and harmless.
+func TestAnnexBKeyframeWithOneInBandSetGetsBothCached(t *testing.T) {
+	c := &collector{}
+	p := NewAnnexBParser(c.collect)
+
+	// AU0 primes the cache; AU1 has an in-band SPS but no PPS; AU2 has an
+	// in-band PPS but no SPS.
+	p.Write(stream(sps, pps, idrSlice0, sps, idrSlice0, pps, idrSlice0))
+	p.Flush()
+
+	if len(c.aus) != 3 {
+		t.Fatalf("got %d access units, want 3", len(c.aus))
+	}
+	if !bytes.Equal(c.aus[1].Data, stream(sps, pps, sps, idrSlice0)) {
+		t.Errorf("SPS-only IDR = % x\nwant cached SPS+PPS first, then the in-band SPS", c.aus[1].Data)
+	}
+	if !bytes.Equal(c.aus[2].Data, stream(sps, pps, pps, idrSlice0)) {
+		t.Errorf("PPS-only IDR = % x\nwant cached SPS+PPS first, then the in-band PPS", c.aus[2].Data)
+	}
+}
+
 // A NEWER SPS/PPS pair replaces the cache (bitrate restarts re-emit possibly
 // different sets), and a keyframe before any SPS/PPS ever appeared is passed
 // through unmodified rather than prefixed with nothing.

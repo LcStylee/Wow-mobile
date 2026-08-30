@@ -29,7 +29,7 @@ export class TouchLayer {
   #sender;
   #settings;
   #joystick;
-  #capture = null; // {w,h} from the server hello (authoritative geometry)
+  #capture = null; // {w,h} from the server hello (pre-first-frame fallback)
   #geom = null; // cached mapping; invalidated on any layout change
   #pointers = new Map(); // pointerId -> gesture record
   #pinch = null; // {ids:[a,b], refDist}
@@ -85,8 +85,13 @@ export class TouchLayer {
 
   #geometry() {
     if (this.#geom) return this.#geom;
-    const vw = this.#capture?.w ?? this.#video.videoWidth;
-    const vh = this.#capture?.h ?? this.#video.videoHeight;
+    // The element's intrinsic dimensions win once frames decode: a capture
+    // self-heal restart can adopt a NEW client rect mid-session without a new
+    // hello, and only videoWidth/Height track it (the video 'resize' listener
+    // invalidates this cache when they change). The hello snapshot bridges
+    // just the pre-first-frame window, when the intrinsics still read 0.
+    const vw = this.#video.videoWidth || this.#capture?.w;
+    const vh = this.#video.videoHeight || this.#capture?.h;
     if (!vw || !vh) return null; // no frame yet — nothing to map onto
     // The layer is positioned exactly over the video element, so its own box
     // is the video box.

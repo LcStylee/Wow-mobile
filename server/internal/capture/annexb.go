@@ -205,19 +205,18 @@ func prefixStartsNewAU(prefix []byte) (startsNew, decided bool) {
 func (p *AnnexBParser) emit() {
 	data := p.au
 	// SPS/PPS ride with EVERY keyframe access unit (see the cache fields):
-	// a keyframe missing either set gets the cached copies prepended, in
-	// SPS-then-PPS order, so any IDR is decodable by a fresh joiner. Non-IDR
-	// units are never touched.
+	// a keyframe missing either set gets BOTH cached copies prepended, in
+	// SPS-then-PPS order, so any IDR is decodable by a fresh joiner. Both,
+	// unconditionally, so the order holds even for an AU carrying one set
+	// in-band (only cached-PPS before an in-band SPS would invert it) — a
+	// duplicated parameter set is legal and cheap, decoders just re-register
+	// it in the ID table. Non-IDR units are never touched.
 	if p.auIsIDR && (!p.auHasSPS || !p.auHasPPS) && len(p.spsCache) > 0 && len(p.ppsCache) > 0 {
 		pre := p.prefixed[:0]
-		if !p.auHasSPS {
-			pre = append(pre, 0, 0, 0, 1)
-			pre = append(pre, p.spsCache...)
-		}
-		if !p.auHasPPS {
-			pre = append(pre, 0, 0, 0, 1)
-			pre = append(pre, p.ppsCache...)
-		}
+		pre = append(pre, 0, 0, 0, 1)
+		pre = append(pre, p.spsCache...)
+		pre = append(pre, 0, 0, 0, 1)
+		pre = append(pre, p.ppsCache...)
 		pre = append(pre, p.au...)
 		p.prefixed = pre
 		data = pre

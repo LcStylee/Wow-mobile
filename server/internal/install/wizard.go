@@ -289,10 +289,12 @@ func stepLine(out io.Writer, n int, label, result string) {
 //
 // --resolution fit (the default): measure the primary monitor's work area,
 // subtract the window decoration extents, and take the largest 9:16 portrait
-// client area that fits (window.FitPortraitClient) — a 1080x1920 design
-// window cannot fit a landscape 1920x1080 monitor: Windows clamps it, the
-// user sees only the top rows, and desktop-region capture of the off-screen
-// remainder goes black. The computed WxH is printed plainly, mirrored to the
+// client area that fits, capped at the 1080x1920 design size
+// (window.FitPortraitClient) — a 1080x1920 design window cannot fit a
+// landscape 1920x1080 monitor: Windows clamps it, the user sees only the top
+// rows, and desktop-region capture of the off-screen remainder goes black;
+// while a 1440p/4K monitor that holds the design window gets exactly it,
+// never larger. The computed WxH is printed plainly, mirrored to the
 // dashboard, and persisted (KeyResolution) so every consumer — Config.wtf,
 // the capture pipeline, the hello geometry — agrees on one number.
 //
@@ -336,7 +338,15 @@ func resolveResolution(opts *Options) error {
 			return err
 		}
 		if keep || !fitOK {
-			fmt.Fprintf(opts.Out, "  keeping --resolution %dx%d as confirmed\n", opts.Width, opts.Height)
+			if keep {
+				fmt.Fprintf(opts.Out, "  keeping --resolution %dx%d as confirmed\n", opts.Width, opts.Height)
+			} else {
+				// Declined, but there is nothing to switch to: be honest that
+				// the user's No could not be honored, never claim confirmation.
+				fmt.Fprintf(opts.Out,
+					"  no fitting portrait window exists for this monitor; keeping --resolution %dx%d — expect a cut-off window\n",
+					opts.Width, opts.Height)
+			}
 			opts.Status.SetResolution(fmt.Sprintf("%dx%d", opts.Width, opts.Height))
 			return nil
 		}
@@ -365,9 +375,9 @@ func resolveResolution(opts *Options) error {
 		opts.Status.SetResolution(fmt.Sprintf("%dx%d", w, h))
 		return nil
 	}
-	opts.Width, opts.Height = 1080, 1920
+	opts.Width, opts.Height = window.DesignW, window.DesignH
 	fmt.Fprintln(opts.Out, "using the 1080x1920 design resolution (monitor work area not measurable; pass --resolution WxH if the window does not fit)")
-	opts.Status.SetResolution("1080x1920")
+	opts.Status.SetResolution(fmt.Sprintf("%dx%d", window.DesignW, window.DesignH))
 	return nil
 }
 

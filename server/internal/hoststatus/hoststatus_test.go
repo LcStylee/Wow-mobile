@@ -18,6 +18,7 @@ func TestJSONShape(t *testing.T) {
 	s.SetEncoder("h264_nvenc")
 	s.SetResolution("590x1048")
 	s.SetClientType("classicEra")
+	s.SetWarning("WoW window is 1080x1040 but 1080x1920 is configured")
 	s.SetPairingURL("https://192.168.1.20:8443/?token=abc")
 	s.SetRunning(true)
 	s.SetPhoneInfo("192.168.1.30:51234", "Safari")
@@ -35,6 +36,7 @@ func TestJSONShape(t *testing.T) {
 		Resolution string `json:"resolution"`
 		ClientType string `json:"clientType"`
 		AddonNote  string `json:"addonNote"`
+		Warning    string `json:"warning"`
 		PairingURL string `json:"pairingUrl"`
 		Phone      Phone  `json:"phone"`
 		Stream     Stream `json:"stream"`
@@ -43,7 +45,8 @@ func TestJSONShape(t *testing.T) {
 		t.Fatalf("status JSON invalid: %v", err)
 	}
 	if got.Version != "v1.2.3" || !got.Running || got.Encoder != "h264_nvenc" ||
-		got.Resolution != "590x1048" || got.ClientType != "classicEra" {
+		got.Resolution != "590x1048" || got.ClientType != "classicEra" ||
+		got.Warning != "WoW window is 1080x1040 but 1080x1920 is configured" {
 		t.Fatalf("scalar fields wrong: %+v", got)
 	}
 	if len(got.Steps) != 2 || got.Steps[0].ID != "game" || got.Steps[0].State != StateOK ||
@@ -89,6 +92,7 @@ func TestNilReceiverSafe(t *testing.T) {
 	s.SetResolution("1080x1920")
 	s.SetClientType("legacy")
 	s.SetAddonNote("n")
+	s.SetWarning("w")
 	s.SetPairingURL("u")
 	s.SetRunning(true)
 	s.SetPhoneInfo("r", "ua")
