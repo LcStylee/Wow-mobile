@@ -23,6 +23,17 @@ const (
 	EncoderX264  = "x264"
 )
 
+// Capture sources accepted by --capture. CaptureWindow is the production mode
+// (the game window, Windows-only). CaptureTest is a first-class portable
+// diagnostic mode: ffmpeg's testsrc2 synthetic pattern is pushed through the
+// SAME encoder flags, Annex-B parser, and WebRTC sample path as production, so
+// the whole delivery pipeline can be exercised (and e2e-tested) on any OS
+// without a game or a GPU.
+const (
+	CaptureWindow = "window"
+	CaptureTest   = "test"
+)
+
 // ResolutionFit is the --resolution value (and default) that sizes the
 // window to the largest 9:16 portrait client area fitting the primary
 // monitor's work area. A 1080x1920 design window cannot physically fit a
@@ -49,6 +60,8 @@ type Config struct {
 	FPS             int
 	BitrateKbps     int
 	Encoder         string // one of the Encoder* constants
+	Capture         string // CaptureWindow (production) or CaptureTest (synthetic test pattern)
+	PortFile        string // --port-file: write the bound TCP port here after listen (test harnesses)
 	WindowTitle     string
 	ClientDir       string // as given on the command line; resolved by the signal server
 	NoTLS           bool
@@ -78,6 +91,8 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.IntVar(&cfg.FPS, "fps", 60, "capture/encode frame rate")
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")
+	fs.StringVar(&cfg.Capture, "capture", CaptureWindow, "capture source: \"window\" streams the game window (production); \"test\" streams ffmpeg's testsrc2 synthetic pattern through the identical encode/parse/WebRTC path — works on any OS, needs no game (the setup wizard is skipped), for verifying the video pipeline end to end")
+	fs.StringVar(&cfg.PortFile, "port-file", "", "write the actually bound TCP port to this file once listening (useful with --addr :0 in test harnesses)")
 	fs.StringVar(&cfg.WindowTitle, "window-title", "World of Warcraft", "substring of the game window title to capture")
 	fs.StringVar(&cfg.ClientDir, "client-dir", "", "serve the phone client PWA from this disk directory instead of the copy embedded in the binary (development)")
 	fs.BoolVar(&cfg.NoTLS, "no-tls", false, "serve plain HTTP instead of HTTPS with a self-signed certificate")
@@ -128,6 +143,11 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	case EncoderAuto, EncoderNVENC, EncoderAMF, EncoderQSV, EncoderX264:
 	default:
 		return nil, fmt.Errorf("--encoder %q: must be auto|nvenc|amf|qsv|x264", cfg.Encoder)
+	}
+	switch cfg.Capture {
+	case CaptureWindow, CaptureTest:
+	default:
+		return nil, fmt.Errorf("--capture %q: must be window|test", cfg.Capture)
 	}
 	if cfg.WindowTitle == "" {
 		return nil, fmt.Errorf("--window-title must not be empty")

@@ -63,6 +63,17 @@
     warning.hidden = !st.warning;
     warning.textContent = st.warning || "";
 
+    // Live capture-health banner: the running capture yields no frames;
+    // carries ffmpeg's stderr tail so the black stream explains itself.
+    const capWarning = $("capture-warning");
+    capWarning.hidden = !st.captureWarning;
+    capWarning.textContent = st.captureWarning || "";
+
+    // Startup pipeline self-check verdict.
+    const selfCheck = $("self-check");
+    selfCheck.textContent = st.selfCheck || "checking…";
+    selfCheck.classList.toggle("bad", Boolean(st.selfCheck) && !st.selfCheckOk);
+
     const note = $("addon-note");
     note.hidden = !st.addonNote;
     note.textContent = st.addonNote || "";

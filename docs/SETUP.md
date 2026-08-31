@@ -102,7 +102,10 @@ portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 wor
 3. **Sets the portrait window** in `<game>\WTF\Config.wtf`
    (`SET gxWindow "1"`, `SET gxMaximize "0"`, and
    `SET gxWindowedResolution "<WxH>"` — 1.12 clients get `SET gxResolution`
-   instead), after writing a `Config.wtf.bak` backup and preserving every
+   **and** `SET gxWindowedResolution`, though windowed 1.12 ignores both: the
+   app resizes the window directly after launch, see
+   [Private servers](#private-servers-112-clients)), after writing a
+   `Config.wtf.bak` backup and preserving every
    other line. The resolution follows `--resolution`, whose default `fit`
    measures your primary monitor and picks the **largest 9:16 portrait
    window that actually fits it, capped at 1080x1920** (a fixed 1080x1920
@@ -126,6 +129,11 @@ portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 wor
    needed). On completion setup continues automatically.
 5. **Checks the game is running** — if no window matches `--window-title`, it
    offers to launch the recorded game executable and waits while you log in.
+   Once the window exists, a windowed (non-maximized, non-fullscreen) game
+   whose client area differs from the decided resolution is **resized
+   directly** to it (`SetWindowPos`; re-verified, one retry) — CVars alone
+   cannot size a windowed 1.12 client. The outcome is reported on the step
+   line and the dashboard.
 
 Every prompt has a default; `--yes` accepts all defaults non-interactively,
 and `--skip-setup` skips the wizard entirely (the pre-wizard behavior). When
@@ -150,8 +158,14 @@ status page, served only to the PC itself — other devices on the network get
 - the **setup checklist** with live states,
 - a **large QR code** of the pairing URL plus the URL itself with a **Copy**
   button,
-- live status: chosen encoder, phone connected (with its address and browser),
-  and stream stats (kbps / fps / encode ms) while a phone is streaming,
+- live status: chosen encoder, the **Pipeline** self-check verdict ("video
+  pipeline OK (N frames)" from a ~2 s test-pattern encode at startup, or the
+  ffmpeg error explaining why encoding cannot work on this machine), phone
+  connected (with its address and browser), and stream stats
+  (kbps / fps / encode ms) while a phone is streaming,
+- **warning rows** that make a black stream explain itself: a
+  window/resolution mismatch, and — whenever a running capture delivers zero
+  frames for 5 s — ffmpeg's own last words (its stderr tail),
 - a **Quit** button (graceful shutdown, same as the tray menu / Ctrl+C).
 
 The page reuses the self-signed certificate, so your browser shows the usual
@@ -185,10 +199,27 @@ WoW Mobile also hosts 1.12-era private-server clients (launched through
   the wizard ask ("Is this a Classic Era (1.15) client?"). Under `--yes` it
   does **not** guess — it assumes Classic Era only when `_classic_era_`
   appears in the path, otherwise a 1.12 client, and logs the choice.
-- **Config.wtf:** 1.12 clients predate `gxWindowedResolution`, so the wizard
-  writes the era-correct `SET gxResolution "1080x1920"` (plus
-  `gxWindow`/`gxMaximize`), with the same backup and never-while-running
-  rules.
+- **Config.wtf / window size — honest limits:** on a **windowed** 1.12 client
+  `gxResolution` governs **fullscreen mode only**: the window opens at the
+  client's own remembered/default size (800x600 out of the box) and ignores
+  the CVar entirely (field-verified — a clean `SET gxResolution "1080x1920"`
+  still produced an 800x600 window). The wizard writes **both**
+  `SET gxResolution` **and** `SET gxWindowedResolution` (belt and braces —
+  some patched/custom builds honor one or the other, and unknown CVars are
+  harmlessly kept), with the same backup and never-while-running rules — but
+  the mechanism that actually sizes the window is the next one:
+- **The app resizes the window itself after launch:** once the game window is
+  found (wizard step 5, and again before every capture start), a plain
+  windowed (non-maximized, non-fullscreen) WoW whose client area differs from
+  the decided resolution is resized directly (`SetWindowPos`, frame computed
+  for its actual style and DPI, kept on the monitor's work area), then
+  re-verified — with one retry for clients that re-assert their size once.
+  This works on **every** windowed client — 1.12, Era, custom — independent
+  of any CVar. Success is reported as "resized WoW window to WxH" (log +
+  dashboard); if the game keeps reverting, that is reported honestly and the
+  stream simply adapts to the actual window size instead (degraded but
+  correct). Fullscreen/maximized windows are never touched — switch the game
+  to windowed mode (the dashboard warning row says so).
 - **A dedicated 1.12 addon is installed:** the Classic Era addon targets the
   1.15 API (Interface `11507`, `C_GossipInfo`, …) and cannot load on 1.12, so
   the wizard installs `WowMobile_Vanilla` — the 1.12 (Lua 5.0, Interface
@@ -239,7 +270,19 @@ Scan to pair:
    remembered on the phone; the pairing screen only reappears if the token
    changes (it's random per server run unless you pin `--token` — with a
    pinned token the installed app never asks again). If you do land on the
-   token screen, the big **Paste token** button reads it from the clipboard.
+   token screen, three affordances cover every situation: the big **Paste
+   token** button reads the clipboard, **Scan QR** opens an in-app camera
+   scanner (rear camera; accepts the pairing QR from the dashboard or the
+   terminal — works in the installed app too), and the token field itself.
+
+With a saved pairing the app **auto-connects on launch** and shows live
+progress ("Connecting to 192.168.1.20:8443… failed: server unreachable …")
+with **Retry / Scan QR / Edit token** buttons — the specific reason is named
+(server unreachable, token rejected, TLS certificate not yet accepted, stream
+failure), and a saved token is only forgotten when the server explicitly
+rejects it. The settings sheet shows the client build version (so does the
+connect screen), and the served app updates itself on every server release —
+a stale cached client is diagnosable and self-healing.
 
 Video starts muted (browser autoplay rules). If you ran with `--audio`, tap
 **Snd off** in the HUD to unmute.

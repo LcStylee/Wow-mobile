@@ -151,7 +151,47 @@ func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
 			}
 			return cfg.WindowTitle
 		},
+		enforceWindowSize: newWindowSizeEnforcer(tracker, log),
 	}, nil
+}
+
+// newWindowSizeEnforcer wraps Tracker.EnforceClientSize with attempt
+// limiting: a resize is (re-)attempted only when the (target, actual window)
+// pair changed since the last attempt — so per-ffmpeg-launch calls are free,
+// a game that re-asserts its size is fought exactly the once-plus-retry that
+// EnforceClientSize itself performs, and a user manually resizing the window
+// later re-arms enforcement naturally. Not concurrency-safe by design: the
+// sole callers are main's startup path and the video supervisor's argv
+// callback, which never run concurrently (Supervisor.Start happens after
+// startup completes).
+func newWindowSizeEnforcer(tracker *window.Tracker, log *slog.Logger) func(int, int) (string, window.EnforceOutcome, bool) {
+	type sig struct{ wantW, wantH, actualW, actualH int }
+	var lastAttempt *sig
+	return func(wantW, wantH int) (string, window.EnforceOutcome, bool) {
+		rc, err := tracker.ClientRect()
+		if err != nil {
+			return "", window.EnforceAlready, false // no window: the capture path reports that itself
+		}
+		if window.SizeMatches(rc.W, rc.H, wantW, wantH) {
+			lastAttempt = nil // healthy; re-arm for any future drift
+			return "", window.EnforceAlready, false
+		}
+		cur := sig{wantW, wantH, rc.W, rc.H}
+		if lastAttempt != nil && *lastAttempt == cur {
+			return "", window.EnforceAlready, false // same situation we already tried; don't fight
+		}
+		lastAttempt = &cur
+		res := tracker.EnforceClientSize(wantW, wantH)
+		log.Info("direct window resize attempted",
+			"want", fmt.Sprintf("%dx%d", wantW, wantH),
+			"outcome", res.Outcome.String(), "result", res.Message)
+		// Record the post-attempt actual size so a reverting game does not
+		// get re-fought on the next launch (its revert changed rc).
+		if w, h := res.FinalW, res.FinalH; w > 0 && h > 0 {
+			lastAttempt.actualW, lastAttempt.actualH = w, h
+		}
+		return res.Message, res.Outcome, true
+	}
 }
 
 // ddagrabTarget decides whether NVENC's zero-copy ddagrab path is usable for

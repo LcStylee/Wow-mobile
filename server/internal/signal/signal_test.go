@@ -185,7 +185,7 @@ func manifestServer(t *testing.T) *Server {
 		"index.html":           &fstest.MapFile{Data: []byte("hi")},
 		"manifest.webmanifest": &fstest.MapFile{Data: []byte(testManifestJSON)},
 	}
-	return New(":0", "sekrit-token", true, client, "", nil, testLogger())
+	return New(":0", "sekrit-token", true, client, "", "v-test", nil, testLogger())
 }
 
 func getManifest(t *testing.T, s *Server, query string) *httptest.ResponseRecorder {

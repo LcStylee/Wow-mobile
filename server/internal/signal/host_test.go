@@ -20,7 +20,7 @@ func hostTestMux(t *testing.T, quit func()) (*http.ServeMux, *hoststatus.Status)
 	t.Helper()
 	status := hoststatus.New("v-test", hoststatus.Step{ID: "game", Label: "World of Warcraft"})
 	status.SetPairingURL("https://192.168.1.20:8443/?token=deadbeef")
-	s := New(":0", "tok", false, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>dash</html>")}}, "", nil, testLogger())
+	s := New(":0", "tok", false, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>dash</html>")}}, "", "v-test", nil, testLogger())
 	s.EnableHostUI(HostUI{
 		FS:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>dash</html>")}},
 		Status: status,

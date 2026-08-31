@@ -204,6 +204,18 @@ func (winSystem) GameWindowPresent(titleSubstr string) bool {
 	return err == nil
 }
 
+func (winSystem) EnforceGameWindowSize(titleSubstr string, w, h int) (string, bool) {
+	tracker, err := window.NewTracker(titleSubstr)
+	if err != nil {
+		return "", false // no window: the game-running step handles that
+	}
+	res := tracker.EnforceClientSize(w, h)
+	if res.Outcome == window.EnforceAlready {
+		return "", false // nothing to report; the window is already right
+	}
+	return res.Message, true
+}
+
 func (winSystem) LaunchGame(exePath string) error {
 	cmd := exec.Command(exePath)
 	cmd.Dir = filepath.Dir(exePath)

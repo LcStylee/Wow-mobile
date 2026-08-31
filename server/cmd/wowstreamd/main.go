@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -93,6 +94,35 @@ type platform struct {
 	// FindWindow-based `title=` input (the --window-title flag is only a
 	// substring). Also called before every ffmpeg launch.
 	windowTitle func() string
+	// enforceWindowSize (optional; Windows window capture only) resizes the
+	// game window's client area to the configured resolution when it is a
+	// plain windowed (non-maximized, non-fullscreen) window of a different
+	// size — windowed 1.12 clients ignore the gxResolution CVar entirely, so
+	// SetWindowPos is the only tool that works on every client. Called before
+	// each ffmpeg launch; the implementation self-limits (it never re-attempts
+	// while the window and target are unchanged, so a client that re-asserts
+	// its size is fought at most twice, then adapted to). Returns a
+	// human-readable outcome message, the classified outcome (so the caller
+	// can map it to an honest dashboard step state), and whether an attempt
+	// was made.
+	enforceWindowSize func(wantW, wantH int) (msg string, outcome window.EnforceOutcome, acted bool)
+}
+
+// enforceStepState maps a window-resize outcome to the dashboard step state
+// shown next to its message on the "Game running" step: green ONLY when the
+// window really has (or already had) the wanted client size. Skips
+// (fullscreen/maximized/minimized — deliberately not touched) render as
+// skipped; a game that re-asserted its own size and outright Win32 failures
+// render as failed — an ok-state step must never carry a failure message.
+func enforceStepState(o window.EnforceOutcome) string {
+	switch o {
+	case window.EnforceResized, window.EnforceAlready:
+		return hoststatus.StateOK
+	case window.EnforceSkipFullscreen, window.EnforceSkipMaximized, window.EnforceSkipMinimized:
+		return hoststatus.StateSkipped
+	default: // EnforceReverted, EnforceFailed
+		return hoststatus.StateFailed
+	}
 }
 
 func main() {
@@ -140,9 +170,14 @@ func run(ui *appUI) error {
 	// server client), install the embedded addon where it works, fix
 	// Config.wtf, find/install ffmpeg, make sure the game is running.
 	// --skip-setup restores the pre-wizard behavior; every step is
-	// idempotent and near-instant when already satisfied.
-	if err := runFirstRunWizard(cfg, ui, status, log); err != nil {
-		return err
+	// idempotent and near-instant when already satisfied. --capture test
+	// needs no game at all (synthetic source), so the wizard is skipped
+	// there too — otherwise the "portable diagnostic mode" would stall on
+	// the locate-game/game-running steps on Windows.
+	if cfg.Capture != config.CaptureTest {
+		if err := runFirstRunWizard(cfg, ui, status, log); err != nil {
+			return err
+		}
 	}
 	// --resolution fit is normally resolved inside the wizard; --skip-setup
 	// (and non-Windows dev runs) still need concrete numbers for capture and
@@ -150,9 +185,17 @@ func run(ui *appUI) error {
 	resolveFitResolution(cfg, log)
 	status.SetResolution(fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
 
-	plat, err := newPlatform(cfg, log)
-	if err != nil {
-		return err
+	// --capture test replaces the Windows window platform with the portable
+	// test-pattern stand-in: same encoder/parser/WebRTC path, synthetic input.
+	var plat *platform
+	if cfg.Capture == config.CaptureTest {
+		log.Info("capture source: testsrc2 synthetic pattern (--capture test)")
+		plat = newTestPlatform(cfg, log)
+	} else {
+		plat, err = newPlatform(cfg, log)
+		if err != nil {
+			return err
+		}
 	}
 
 	ffmpegPath := cfg.FFmpegPath
@@ -181,6 +224,7 @@ func run(ui *appUI) error {
 		FPS:         cfg.FPS,
 		BitrateKbps: cfg.BitrateKbps,
 		Encoder:     encoder,
+		TestSource:  cfg.Capture == config.CaptureTest,
 	}
 	// geom is the geometry the encoder is currently producing — normally the
 	// configured resolution, but the capture SELF-HEALS to the game window's
@@ -212,10 +256,26 @@ func run(ui *appUI) error {
 				"resolution", fmt.Sprintf("%dx%d", encW, encH))
 		}
 	}
+	// enforceSize runs the direct-window-resize path (Windows window capture
+	// only): a windowed game at the wrong size is resized to the configured
+	// resolution BEFORE the geometry self-heal reads it — CVars cannot size a
+	// windowed 1.12 client, SetWindowPos can. Outcomes surface on the log and
+	// the dashboard's "Game running" step detail; the implementation
+	// self-limits re-attempts, so calling it per launch cannot become a fight.
+	enforceSize := func() {
+		if plat.enforceWindowSize == nil {
+			return
+		}
+		if msg, outcome, acted := plat.enforceWindowSize(cfg.Width, cfg.Height); acted {
+			log.Info("window size enforcement", "result", msg)
+			status.SetStep(install.StepRunning, enforceStepState(outcome), msg)
+		}
+	}
 	videoArgv := func(c capture.Config) []string {
 		// Re-read the live client rect at every launch: the encode must frame
 		// the ACTUAL window — a fixed crop of the assumed size grabs desktop
 		// (or off-screen, i.e. black) pixels. Degraded-but-visible beats black.
+		enforceSize()
 		if aw, ah, ok := plat.clientSize(); ok {
 			encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
 			c.Width, c.Height = encW, encH
@@ -232,7 +292,9 @@ func run(ui *appUI) error {
 	}
 	// Check once before any phone connects, too: the dashboard must show the
 	// mismatch warning while the user is still staring at the QR code, not
-	// only after the first capture launch.
+	// only after the first capture launch — and the window is sized right
+	// away, not only when the first session starts capture.
+	enforceSize()
 	if aw, ah, ok := plat.clientSize(); ok {
 		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
 		geom.set(encW, encH)
@@ -262,7 +324,9 @@ func run(ui *appUI) error {
 		}, log)
 
 	var audioSup *capture.Supervisor
+	var captureActive atomic.Bool // read by the capture-stall watchdog below
 	setActive := func(active bool) {
+		captureActive.Store(active)
 		if active {
 			videoSup.Start()
 			if audioSup != nil {
@@ -296,6 +360,20 @@ func run(ui *appUI) error {
 		audioSup = capture.NewSupervisor("audio", capCfg, capture.Config.AudioArgs, mgr.ConsumeOgg, log)
 	}
 
+	// Startup self-check: ~2 s of testsrc2 through the SELECTED encoder and
+	// the production Annex-B parser (no WebRTC), so "can this machine encode
+	// at all?" is answered on the dashboard before any phone connects. In a
+	// goroutine — it must never delay the listener.
+	go func() {
+		res := capture.SelfCheck(ffmpegPath, encoder, 256, 256, cfg.FPS)
+		status.SetSelfCheck(res.OK, res.Detail)
+		if res.OK {
+			log.Info("video pipeline self-check passed", "frames", res.Frames)
+		} else {
+			log.Warn("video pipeline self-check FAILED", "detail", res.Detail)
+		}
+	}()
+
 	// Ctrl+C / SIGTERM: release inputs, close the peer, kill ffmpeg — in
 	// that order, so a mid-fight disconnect never leaves keys held. The
 	// dashboard's Quit button and the tray menu cancel the same context.
@@ -304,6 +382,17 @@ func run(ui *appUI) error {
 	runCtx, quit := context.WithCancel(ctx)
 	defer quit()
 
+	// Capture-stall watchdog: while a session wants video but ffmpeg delivers
+	// ZERO frames for several seconds, put ffmpeg's stderr tail on the
+	// dashboard — the user must be able to READ why the stream is black.
+	go captureStallWatchdog(runCtx, captureStall{
+		active: captureActive.Load,
+		frames: meter.TotalFrames,
+		stderr: videoSup.StderrTail,
+		warn:   status.SetCaptureWarning,
+		log:    log,
+	})
+
 	// The phone client PWA ships inside the binary; --client-dir overrides it
 	// with a disk directory for development. Either way the binary no longer
 	// cares what directory it is started from.
@@ -311,7 +400,7 @@ func run(ui *appUI) error {
 	if err != nil {
 		return fmt.Errorf("embedded client missing: %w", err)
 	}
-	server := sig.New(cfg.Addr, cfg.Token, cfg.NoTLS, clientFS, cfg.ClientDir, mgr, log)
+	server := sig.New(cfg.Addr, cfg.Token, cfg.NoTLS, clientFS, cfg.ClientDir, version, mgr, log)
 
 	// Host dashboard: embedded separately from the public client tree and
 	// served loopback-only (it shows the pairing token).
@@ -326,6 +415,15 @@ func run(ui *appUI) error {
 	if err := server.Listen(); err != nil {
 		return err
 	}
+	// Harness support: with --addr :0 the kernel picks the port; publish the
+	// real one. The file is written atomically-enough (tmp+rename) so a reader
+	// polling for it never sees a partial write.
+	if cfg.PortFile != "" {
+		if err := writePortFile(cfg.PortFile, server.Port()); err != nil {
+			return fmt.Errorf("writing --port-file: %w", err)
+		}
+	}
+	log.Info("listening", "port", server.Port())
 	status.SetPairingURL(server.PairingURL(cfg.Token))
 	status.SetConnectedFunc(mgr.SessionConnected)
 	status.SetStatsFunc(func() hoststatus.Stream {
@@ -378,6 +476,16 @@ func run(ui *appUI) error {
 		}
 	}()
 	return server.Serve(runCtx)
+}
+
+// writePortFile publishes the bound TCP port for test harnesses (--port-file):
+// write-to-temp + rename so a polling reader never observes a partial file.
+func writePortFile(path string, port int) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n", port)), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // liveGeometry is the concurrency-safe holder for the geometry the encoder is

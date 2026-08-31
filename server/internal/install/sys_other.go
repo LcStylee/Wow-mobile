@@ -31,6 +31,9 @@ func (stubSystem) RunWingetInstall(io.Writer) error {
 }
 func (stubSystem) ProbeEncoder(string) (string, bool) { return "", false }
 func (stubSystem) GameWindowPresent(string) bool      { return false }
+func (stubSystem) EnforceGameWindowSize(string, int, int) (string, bool) {
+	return "", false
+}
 func (stubSystem) LaunchGame(string) error {
 	return errors.New("launching WoW is Windows-only")
 }

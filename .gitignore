@@ -1,3 +1,8 @@
 # Build artifacts — the committed sources regenerate all of these.
 wowstreamd.exe
 installer/WowMobile-Setup.exe
+
+# e2e harness (npm-managed; package-lock.json IS committed)
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/

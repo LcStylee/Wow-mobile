@@ -199,11 +199,12 @@ func TestPortraitSettingsForClientType(t *testing.T) {
 	if _, has := c["gxResolution"]; has {
 		t.Fatalf("classicEra must not write gxResolution: %v", c)
 	}
-	if l["gxResolution"] != "1080x1920" {
-		t.Fatalf("legacy resolution line wrong: %v", l)
-	}
-	if _, has := l["gxWindowedResolution"]; has {
-		t.Fatalf("legacy must not write gxWindowedResolution: %v", l)
+	// Legacy gets BOTH lines (belt and braces): windowed 1.12 ignores
+	// gxResolution (fullscreen-only there) and some custom builds honor
+	// either name; unknown CVars are harmlessly kept, and the real
+	// enforcement is the post-launch direct window resize.
+	if l["gxResolution"] != "1080x1920" || l["gxWindowedResolution"] != "1080x1920" {
+		t.Fatalf("legacy must write gxResolution AND gxWindowedResolution: %v", l)
 	}
 	// Both generations disable the out-of-date-addon gate: a game patch must
 	// never silently turn the touch UI off (SETUP.md documents this line).

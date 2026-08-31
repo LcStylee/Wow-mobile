@@ -2,6 +2,8 @@
 // server encoder stats), its action buttons, the settings sheet, and toasts.
 // All elements live in index.html; this module only wires and updates them.
 
+import { displayVersion } from './version.js';
+
 const STATE_LABEL = {
   idle: 'offline',
   connecting: 'connecting',
@@ -97,6 +99,10 @@ export class Hud {
     applyVisibility();
     this.setAudio(settings.get('audio'));
     this.setState('idle');
+
+    // Version of the shell that is ACTUALLY running (server-stamped, rides
+    // the service-worker cache) — the stale-cached-client tripwire.
+    $('sheet-version').textContent = `WoW Mobile client ${displayVersion()}`;
   }
 
   #bindRange(id, key) {

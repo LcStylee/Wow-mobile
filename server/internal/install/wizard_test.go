@@ -27,6 +27,8 @@ type fakeSys struct {
 	afterWinget   string // WingetFFmpeg result once RunWingetInstall ran
 	encoder       string
 	windowPresent bool
+	resizeMsg     string // EnforceGameWindowSize result; "" = nothing to do
+	resizeCalls   []string
 	launched      []string
 	launchShows   bool // LaunchGame makes the window appear
 	workW, workH  int  // PrimaryWorkArea; 0,0 = not measurable (the default)
@@ -60,6 +62,10 @@ func (f *fakeSys) WindowDecorationExtents() (int, int) {
 	return window.FallbackDecorationW, window.FallbackDecorationH
 }
 func (f *fakeSys) GameWindowPresent(string) bool { return f.windowPresent }
+func (f *fakeSys) EnforceGameWindowSize(_ string, w, h int) (string, bool) {
+	f.resizeCalls = append(f.resizeCalls, fmt.Sprintf("%dx%d", w, h))
+	return f.resizeMsg, f.resizeMsg != ""
+}
 func (f *fakeSys) LaunchGame(exe string) error {
 	f.launched = append(f.launched, exe)
 	if f.launchShows {
@@ -212,6 +218,36 @@ func TestRunAllSatisfiedSkipsEveryPrompt(t *testing.T) {
 		if !strings.Contains(text, wantLine) {
 			t.Errorf("missing %q in:\n%s", wantLine, text)
 		}
+	}
+}
+
+// The game-running step resizes the found window to the decided resolution
+// (windowed 1.12 ignores gxResolution, so the wizard sizes the window
+// directly) and reports the outcome in its step line — honestly, including
+// reverts, and never fatally.
+func TestGameRunningStepEnforcesWindowSize(t *testing.T) {
+	wow := makeWowDir(t, true)
+	dest := filepath.Join(wow, "Interface", "AddOns", "WowMobile")
+	src := addonSrc()
+	if err := ApplyAddon(src, dest, mustPlan(t, src, dest)); err != nil {
+		t.Fatal(err)
+	}
+	sys := &fakeSys{
+		pathFFmpeg:    `C:\ffmpeg\bin\ffmpeg.exe`,
+		encoder:       "h264_nvenc",
+		windowPresent: true,
+		resizeMsg:     "resized WoW window to 1080x1920",
+	}
+	opts := baseOpts(t, wow, sys, &scriptPrompter{t: t})
+	out := opts.Out.(*bytes.Buffer)
+	if _, err := Run(opts); err != nil {
+		t.Fatalf("Run: %v\n%s", err, out.String())
+	}
+	if len(sys.resizeCalls) != 1 || sys.resizeCalls[0] != "1080x1920" {
+		t.Errorf("EnforceGameWindowSize calls = %v, want exactly [1080x1920]", sys.resizeCalls)
+	}
+	if !strings.Contains(out.String(), "window found — resized WoW window to 1080x1920") {
+		t.Errorf("resize outcome missing from the step line:\n%s", out.String())
 	}
 }
 
@@ -465,8 +501,12 @@ func TestLegacyClientFlow(t *testing.T) {
 	if !SettingsSatisfied(cfg, PortraitSettingsFor(ClientTypeLegacy, 1080, 1920)) {
 		t.Fatalf("legacy Config.wtf wrong: %q", cfg)
 	}
-	if bytes.Contains(cfg, []byte("gxWindowedResolution")) {
-		t.Fatalf("legacy Config.wtf must not carry gxWindowedResolution: %q", cfg)
+	// Belt and braces on legacy: BOTH resolution CVar spellings are written
+	// (windowed 1.12 ignores gxResolution — fullscreen-only there — and some
+	// custom builds honor either name; unknown CVars are harmlessly kept).
+	if !bytes.Contains(cfg, []byte(`SET gxResolution "1080x1920"`)) ||
+		!bytes.Contains(cfg, []byte(`SET gxWindowedResolution "1080x1920"`)) {
+		t.Fatalf("legacy Config.wtf must carry both resolution CVars: %q", cfg)
 	}
 	if len(sys.launched) != 1 || sys.launched[0] != filepath.Join(dir, "Wow.exe") {
 		t.Fatalf("launch wrong: %v", sys.launched)

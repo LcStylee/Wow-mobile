@@ -107,6 +107,14 @@ button {
 .note.error {
   border-color: rgba(224, 82, 60, 0.55);
   background: rgba(224, 82, 60, 0.1);
+  /* ffmpeg stderr tails ride these rows: long unbroken tokens must wrap. */
+  overflow-wrap: anywhere;
+}
+
+/* Failed pipeline self-check verdict in the Live status list. */
+#self-check.bad {
+  color: #e0523c;
+  overflow-wrap: anywhere;
 }
 
 /* ---- layout & cards -------------------------------------------------- */

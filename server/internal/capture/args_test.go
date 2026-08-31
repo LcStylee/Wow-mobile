@@ -172,7 +172,7 @@ func TestAudioArgs(t *testing.T) {
 	}
 }
 
-func TestPickEncoder(t *testing.T) {
+func TestCompiledEncoders(t *testing.T) {
 	const ffmpegOutput = `Encoders:
  V..... = Video
  A..... = Audio
@@ -181,21 +181,62 @@ func TestPickEncoder(t *testing.T) {
  V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
  A....D aac                  AAC (Advanced Audio Coding)
 `
-	enc, ok := pickEncoder(ffmpegOutput)
-	if !ok || enc != NVENC {
-		t.Fatalf("pickEncoder = %v,%v, want nvenc (preferred over x264)", enc, ok)
+	// Preference order: nvenc first, x264 as the software fallback — and BOTH
+	// must be returned, because compiled-in nvenc may still fail its trial
+	// encode (no NVIDIA runtime) and the probe then needs the next candidate.
+	got := compiledEncoders(ffmpegOutput)
+	if len(got) != 2 || got[0] != NVENC || got[1] != X264 {
+		t.Fatalf("compiledEncoders = %v, want [nvenc x264]", got)
 	}
 
-	enc, ok = pickEncoder(strings.ReplaceAll(ffmpegOutput, "h264_nvenc", "h264_qsv"))
-	if !ok || enc != QSV {
-		t.Fatalf("pickEncoder = %v,%v, want qsv", enc, ok)
+	got = compiledEncoders(strings.ReplaceAll(ffmpegOutput, "h264_nvenc", "h264_qsv"))
+	if len(got) != 2 || got[0] != QSV || got[1] != X264 {
+		t.Fatalf("compiledEncoders = %v, want [qsv x264]", got)
 	}
 
 	// Audio-only line must not count as a video encoder.
-	if _, ok := pickEncoder(" A....D libx264   fake\n"); ok {
-		t.Fatal("audio-flagged line was accepted as a video encoder")
+	if got := compiledEncoders(" A....D libx264   fake\n"); len(got) != 0 {
+		t.Fatalf("audio-flagged line was accepted as a video encoder: %v", got)
 	}
-	if _, ok := pickEncoder("Encoders:\n V....D mjpeg  something\n"); ok {
-		t.Fatal("no H.264 encoder present but pickEncoder succeeded")
+	if got := compiledEncoders("Encoders:\n V....D mjpeg  something\n"); len(got) != 0 {
+		t.Fatalf("no H.264 encoder present but compiledEncoders returned %v", got)
+	}
+}
+
+func TestVideoArgsTestSource(t *testing.T) {
+	cfg := baseConfig(X264)
+	cfg.TestSource = true
+	cfg.TestFrames = 3
+	args := cfg.VideoArgs()
+	// lavfi testsrc2 input, paced to real time, bounded to 3 frames — and the
+	// encoder half must stay EXACTLY production (that is the point of the
+	// test-pattern mode).
+	requireAll(t, args, "lavfi", "-re", "testsrc2=size=1080x1920:rate=60", "libx264")
+	if argValue(t, args, "-frames:v") != "3" {
+		t.Errorf("TestFrames not applied: %v", args)
+	}
+	if argValue(t, args, "-tune") != "zerolatency" || argValue(t, args, "-preset") != "ultrafast" {
+		t.Errorf("test source must keep the production encoder flags: %v", args)
+	}
+	if slices.Contains(args, "gdigrab") {
+		t.Errorf("test source must not carry the window grabber: %v", args)
+	}
+
+	// Unbounded (streaming) test mode has no -frames:v; NVENC keeps its
+	// system-memory -vf (lavfi frames are not D3D11 textures) and never the
+	// ddagrab graph, even when a CaptureRect is set.
+	cfg = baseConfig(NVENC)
+	cfg.TestSource = true
+	cfg.CaptureRect = &Rect{X: 0, Y: 0, W: 1080, H: 1920}
+	args = cfg.VideoArgs()
+	if slices.Contains(args, "-frames:v") {
+		t.Errorf("no frame bound expected: %v", args)
+	}
+	if slices.Contains(args, "-filter_complex") {
+		t.Errorf("test source must not use ddagrab: %v", args)
+	}
+	requireAll(t, args, "lavfi", "h264_nvenc")
+	if !strings.Contains(argValue(t, args, "-vf"), "format=nv12") {
+		t.Errorf("nvenc test source needs the nv12 -vf: %v", args)
 	}
 }

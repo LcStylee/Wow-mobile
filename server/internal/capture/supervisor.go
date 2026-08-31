@@ -29,6 +29,20 @@ type Supervisor struct {
 	done      chan struct{} // closed when the run loop has fully exited
 	gen       int           // bumped by SetBitrate/ForceKeyframe to signal "restart wanted"
 	procStart time.Time     // when the current ffmpeg process was spawned
+	curTail   *tailBuffer   // stderr tail of the current/most recent ffmpeg
+}
+
+// StderrTail returns the last stderr lines of the current (or most recent)
+// ffmpeg process — the raw material for the dashboard's "why is video dead"
+// diagnostics. Empty before the first launch.
+func (s *Supervisor) StderrTail() []string {
+	s.mu.Lock()
+	tail := s.curTail
+	s.mu.Unlock()
+	if tail == nil {
+		return nil
+	}
+	return tail.lines()
 }
 
 // NewSupervisor creates a supervisor for one pipeline. argv maps the current
@@ -179,6 +193,9 @@ func (s *Supervisor) runOnce(ctx context.Context, cfg Config, gen int) error {
 		return err
 	}
 	tail := newTailBuffer(30)
+	s.mu.Lock()
+	s.curTail = tail // live view for StderrTail diagnostics
+	s.mu.Unlock()
 	var stderrWG sync.WaitGroup
 	stderrWG.Add(1)
 	go func() {

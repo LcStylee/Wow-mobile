@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -64,11 +65,13 @@ type Server struct {
 	tokenHash [32]byte
 	noTLS     bool
 	mgr       *rtc.Manager
-	clientFS  fs.FS // filesystem the phone client PWA is served from
+	clientFS  fs.FS  // filesystem the phone client PWA is served from
+	version   string // server build version, stamped into sw.js / js/version.js
 	log       *slog.Logger
 
 	httpServer *http.Server
 	listener   net.Listener // bound by Listen, consumed by Serve
+	boundPort  int          // actual TCP port after Listen (resolves --addr :0)
 
 	host HostUI // zero value = host dashboard disabled
 
@@ -103,8 +106,9 @@ type sessionAuth struct {
 // New creates the signaling server. embeddedClient is the client PWA built
 // into the binary (already rooted at the PWA's index.html); clientDirFlag is
 // the raw --client-dir value — when set, it overrides the embedded files with
-// a disk directory (development).
-func New(addr, token string, noTLS bool, embeddedClient fs.FS, clientDirFlag string, mgr *rtc.Manager, log *slog.Logger) *Server {
+// a disk directory (development). version is the server build version, stamped
+// into the served sw.js (cache name) and js/version.js (client HUD identity).
+func New(addr, token string, noTLS bool, embeddedClient fs.FS, clientDirFlag, version string, mgr *rtc.Manager, log *slog.Logger) *Server {
 	return &Server{
 		addr:      addr,
 		token:     token,
@@ -112,6 +116,7 @@ func New(addr, token string, noTLS bool, embeddedClient fs.FS, clientDirFlag str
 		noTLS:     noTLS,
 		mgr:       mgr,
 		clientFS:  resolveClientFS(embeddedClient, clientDirFlag, log),
+		version:   version,
 		log:       log,
 	}
 }
@@ -146,6 +151,14 @@ func (s *Server) Listen() error {
 	// installed PWA open pre-paired); the exact-path pattern outranks the
 	// catch-all file server below.
 	mux.HandleFunc("GET /manifest.webmanifest", s.handleManifest)
+	// Version-stamped shell files: the service worker's cache name and the
+	// client's own version identity both derive from the SERVER version, so
+	// every release busts the cached shell automatically (a stale cached
+	// client was a live field failure) and the phone HUD can display what is
+	// actually running. no-cache (not no-store): browsers may keep bytes but
+	// must revalidate — exactly what a service worker update check needs.
+	mux.HandleFunc("GET /sw.js", s.handleStamped("sw.js"))
+	mux.HandleFunc("GET /js/version.js", s.handleStamped("js/version.js"))
 	mux.Handle("/", http.FileServerFS(s.clientFS))
 	s.registerHostRoutes(mux)
 
@@ -170,7 +183,28 @@ func (s *Server) Listen() error {
 		return err
 	}
 	s.listener = ln
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		s.boundPort = tcp.Port
+	}
 	return nil
+}
+
+// Port returns the actually bound TCP port (0 before Listen). With --addr
+// ending in :0 this is the kernel-assigned port — the value test harnesses
+// need (via --port-file) and the one every printed URL uses.
+func (s *Server) Port() int { return s.boundPort }
+
+// port is the port every advertised URL carries: the bound port when known,
+// else whatever --addr says (before Listen), else the 8443 default.
+func (s *Server) port() string {
+	if s.boundPort != 0 {
+		return strconv.Itoa(s.boundPort)
+	}
+	_, port, err := net.SplitHostPort(s.addr)
+	if err != nil || port == "" {
+		return "8443"
+	}
+	return port
 }
 
 // Serve serves on the listener bound by Listen until ctx is cancelled, then
@@ -205,10 +239,7 @@ func (s *Server) PrintBanner(w io.Writer, token string, tokenGenerated bool) {
 	if s.noTLS {
 		scheme = "http"
 	}
-	_, port, err := net.SplitHostPort(s.addr)
-	if err != nil || port == "" {
-		port = "8443"
-	}
+	port := s.port()
 	ips := LANIPs()
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "wowstreamd ready — open on your phone (same Wi-Fi):")
@@ -260,10 +291,11 @@ func (s *Server) HostURL() string {
 	if s.noTLS {
 		scheme = "http"
 	}
-	host, port, err := net.SplitHostPort(s.addr)
-	if err != nil || port == "" {
-		port = "8443"
+	host, _, err := net.SplitHostPort(s.addr)
+	if err != nil {
+		host = ""
 	}
+	port := s.port()
 	ip := net.ParseIP(host)
 	switch {
 	case host == "" || (ip != nil && ip.IsUnspecified()):
@@ -287,11 +319,7 @@ func (s *Server) PairingURL(token string) string {
 	if s.noTLS {
 		scheme = "http"
 	}
-	_, port, err := net.SplitHostPort(s.addr)
-	if err != nil || port == "" {
-		port = "8443"
-	}
-	return fmt.Sprintf("%s://%s:%s/?token=%s", scheme, ips[0], port, token)
+	return fmt.Sprintf("%s://%s:%s/?token=%s", scheme, ips[0], s.port(), token)
 }
 
 // terminalQR renders content as a half-block-character QR code, two modules
@@ -306,6 +334,41 @@ func terminalQR(content string) string {
 	// border (quiet zone) around them, phone cameras scan this on both dark-
 	// and light-background terminals.
 	return code.ToSmallString(false)
+}
+
+// versionPlaceholder is the template literal in client/sw.js and
+// client/js/version.js that handleStamped replaces with the server version.
+const versionPlaceholder = "__WM_VERSION__"
+
+// handleStamped serves one client file with the version placeholder replaced
+// by the server's build version. The stamping is idempotent for files without
+// the placeholder, so a --client-dir override that already hardcodes a value
+// still serves correctly.
+func (s *Server) handleStamped(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := fs.ReadFile(s.clientFS, name)
+		if err != nil {
+			http.Error(w, "file unavailable", http.StatusInternalServerError)
+			return
+		}
+		stamped := stampVersion(data, s.version)
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(stamped) //nolint:errcheck
+	}
+}
+
+// stampVersion replaces the version placeholder. The version is embedded into
+// a single-quoted JS string literal, so quotes/backslashes (never present in
+// real versions, but never trust) are stripped rather than escaped.
+func stampVersion(data []byte, version string) []byte {
+	clean := strings.Map(func(r rune) rune {
+		if r == '\'' || r == '\\' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, version)
+	return []byte(strings.ReplaceAll(string(data), versionPlaceholder, clean))
 }
 
 // handleManifest serves the PWA manifest. Without a token query parameter it

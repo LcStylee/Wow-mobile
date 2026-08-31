@@ -81,6 +81,10 @@
       <input id="set-rail" type="checkbox">
       Show quick keys
     </label>
+    <!-- Build identity of the RUNNING (possibly cached) shell, stamped by the
+         server into js/version.js: makes "what version is this phone on"
+         answerable at a glance when triaging stale-PWA problems. -->
+    <p class="sheet-version" id="sheet-version"></p>
     <button id="sheet-close" type="button">Close</button>
   </section>
 
@@ -94,23 +98,51 @@
     </form>
   </div>
 
-  <!-- Pairing screen -->
+  <!-- Pairing screen. Two modes, both owned by app.js:
+       - status mode (a pairing is saved): live auto-connect progress
+         ("connecting to <host>… / failed: <specific reason>") with
+         Retry / Scan QR / Edit token — never a silently empty paste field;
+       - entry mode (no pairing, or Edit token): token field + Paste /
+         Scan QR / Connect. -->
   <div id="overlay-connect" class="overlay" hidden>
     <form id="connect-form">
       <h1>WoW Mobile</h1>
-      <p>Enter the pairing token shown by <code>wowstreamd</code> on your PC,
-         or scan its QR code.</p>
-      <p id="connect-note" class="note" hidden></p>
-      <input id="connect-token" type="text" autocomplete="off" autocapitalize="off"
-             spellcheck="false" placeholder="pairing token" required>
-      <!-- Big paste affordance: the token is far too long to type on a phone.
-           navigator.clipboard.readText where available; app.js falls back to
-           focusing the field with a hint otherwise. -->
-      <button id="connect-paste" type="button">Paste token</button>
-      <button id="connect-submit" type="submit">Connect</button>
-      <p class="tip">Tip: open the link from the QR code once in your browser,
-         then Add to Home Screen — the installed app remembers everything.</p>
+      <div id="connect-status" hidden>
+        <p id="connect-status-text" aria-live="polite">Connecting…</p>
+        <button id="connect-retry" type="button">Retry</button>
+        <button type="button" class="connect-scan">Scan QR</button>
+        <button id="connect-edit" type="button">Edit token</button>
+      </div>
+      <div id="connect-entry">
+        <p>Enter the pairing token shown by <code>wowstreamd</code> on your PC,
+           or scan its QR code.</p>
+        <p id="connect-note" class="note" hidden></p>
+        <input id="connect-token" type="text" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="pairing token" required>
+        <!-- Big paste affordance: the token is far too long to type on a phone.
+             navigator.clipboard.readText where available; app.js falls back to
+             focusing the field with a hint otherwise. -->
+        <button id="connect-paste" type="button">Paste token</button>
+        <button type="button" class="connect-scan">Scan QR</button>
+        <button id="connect-submit" type="submit">Connect</button>
+        <p class="tip">Tip: open the link from the QR code once in your browser,
+           then Add to Home Screen — the installed app remembers everything.</p>
+      </div>
+      <p class="tip" id="connect-version"></p>
     </form>
+  </div>
+
+  <!-- In-app QR scanner: rear-camera preview; BarcodeDetector where available,
+       vendored jsQR (lazy-loaded) everywhere else. app.js/qrscan.js own it. -->
+  <div id="overlay-scan" class="overlay" hidden>
+    <div id="scan-card">
+      <h1>Scan to pair</h1>
+      <p>Point the camera at the QR code shown by <code>wowstreamd</code>
+         or on the PC dashboard.</p>
+      <video id="scan-video" autoplay playsinline muted></video>
+      <p id="scan-note" class="note" hidden></p>
+      <button id="scan-cancel" type="button">Cancel</button>
+    </div>
   </div>
 
   <!-- Autoplay unlock -->

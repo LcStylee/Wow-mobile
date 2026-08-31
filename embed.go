@@ -24,6 +24,7 @@ import "embed"
 //
 //go:embed client/index.html client/styles.css client/sw.js
 //go:embed client/manifest.webmanifest all:client/js all:client/icons
+//go:embed all:client/vendor
 var ClientFS embed.FS
 
 // HostFS holds the loopback-only host dashboard under the "client/host/"

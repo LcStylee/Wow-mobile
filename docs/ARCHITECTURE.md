@@ -105,9 +105,25 @@ mid-stream cannot decode a rolling refresh wavefront at all; it needs a full
 IDR, so intra-refresh would break mid-join and PLI recovery outright.
 
 Fallbacks: `gdigrab + libx264 -tune zerolatency` when no NVIDIA GPU;
-AMF/QSV selectable via `--encoder`. Target: ≤ 3 ms capture + ~5 ms encode +
-~5–15 ms LAN + ~10 ms decode/display ≈ **30–60 ms glass-to-glass on 5 GHz
-Wi-Fi**.
+AMF/QSV selectable via `--encoder`. `--encoder auto` resolves by **functional
+trial**, not by what ffmpeg was compiled with: full ffmpeg builds compile in
+NVENC/AMF/QSV unconditionally, and picking an encoder whose GPU runtime is
+absent (`h264_nvenc` on an AMD box) makes every capture launch die instantly —
+a permanently black stream while input still works (a real field failure). So
+each compiled-in candidate encodes a few `testsrc2` frames with the exact
+production flags, most-preferred first, and the first that emits H.264 wins.
+Target: ≤ 3 ms capture + ~5 ms encode + ~5–15 ms LAN + ~10 ms decode/display ≈
+**30–60 ms glass-to-glass on 5 GHz Wi-Fi**.
+
+The same synthetic source powers three diagnostics layers: `--capture test`
+(a first-class portable mode streaming `testsrc2` through the identical
+encoder flags, Annex-B parser, and WebRTC path — how the pipeline is
+e2e-tested headlessly on any OS), the startup **self-check** (~2 s of test
+pattern through the selected encoder + parser; verdict on the dashboard:
+"video pipeline OK (N frames)" or ffmpeg's stderr tail), and the
+**capture-stall watchdog** (an active capture delivering zero frames for 5 s
+puts ffmpeg's stderr tail on the dashboard warning row — a black stream must
+always explain itself in readable words).
 
 ### 3. Input: forwarded human touch, not automation
 
@@ -181,6 +197,7 @@ client from it, so the released `wowstreamd.exe` is fully self-contained.
 | `client/` | Zero-build PWA touch client; embedded, served by the exe | `node --test tests/` (CI), critic review |
 | `client/host/` | Host status dashboard (QR, checklist, quit); embedded separately (`HostFS`) and served **loopback-only** at `/host` | `node --check` (CI), loopback-enforcement unit tests |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |
+| `e2e/` | Playwright pipeline gate: `wowstreamd --capture test` streamed into a real browser; asserts frames decode, pixels are not black, input round-trips | `npm test` in `e2e/` (CI) |
 | `embed.go` | Root embed package (`ClientFS`, `HostFS`, `AddonFS`, `VanillaAddonFS`) | `embed_test.go` drift guard: embedded trees == disk trees byte-for-byte |
 | `installer/` | NSIS script producing `WowMobile-Setup.exe` (Start Menu/Desktop shortcuts, uninstaller) | `makensis` compile check (CI) |
 | `assets/` | App icon (`wowmobile.ico` + PNG source + generator); baked into the exe via the committed `rsrc_windows_amd64.syso` | — |

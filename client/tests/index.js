@@ -7,4 +7,5 @@
 import './geometry.test.js';
 import './net.test.js';
 import './protocol.test.js';
+import './qrscan.test.js';
 import './vk.test.js';

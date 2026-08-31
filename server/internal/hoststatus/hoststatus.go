@@ -65,9 +65,18 @@ type Status struct {
 	clientType string
 	addonNote  string
 	warning    string // loud misconfiguration banner (e.g. window/resolution mismatch); "" = none
-	pairingURL string
-	running    bool // serving (the wizard finished and the listener is up)
-	phone      Phone
+	// captureWarning is the live capture-health banner: set while the running
+	// capture yields no frames (with ffmpeg's stderr tail), cleared when
+	// frames flow again. Kept separate from warning so a geometry mismatch
+	// and a dead encoder can both be shown.
+	captureWarning string
+	// selfCheck is the startup video-pipeline probe verdict: "video pipeline
+	// OK (N frames)" or the ffmpeg stderr tail explaining the failure.
+	selfCheck   string
+	selfCheckOK bool
+	pairingURL  string
+	running     bool // serving (the wizard finished and the listener is up)
+	phone       Phone
 
 	// Live callbacks, optional. Called (unlocked) at snapshot time.
 	connectedFn func() bool
@@ -160,6 +169,29 @@ func (s *Status) SetWarning(msg string) {
 	s.warning = msg
 }
 
+// SetCaptureWarning sets (or, with "", clears) the live capture-health
+// banner: shown while the running capture produces no video frames, carrying
+// ffmpeg's stderr tail so the user can READ why video is missing.
+func (s *Status) SetCaptureWarning(msg string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.captureWarning = msg
+}
+
+// SetSelfCheck records the startup video-pipeline probe verdict.
+func (s *Status) SetSelfCheck(ok bool, detail string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selfCheckOK = ok
+	s.selfCheck = detail
+}
+
 // SetPairingURL records the phone pairing URL (token included). The /host
 // routes that expose it are loopback-only — see signal.LoopbackOnly.
 func (s *Status) SetPairingURL(url string) {
@@ -233,9 +265,17 @@ type snapshot struct {
 	ClientType string `json:"clientType"`
 	AddonNote  string `json:"addonNote"`
 	Warning    string `json:"warning"`
-	PairingURL string `json:"pairingUrl"`
-	Phone      Phone  `json:"phone"`
-	Stream     Stream `json:"stream"`
+	// CaptureWarning is the live capture-health banner (dead encoder / no
+	// frames), with ffmpeg's stderr tail; "" = healthy.
+	CaptureWarning string `json:"captureWarning"`
+	// SelfCheck is the startup pipeline probe verdict line; SelfCheckOK
+	// distinguishes "OK" from a probe that failed (and from "still running",
+	// when SelfCheck is empty).
+	SelfCheck   string `json:"selfCheck"`
+	SelfCheckOK bool   `json:"selfCheckOk"`
+	PairingURL  string `json:"pairingUrl"`
+	Phone       Phone  `json:"phone"`
+	Stream      Stream `json:"stream"`
 }
 
 // JSON serializes the current state for GET /host/api/status.
@@ -245,16 +285,19 @@ func (s *Status) JSON() []byte {
 	}
 	s.mu.Lock()
 	snap := snapshot{
-		Version:    s.version,
-		Running:    s.running,
-		Steps:      append([]Step(nil), s.steps...),
-		Encoder:    s.encoder,
-		Resolution: s.resolution,
-		ClientType: s.clientType,
-		AddonNote:  s.addonNote,
-		Warning:    s.warning,
-		PairingURL: s.pairingURL,
-		Phone:      s.phone,
+		Version:        s.version,
+		Running:        s.running,
+		Steps:          append([]Step(nil), s.steps...),
+		Encoder:        s.encoder,
+		Resolution:     s.resolution,
+		ClientType:     s.clientType,
+		AddonNote:      s.addonNote,
+		Warning:        s.warning,
+		CaptureWarning: s.captureWarning,
+		SelfCheck:      s.selfCheck,
+		SelfCheckOK:    s.selfCheckOK,
+		PairingURL:     s.pairingURL,
+		Phone:          s.phone,
 	}
 	connectedFn, statsFn := s.connectedFn, s.statsFn
 	s.mu.Unlock()

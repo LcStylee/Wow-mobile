@@ -39,16 +39,24 @@ func PortraitSettings(width, height int) []Setting {
 }
 
 // PortraitSettingsFor selects the windowed-portrait settings for the client
-// type: Classic Era (1.15) uses gxWindowedResolution; 1.12-era clients
-// (private servers) predate that CVar and use gxResolution instead — writing
-// gxWindowedResolution there would be dead weight, so it is omitted. The
-// gxWindow/gxMaximize pair is common to both generations.
+// type. Classic Era (1.15) uses gxWindowedResolution. 1.12-era clients
+// (private servers) get BOTH gxResolution AND gxWindowedResolution — belt and
+// braces: field-verified, a windowed 1.12 client IGNORES gxResolution (that
+// CVar governs fullscreen mode only) and opens at its own remembered/default
+// size, while some patched/custom builds do honor one or the other name;
+// unknown CVars are harmlessly kept in Config.wtf, so writing both costs
+// nothing. The size that actually lands on screen is enforced after launch by
+// resizing the window directly (window.Tracker.EnforceClientSize — the wizard
+// game-running step and the capture path both do it), which works on every
+// windowed client independent of any CVar. The gxWindow/gxMaximize pair is
+// common to both generations.
 func PortraitSettingsFor(ct ClientType, width, height int) []Setting {
 	if ct == ClientTypeLegacy {
 		return []Setting{
 			{Name: "gxWindow", Value: "1"},
 			{Name: "gxMaximize", Value: "0"},
 			{Name: "gxResolution", Value: fmt.Sprintf("%dx%d", width, height)},
+			{Name: "gxWindowedResolution", Value: fmt.Sprintf("%dx%d", width, height)},
 			checkAddonVersionOff,
 		}
 	}

@@ -282,6 +282,11 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.sheet-version {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 #sheet-close,
 #kb button,
 #connect-form button {
@@ -400,6 +405,60 @@ button {
   font-size: 13px;
   margin: 2px 0 0;
   max-width: none;
+}
+
+/* Connect-screen mode blocks: entry (token field) and status (auto-connect
+   progress with Retry / Scan QR / Edit token) share the form's column flow. */
+#connect-entry,
+#connect-status {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#connect-status p {
+  margin-bottom: 2px;
+  max-width: none;
+  overflow-wrap: anywhere; /* failure reasons can carry hostnames/URLs */
+}
+
+/* Secondary connect actions match the Paste button's quiet style. */
+.connect-scan,
+#connect-retry,
+#connect-edit,
+#scan-cancel {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-weight: 700;
+  border: 1px solid var(--panel-border);
+}
+
+/* Retry is the primary action after a failure. */
+#connect-status #connect-retry {
+  background: var(--accent);
+  color: #14120a;
+  border: none;
+}
+
+/* ---- QR scanner overlay --------------------------------------------------- */
+
+#scan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, 100%);
+  text-align: center;
+}
+
+#scan-video {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-border);
+  background: #000;
 }
 
 #overlay-start {

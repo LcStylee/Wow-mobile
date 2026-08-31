@@ -3,8 +3,10 @@
 // error), reconnect with backoff, wake lock, fullscreen, and lifecycle
 // safety (RELEASE_ALL on hide/leave — a pocketed phone must never leave W held).
 
-import { AuthError, createSession, deleteSession, sendOffer } from './signaling.js';
+import { AuthError, SignalError, createSession, deleteSession, sendOffer } from './signaling.js';
 import { PROTO_VERSION } from './protocol.js';
+import { QrScanner, tokenFromScan } from './qrscan.js';
+import { displayVersion } from './version.js';
 import { InputSender } from './net.js';
 import { Settings } from './settings.js';
 import { Joystick } from './joystick.js';
@@ -42,6 +44,16 @@ class App {
   #stream = null;
   #started = false; // user gesture consumed (autoplay unlocked)
   #fatalError = false; // e.g. replaced by another phone: do not reconnect
+  // True once any hello succeeded since start(): before that, connect
+  // progress/failures render on the connect screen (status mode); after,
+  // reconnects use the in-stream HUD/toast surfaces.
+  #everConnected = false;
+  #scanner = null; // lazy QrScanner; created on first Scan QR tap
+  // Attempt generation: bumped by every new #connect and every #teardown, so
+  // a stale in-flight attempt (e.g. superseded by a freshly scanned token
+  // between its createSession POST and its pc construction) can never build
+  // a second peer connection over the new one.
+  #attemptSeq = 0;
 
   #probeTimer = null;
   #statsTimer = null;
@@ -101,7 +113,12 @@ class App {
 
     this.#wireLifecycle();
     this.#wireConnectScreen();
+    this.#wireScanner();
     this.#wireStartOverlay();
+
+    // Build identity, stamped by the server into js/version.js: what THIS
+    // cached shell actually is, verifiable at a glance (stale-PWA triage).
+    document.getElementById('connect-version').textContent = `client ${displayVersion()}`;
   }
 
   // ---- boot ---------------------------------------------------------------
@@ -146,8 +163,11 @@ class App {
     this.#token = token;
     this.#wanted = true;
     this.#fatalError = false;
+    this.#everConnected = false;
     this.#backoffIndex = 0;
-    document.getElementById('overlay-connect').hidden = true;
+    // The connect screen stays up in STATUS mode until the first hello:
+    // live progress ("connecting to <host>…"), never a black void.
+    this.#showConnectStatus(`Connecting to ${location.host}…`);
     this.#connect().catch((err) => this.#onConnectFailure(err));
   }
 
@@ -166,12 +186,13 @@ class App {
   // ---- connection ---------------------------------------------------------
 
   async #connect() {
+    const attempt = ++this.#attemptSeq;
     this.#hud.setState('connecting');
     this.#hud.setRtt(null);
     this.#hud.setStreamStats({});
 
     const session = await createSession(this.#token);
-    if (!this.#wanted) {
+    if (!this.#wanted || attempt !== this.#attemptSeq) {
       // The user ended the attempt (or a fatal ran) while the POST was in
       // flight, so #teardown already ran with #session still null — delete
       // the session we just created or it would linger server-side until the
@@ -225,13 +246,25 @@ class App {
   #onConnectFailure(err) {
     if (!this.#wanted) return;
     if (err instanceof AuthError) {
+      // EXPLICIT rejection (HTTP 401): the saved token is wrong/rotated —
+      // clear it (and only here: an unreachable server must never wipe a
+      // valid pairing) and drop to entry mode with the reason.
+      this.#clearSavedToken();
+      // If the rejected token was a freshly scanned one (never persisted) and
+      // a DIFFERENT saved pairing survived #clearSavedToken, fall back to it:
+      // otherwise the status screen's Retry / Edit token would keep acting on
+      // the dead scan instead of the known-good pairing.
+      try {
+        const saved = localStorage.getItem(TOKEN_KEY);
+        if (saved && saved !== this.#token) this.#token = saved;
+      } catch { /* storage blocked: nothing saved to fall back to */ }
       this.#wanted = false;
       this.#teardown({ deleteSession: false });
       this.#hud.setState('idle');
-      this.#showConnectScreen('Pairing token rejected — check the token on your PC.');
+      this.#showConnectScreen('Pairing token rejected by the server — scan the QR code or enter the new token.');
       return;
     }
-    this.#scheduleReconnect(err.message);
+    this.#scheduleReconnect(connectFailureReason(err));
   }
 
   #onTrack(ev) {
@@ -293,7 +326,14 @@ class App {
           return;
         }
         if (msg.video) this.#touch.setVideoGeometry(msg.video);
+        // Persist the token only now that the server accepted it: the QR-scan
+        // path deliberately defers persistence to this point so a mis-scanned
+        // "token" can never clobber a working saved pairing (idempotent for
+        // the URL/manual-entry paths, which already persisted it).
+        this.#persistToken(this.#token);
         this.#backoffIndex = 0; // healthy session: future failures back off from 1 s
+        this.#everConnected = true;
+        document.getElementById('overlay-connect').hidden = true;
         this.#hud.setState('connected');
         // Re-apply the quality choice after every hello so it survives
         // reconnects and server restarts (the encoder starts from its own
@@ -432,6 +472,7 @@ class App {
   }
 
   #teardown({ deleteSession: doDelete }) {
+    this.#attemptSeq++; // invalidate any in-flight #connect continuation
     clearInterval(this.#probeTimer);
     clearInterval(this.#statsTimer);
     clearTimeout(this.#reconnectTimer);
@@ -478,13 +519,21 @@ class App {
     if (!this.#wanted || this.#fatalError || this.#reconnectTimer) return;
     this.#teardown({ deleteSession: true });
     this.#hud.setState('reconnecting');
-    this.#hud.toast(`Reconnecting: ${reason}`);
+    if (this.#everConnected) {
+      // Mid-session blip: the stream UI is up; a toast is the right volume.
+      this.#hud.toast(`Reconnecting: ${reason}`);
+    } else {
+      // Never connected yet: the connect screen is the surface — show the
+      // SPECIFIC failure with Retry / Scan QR / Edit token at hand.
+      this.#showConnectStatus(`Connecting to ${location.host}… failed: ${reason} — retrying automatically.`);
+    }
     const base = BACKOFF_MS[Math.min(this.#backoffIndex, BACKOFF_MS.length - 1)];
     this.#backoffIndex += 1;
     const delay = base * (0.85 + Math.random() * 0.3); // jitter avoids thundering herd
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = null;
       if (!this.#wanted) return;
+      if (!this.#everConnected) this.#showConnectStatus(`Connecting to ${location.host}…`);
       this.#connect().catch((err) => this.#onConnectFailure(err));
     }, delay);
   }
@@ -584,6 +633,10 @@ class App {
         const text = (await navigator.clipboard.readText()).trim();
         if (text) {
           input.value = text;
+          // Programmatic assignment fires no 'input' event, so lift the
+          // password mask here too — the user must be able to visually
+          // verify a freshly pasted token before submitting it.
+          input.type = 'text';
           input.focus();
           return;
         }
@@ -593,6 +646,148 @@ class App {
       input.focus();
       this.#hud.toast('Clipboard unavailable — long-press the field and Paste.');
     });
+    // A prefilled saved token renders masked (it is a credential); the mask
+    // lifts as soon as the user edits, so a fresh token is typed in the clear.
+    input.addEventListener('input', () => {
+      input.type = 'text';
+    });
+
+    // Status-mode actions (auto-connect with a saved pairing).
+    document.getElementById('connect-retry').addEventListener('click', () => {
+      if (this.#wanted) {
+        // Only actionable while waiting out a backoff; during an in-flight
+        // attempt a second #connect would race it (double sessions).
+        if (!this.#reconnectTimer) return;
+        clearTimeout(this.#reconnectTimer);
+        this.#reconnectTimer = null;
+        this.#showConnectStatus(`Connecting to ${location.host}…`);
+        this.#connect().catch((err) => this.#onConnectFailure(err));
+      } else if (this.#token) {
+        this.start(this.#token);
+      }
+    });
+    document.getElementById('connect-edit').addEventListener('click', () => {
+      // Stop the auto-attempt so the form is calm while the user edits.
+      this.#wanted = false;
+      this.#teardown({ deleteSession: true });
+      this.#hud.setState('idle');
+      this.#connectMode('entry');
+      input.focus();
+    });
+    for (const btn of document.querySelectorAll('.connect-scan')) {
+      btn.addEventListener('click', () => this.#openScanner());
+    }
+  }
+
+  /**
+   * Switch the connect overlay between 'entry' (token form) and 'status'
+   * (auto-connect progress). Entry mode prefills the known token, MASKED.
+   */
+  #connectMode(mode) {
+    document.getElementById('connect-status').hidden = mode !== 'status';
+    document.getElementById('connect-entry').hidden = mode !== 'entry';
+    if (mode === 'entry') {
+      document.getElementById('connect-submit').disabled = false;
+      const input = document.getElementById('connect-token');
+      if (this.#token) {
+        input.value = this.#token;
+        input.type = 'password'; // masked; typing lifts the mask (see wiring)
+      }
+    }
+  }
+
+  /** Show the connect overlay in status mode with a live progress line. */
+  #showConnectStatus(message) {
+    document.getElementById('overlay-connect').hidden = false;
+    document.getElementById('overlay-start').hidden = true;
+    this.#connectMode('status');
+    document.getElementById('connect-status-text').textContent = message;
+  }
+
+  #clearSavedToken() {
+    try {
+      // Clear the stored pairing only when it IS the token the server just
+      // rejected: a bounced attempt with a freshly scanned token (which is
+      // never persisted before its first hello, see #onScanResult) must not
+      // delete a different, still-working saved pairing.
+      if (localStorage.getItem(TOKEN_KEY) === this.#token) {
+        localStorage.removeItem(TOKEN_KEY);
+      }
+    } catch {
+      /* storage blocked: nothing was saved anyway */
+    }
+  }
+
+  // ---- QR scanner ---------------------------------------------------------
+
+  #wireScanner() {
+    document.getElementById('scan-cancel').addEventListener('click', () => {
+      this.#closeScanner();
+    });
+  }
+
+  #openScanner() {
+    const overlay = document.getElementById('overlay-scan');
+    const note = document.getElementById('scan-note');
+    note.hidden = true;
+    note.textContent = '';
+    overlay.hidden = false;
+    if (!this.#scanner) {
+      this.#scanner = new QrScanner({
+        video: document.getElementById('scan-video'),
+        onResult: (text) => this.#onScanResult(text),
+        onError: (message) => {
+          // Camera/decoder unavailable: say why, right on the scan card, and
+          // hand the user back to paste after a beat.
+          note.textContent = message;
+          note.hidden = false;
+          setTimeout(() => {
+            this.#closeScanner();
+            // The 2.5 s beat can race a connect. If a hello landed meanwhile
+            // (connect overlay hidden, stream live) forcing entry mode here
+            // would paint an undismissable overlay OVER the live stream (form
+            // submit no-ops while #wanted, and entry mode has no close). And
+            // while an auto-connect attempt still owns the connect screen
+            // (#wanted, status mode), it keeps it — closing the scanner is
+            // enough to reveal it again.
+            if (this.#everConnected || this.#wanted
+              || document.getElementById('overlay-connect').hidden) return;
+            this.#connectMode('entry');
+            document.getElementById('overlay-connect').hidden = false;
+          }, 2500);
+        },
+      });
+    }
+    this.#scanner.start();
+  }
+
+  #closeScanner() {
+    this.#scanner?.stop();
+    document.getElementById('overlay-scan').hidden = true;
+  }
+
+  #onScanResult(text) {
+    const token = tokenFromScan(text);
+    if (!token) {
+      // Some other QR code: keep scanning rather than failing the flow.
+      const note = document.getElementById('scan-note');
+      note.textContent = 'That QR code is not a WoW Mobile pairing code — try the one wowstreamd shows.';
+      note.hidden = false;
+      this.#scanner.start();
+      return;
+    }
+    this.#closeScanner();
+    // Deliberately NOT persisted yet: a scan the filter didn't catch (random
+    // text QR) would otherwise overwrite a WORKING saved pairing, and the
+    // server's 401 then wipes the stored token — one stray scan destroying a
+    // valid pairing. The token is persisted on the first successful hello
+    // (see #onCtrlMessage), when the server has proven it real.
+    if (this.#wanted) {
+      // Replace any in-flight attempt with the freshly scanned pairing.
+      this.#wanted = false;
+      this.#teardown({ deleteSession: true });
+    }
+    this.start(token);
   }
 
   #persistToken(token) {
@@ -622,13 +817,25 @@ class App {
   #showConnectScreen(message) {
     const overlay = document.getElementById('overlay-connect');
     overlay.hidden = false;
-    document.getElementById('connect-submit').disabled = false;
     document.getElementById('overlay-start').hidden = true;
+    // With a saved pairing the screen opens in STATUS mode (reason + Retry /
+    // Scan QR / Edit token) — never a bare empty token field. Entry mode is
+    // for no pairing at all, or right after the saved token was rejected and
+    // cleared (#clearSavedToken), when re-entry is genuinely required.
+    let saved = null;
+    try {
+      saved = localStorage.getItem(TOKEN_KEY);
+    } catch {
+      /* storage blocked */
+    }
+    if (saved) {
+      this.#showConnectStatus(message ?? 'Disconnected.');
+      return;
+    }
+    this.#connectMode('entry');
     const note = document.getElementById('connect-note');
     note.textContent = message ?? '';
     note.hidden = !message;
-    const input = document.getElementById('connect-token');
-    if (this.#token) input.value = this.#token;
   }
 
   #wireStartOverlay() {
@@ -655,6 +862,29 @@ class App {
     this.#hud.setAudio(on);
     if (on && this.#started) this.#video.play().catch(() => {});
   }
+}
+
+/**
+ * Turn a connect failure into a SPECIFIC, plain-language reason for the
+ * connect screen. Distinguished classes: server unreachable (timeout),
+ * network/TLS-certificate failure (fetch TypeError — the two are not
+ * separable from JS, so both remedies are named), signaling HTTP errors, and
+ * everything else (stream/negotiation failures) verbatim.
+ * AuthError never reaches here — token rejection is handled explicitly.
+ */
+function connectFailureReason(err) {
+  if (err instanceof SignalError && err.status === 0) {
+    return 'server unreachable (no response — is wowstreamd running on the PC?)';
+  }
+  if (err instanceof SignalError) {
+    return err.message; // "SDP offer failed: HTTP 409 — …": already specific
+  }
+  if (err instanceof TypeError) {
+    // fetch() network-level failure: connection refused, DNS, or a TLS
+    // certificate the phone has not accepted yet (self-signed).
+    return `can't reach ${location.host} — network problem, or the TLS certificate isn't accepted yet (open ${location.origin} in the browser once and accept it)`;
+  }
+  return err?.message ?? String(err);
 }
 
 /**

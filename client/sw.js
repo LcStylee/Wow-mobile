@@ -1,8 +1,14 @@
 // Service worker: install/offline shell ONLY. Signaling (/api/) and WebRTC
 // are always live — /api/ requests are never intercepted, let alone cached.
-// Bump CACHE on any shell change; activation drops older caches.
+//
+// Cache versioning is AUTOMATIC: the server stamps VERSION with its own
+// release version at serve time (signal.stampVersion), so the cache name
+// changes on every release and activation drops the previous shell. A stale
+// cached client silently missing new fixes was a live field failure — no
+// human "bump the cache constant" step can be trusted to remember.
 
-const CACHE = 'wowmobile-shell-v3';
+const VERSION = '__WM_VERSION__';
+const CACHE = 'wowmobile-shell-' + VERSION;
 
 const SHELL = [
   './',
@@ -20,10 +26,15 @@ const SHELL = [
   './js/keyboard.js',
   './js/net.js',
   './js/protocol.js',
+  './js/qrscan.js',
   './js/quickbar.js',
   './js/settings.js',
   './js/signaling.js',
+  './js/version.js',
   './js/vk.js',
+  // The QR decoder fallback is lazy-loaded, but cached up front so the
+  // installed PWA can scan while offline from the signaling origin.
+  './vendor/jsQR.js',
 ];
 
 self.addEventListener('install', (event) => {

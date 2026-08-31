@@ -99,6 +99,15 @@ type System interface {
 	// GameWindowPresent reports whether a visible, non-minimized window with
 	// titleSubstr in its title exists.
 	GameWindowPresent(titleSubstr string) bool
+	// EnforceGameWindowSize resizes the game window's CLIENT area to w x h
+	// when it is a plain windowed (non-maximized, non-fullscreen) window of a
+	// different size — windowed 1.12 clients ignore gxResolution entirely, so
+	// after launch the window must be sized directly (SetWindowPos) for the
+	// portrait layout to apply on every client. Returns a human-readable
+	// outcome and acted=false when nothing needed doing (window already
+	// sized, or not found). Never fatal: a revert/skip is reported, and the
+	// capture adapts to the actual window regardless.
+	EnforceGameWindowSize(titleSubstr string, w, h int) (msg string, acted bool)
 	// LaunchGame starts the game executable without waiting for it.
 	LaunchGame(exePath string) error
 	// PrimaryWorkArea returns the primary monitor's work area (the desktop
@@ -848,7 +857,7 @@ func persistFFmpeg(opts *Options, path string) {
 func stepGameRunning(opts *Options, gameExe string) error {
 	const label = "Game running"
 	if opts.Sys.GameWindowPresent(opts.WindowTitle) {
-		step(opts, 5, StepRunning, label, hoststatus.StateOK, "window found")
+		step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts))
 		return nil
 	}
 
@@ -871,8 +880,24 @@ func stepGameRunning(opts *Options, gameExe string) error {
 	if err := waitForGameWindow(opts, true, "the WoW window to appear"); err != nil {
 		return fmt.Errorf("%w after launching %s; check that the game started (windowed, not minimized), then restart wowstreamd", err, filepath.Base(gameExe))
 	}
-	step(opts, 5, StepRunning, label, hoststatus.StateOK, "window found")
+	step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts))
 	return nil
+}
+
+// gameWindowDetail builds the game-running step's result line: "window found"
+// plus the direct-resize outcome when one was needed. Windowed 1.12 clients
+// ignore the gxResolution CVar (it governs fullscreen only), so the wizard
+// resizes the found window to the decided resolution via SetWindowPos — the
+// only mechanism that works on every windowed client. Failures/reverts are
+// reported in the same line, never fatal: capture adapts to the actual
+// window regardless.
+func gameWindowDetail(opts *Options) string {
+	detail := "window found"
+	if msg, acted := opts.Sys.EnforceGameWindowSize(opts.WindowTitle, opts.Width, opts.Height); acted {
+		fmt.Fprintln(opts.Out, "  "+msg)
+		detail += " — " + msg
+	}
+	return detail
 }
 
 // waitForGameWindow polls GameWindowPresent until it matches present, with a

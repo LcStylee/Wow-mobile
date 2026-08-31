@@ -61,6 +61,30 @@ jobs:
             node --check "$f" || exit 1
           done
 
+      # End-to-end streaming gate: a real wowstreamd (--capture test: ffmpeg
+      # testsrc2 through the production encoder flags, Annex-B parser, and
+      # pion sample path) streamed into a real browser over real WebRTC — the
+      # suite asserts frames actually DECODE (inbound-rtp framesDecoded), the
+      # picture is NOT black (canvas pixel variance), and input round-trips.
+      # Playwright's Chromium is built without H264 and would SKIP the decode
+      # test, so this step guarantees a real Google Chrome itself (installing
+      # one when the runner image stops preinstalling it — branded-channel
+      # installs error when Chrome already exists, hence the presence check)
+      # AND sets WOWMOBILE_REQUIRE_H264 so a skipped decode test is a hard
+      # job failure, never a silent green: the gate must RUN to count.
+      - name: e2e streaming pipeline (Playwright)
+        working-directory: e2e
+        env:
+          WOWMOBILE_REQUIRE_H264: "1"
+        run: |
+          sudo apt-get install -y -qq ffmpeg
+          npm ci
+          if ! command -v google-chrome >/dev/null && ! command -v google-chrome-stable >/dev/null; then
+            npx playwright install --with-deps chrome
+          fi
+          npx playwright install --with-deps chromium
+          npm test
+
       - name: addon Lua syntax check
         run: |
           npm install --no-save luaparse

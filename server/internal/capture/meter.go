@@ -68,6 +68,15 @@ func (m *Meter) Add(byteLen int, keyframe bool) {
 	m.lastAU = now
 }
 
+// TotalFrames returns the monotonic count of access units delivered since
+// startup. Unlike Snapshot it perturbs no rate baselines, so watchdogs can
+// poll it freely without skewing the stats loops.
+func (m *Meter) TotalFrames() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.frames
+}
+
 // Snapshot returns rates since the previous Snapshot call.
 func (m *Meter) Snapshot() Stats {
 	now := time.Now()

@@ -1,0 +1,13 @@
+{
+  "name": "wowmobile-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end pipeline gate: wowstreamd --capture test streamed into a real Chromium; asserts the video actually decodes (packets, framesDecoded, geometry, non-black pixels) and that input round-trips.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

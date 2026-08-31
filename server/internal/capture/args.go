@@ -62,6 +62,15 @@ type Config struct {
 	// bare `-init_hw_device d3d11va` opens. Meaningless when CaptureRect is
 	// nil.
 	CaptureOutput int
+	// TestSource replaces the window grabber with ffmpeg's synthetic testsrc2
+	// pattern (--capture test): a portable, colorful, always-moving input that
+	// exercises the IDENTICAL encoder flags, Annex-B parser, and WebRTC sample
+	// path as production. It overrides CaptureRect/WindowTitle entirely.
+	TestSource bool
+	// TestFrames, when > 0 with TestSource, bounds the test input to that many
+	// frames (-frames:v) — the startup self-check probe uses it; 0 streams
+	// forever like production.
+	TestFrames int
 }
 
 // WithBitrate returns a copy of c with a new bitrate.
@@ -102,6 +111,22 @@ func (c Config) VideoArgs() []string {
 // encoder. The other encoders consume system-memory frames, so they use
 // gdigrab, which also supports true window capture by title.
 func (c Config) inputArgs() []string {
+	if c.TestSource {
+		// -re paces lavfi to real time: testsrc2 would otherwise generate
+		// frames as fast as the encoder eats them, bursting RTP far above the
+		// nominal frame rate. testsrc2 (not testsrc) because its content is
+		// colorful and moving everywhere — a decode-side pixel-variance check
+		// can prove the picture is alive. The encoder half is untouched: the
+		// -vf scale/format chain and every codec flag are exactly production's.
+		args := []string{
+			"-f", "lavfi", "-re",
+			"-i", fmt.Sprintf("testsrc2=size=%dx%d:rate=%d", c.Width, c.Height, c.FPS),
+		}
+		if c.TestFrames > 0 {
+			args = append(args, "-frames:v", strconv.Itoa(c.TestFrames))
+		}
+		return args
+	}
 	if c.Encoder == NVENC && c.CaptureRect != nil {
 		return []string{
 			"-init_hw_device", "d3d11va",
@@ -161,8 +186,10 @@ func (c Config) encoderArgs() []string {
 			"-forced-idr", "1", // requested keyframes become true IDRs, not I-slices
 			"-profile:v", "baseline",
 		}
-		if c.CaptureRect == nil {
-			// gdigrab fallback delivers BGRA in system memory; give NVENC NV12.
+		if c.CaptureRect == nil || c.TestSource {
+			// gdigrab fallback and the lavfi test source deliver system-memory
+			// frames (BGRA / yuv420p); give NVENC NV12. Only the ddagrab path
+			// hands it D3D11 textures directly.
 			args = append(args, "-vf", scaleTo(c.Width, c.Height, "nv12"))
 		}
 		return args

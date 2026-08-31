@@ -28,6 +28,11 @@
          "why does it look wrong" is answerable at a glance. -->
     <aside id="warning" class="note error" hidden role="alert"></aside>
 
+    <!-- Live capture-health warning (server st.captureWarning): the running
+         capture is delivering ZERO frames — shows ffmpeg's own stderr tail so
+         a black stream is diagnosable by reading this row. -->
+    <aside id="capture-warning" class="note error" hidden role="alert"></aside>
+
     <!-- Legacy-client note (1.12 private servers): persistent, honest. -->
     <aside id="addon-note" class="note" hidden></aside>
 
@@ -52,6 +57,10 @@
         <h2 class="mt">Live status</h2>
         <dl id="live">
           <div><dt>Encoder</dt><dd id="encoder">–</dd></div>
+          <!-- Startup pipeline self-check: ~2 s of test pattern through the
+               selected encoder + parser. "video pipeline OK (N frames)" or
+               ffmpeg's stderr tail — readable before any phone connects. -->
+          <div><dt>Pipeline</dt><dd id="self-check">checking…</dd></div>
           <div><dt>Window</dt><dd id="resolution">–</dd></div>
           <div><dt>Client</dt><dd id="client-type">–</dd></div>
           <div><dt>Phone</dt><dd id="phone">not connected</dd></div>
