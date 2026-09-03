@@ -42,8 +42,13 @@ local function RatioMax()
 end
 
 function Config.HeightBounds()
+	-- The max uses floor WITHOUT rounding: round-to-nearest could advertise
+	-- up to 0.5 design px ABOVE the true geometric maximum, so setting the
+	-- height to the advertised bound (one tap-hold in Settings) would trip
+	-- Viewport's clamp on a legitimate window. Viewport additionally shaves
+	-- sub-pixel overshoot silently — belt and braces.
 	return math.floor(RATIO_MIN * DESIGN_WIDTH + 0.5),
-		math.floor(RatioMax() * DESIGN_WIDTH + 0.5)
+		math.floor(RatioMax() * DESIGN_WIDTH)
 end
 
 local function Clamp(v, lo, hi)

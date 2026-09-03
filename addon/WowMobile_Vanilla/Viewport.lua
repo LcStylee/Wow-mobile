@@ -66,7 +66,11 @@ end
 -- cap only engages when the window is not the portrait 9:16 shape the design
 -- assumes (a landscape/clamped window — the "world stretched across the
 -- whole screen" field failure); the caller reports that.
--- Returns heightUI, clamped(boolean).
+-- Returns heightUI, clamped(boolean); clamped is true only for a MEANINGFUL
+-- overshoot: Config.HeightBounds advertises whole design px (and float math
+-- adds noise), so a height configured exactly at the advertised bound can
+-- exceed the true geometric max by a sub-pixel amount on a fully legitimate
+-- window — that is shaved silently, never reported.
 local function ComputeHeightUI()
 	local ratio = Viewport.HeightPx() / 1080
 	local heightUI = UIParent:GetWidth() * ratio
@@ -76,7 +80,10 @@ local function ComputeHeightUI()
 		maxUI = UIParent:GetHeight() * 0.25 -- degenerate window: keep SOME world
 	end
 	if heightUI > maxUI then
-		return maxUI, true
+		if heightUI > maxUI + WM.Px(2) then
+			return maxUI, true -- real shape mismatch: caller raises the banner
+		end
+		return maxUI, false -- rounding/float overshoot (< 2 design px): silent
 	end
 	return heightUI, false
 end
