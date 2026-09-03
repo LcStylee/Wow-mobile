@@ -43,35 +43,38 @@ local GAP = 8
 local CELL = 114
 local COLS = 8
 
-local sheet, confirm
-local browseArea, sellArea, ownedArea
-local browseScroller, sellScroller, ownedScroller
-local tabBtns = {}
-local curTab = "browse"
-
--- Browse state/widgets.
-local searchBox, searchBtn, catBtn, qualityBtn, usableBtn
-local prevBtn, nextBtn, pageText, resultText
-local catOverlay, catScroller, catRows = nil, nil, {}
-local browseRows = {}
-local page = 0
-local classIndex = nil   -- nil = all categories (1-based into GetAuctionItemClasses)
-local qualityIndex = nil -- nil = any
-local usableOnly = nil   -- nil | 1
-local morePages = false
-
--- Sell state/widgets.
-local sellSlot, sellName, bidStepper, buyoutStepper, depositText, createBtn
-local durationBtns = {}
-local duration = 1440 -- minutes: 120 / 480 / 1440
-local sellCells = {}
-local sellGridTop = 0
-
--- Owned list.
-local ownedRows = {}
+-- Shared module state lives in ONE table, not in individual module-level
+-- locals: Lua 5.0 caps a function at 32 upvalues AT COMPILE TIME, and the big
+-- OnInit closure below captured ~48 individual locals — the whole chunk would
+-- fail to compile ("too many upvalues", the Mail.lua v0.3.3 field failure)
+-- before the crash guard could even see the module. Every closure now
+-- captures just M (plus the local helper functions), far below the limit;
+-- tools/lua50check.js counts upvalues per function to keep it that way.
+local M = {
+	-- sheet, confirm, browseArea/sellArea/ownedArea + their scrollers, the
+	-- filter/pager widgets, catOverlay/catScroller, the sell widgets and the
+	-- tab buttons are all built in OnInit.
+	tabBtns = {},
+	curTab = "browse",
+	-- Browse state.
+	catRows = {},
+	browseRows = {},
+	page = 0,
+	classIndex = nil,   -- nil = all categories (1-based into GetAuctionItemClasses)
+	qualityIndex = nil, -- nil = any
+	usableOnly = nil,   -- nil | 1
+	morePages = false,
+	-- Sell state.
+	durationBtns = {},
+	duration = 1440, -- minutes: 120 / 480 / 1440
+	sellCells = {},
+	sellGridTop = 0,
+	-- Owned list.
+	ownedRows = {},
+}
 
 local function IsOpen()
-	return sheet ~= nil and sheet:IsShown()
+	return M.sheet ~= nil and M.sheet:IsShown()
 end
 
 local function QualityColoredName(name, quality)
@@ -99,16 +102,16 @@ local function SendQuery()
 		WM.Print("Auction query throttled — try again in a moment.")
 		return false
 	end
-	local text = searchBox:GetText()
-	QueryAuctionItems(text or "", nil, nil, nil, classIndex, nil,
-		page, usableOnly, qualityIndex)
+	local text = M.searchBox:GetText()
+	QueryAuctionItems(text or "", nil, nil, nil, M.classIndex, nil,
+		M.page, M.usableOnly, M.qualityIndex)
 	return true
 end
 
 local function AcquireBrowseRow(i)
-	local row = browseRows[i]
+	local row = M.browseRows[i]
 	if row then return row end
-	row = CreateFrame("Button", nil, browseScroller.child)
+	row = CreateFrame("Button", nil, M.browseScroller.child)
 	row:SetHeight(WM.Px(ROW_H))
 	WM.SkinFrame(row, WM.Colors.button)
 	row.icon = row:CreateTexture(nil, "ARTWORK")
@@ -145,7 +148,7 @@ local function AcquireBrowseRow(i)
 	row.buyoutBtn:SetScript("OnClick", function()
 		local index, amount, label, rawName =
 			this.index, this.amount, this.itemLabel, this.rawName
-		confirm.Ask("Buy out " .. label .. " for " .. WM.FormatMoney(amount) ..
+		M.confirm.Ask("Buy out " .. label .. " for " .. WM.FormatMoney(amount) ..
 			"?", "Buy out", function()
 			local name, _, _, _, _, _, _, _, buyoutPrice =
 				GetAuctionItemInfo("list", index)
@@ -161,7 +164,7 @@ local function AcquireBrowseRow(i)
 	row.bidBtn:SetScript("OnClick", function()
 		local index, amount, label, rawName =
 			this.index, this.amount, this.itemLabel, this.rawName
-		confirm.Ask("Bid " .. WM.FormatMoney(amount) .. " on " .. label ..
+		M.confirm.Ask("Bid " .. WM.FormatMoney(amount) .. " on " .. label ..
 			"?", "Place bid", function()
 			local name, _, _, _, _, _, minBid, minIncrement, _, bidAmount,
 				highBidder = GetAuctionItemInfo("list", index)
@@ -184,12 +187,12 @@ local function AcquireBrowseRow(i)
 	WM.AttachTooltip(row, function(tt, self)
 		tt:SetAuctionItem("list", self.index)
 	end)
-	browseRows[i] = row
+	M.browseRows[i] = row
 	return row
 end
 
 local function RenderBrowse()
-	if not IsOpen() or curTab ~= "browse" then return end
+	if not IsOpen() or M.curTab ~= "browse" then return end
 	local shown, total = GetNumAuctionItems("list")
 	local playerName = UnitName("player")
 	for i = 1, shown do
@@ -239,21 +242,21 @@ local function RenderBrowse()
 			WM.SetButtonEnabled(row.buyoutBtn, false)
 		end
 		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", browseScroller.child, "TOPLEFT",
+		row:SetPoint("TOPLEFT", M.browseScroller.child, "TOPLEFT",
 			0, -WM.Px((i - 1) * (ROW_H + GAP)))
-		row:SetPoint("TOPRIGHT", browseScroller.child, "TOPRIGHT",
+		row:SetPoint("TOPRIGHT", M.browseScroller.child, "TOPRIGHT",
 			0, -WM.Px((i - 1) * (ROW_H + GAP)))
 		row:Show()
 	end
-	for i = shown + 1, table.getn(browseRows) do
-		browseRows[i]:Hide()
+	for i = shown + 1, table.getn(M.browseRows) do
+		M.browseRows[i]:Hide()
 	end
-	browseScroller.SetContentHeight(WM.Px(shown * (ROW_H + GAP)))
-	morePages = (page + 1) * PAGE_SIZE < (total or 0)
+	M.browseScroller.SetContentHeight(WM.Px(shown * (ROW_H + GAP)))
+	M.morePages = (M.page + 1) * PAGE_SIZE < (total or 0)
 	local pages = math.ceil((total or 0) / PAGE_SIZE)
 	if pages < 1 then pages = 1 end
-	pageText:SetText("Page " .. (page + 1) .. " / " .. pages)
-	resultText:SetText((total or 0) .. " results")
+	M.pageText:SetText("Page " .. (M.page + 1) .. " / " .. pages)
+	M.resultText:SetText((total or 0) .. " results")
 end
 
 --------------------------------------------------------------------------------
@@ -262,20 +265,20 @@ end
 
 local function UpdateFilterLabels()
 	local cats = { GetAuctionItemClasses() }
-	catBtn.label:SetText(classIndex and cats[classIndex] or "All categories")
-	if qualityIndex then
-		local q = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[qualityIndex]
-		local qname = getglobal("ITEM_QUALITY" .. qualityIndex .. "_DESC")
-			or ("Quality " .. qualityIndex)
+	M.catBtn.label:SetText(M.classIndex and cats[M.classIndex] or "All categories")
+	if M.qualityIndex then
+		local q = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[M.qualityIndex]
+		local qname = getglobal("ITEM_QUALITY" .. M.qualityIndex .. "_DESC")
+			or ("Quality " .. M.qualityIndex)
 		if q then
 			qname = string.format("|cff%02x%02x%02x%s|r",
 				q.r * 255, q.g * 255, q.b * 255, qname)
 		end
-		qualityBtn.label:SetText("Min: " .. qname)
+		M.qualityBtn.label:SetText("Min: " .. qname)
 	else
-		qualityBtn.label:SetText("Quality: any")
+		M.qualityBtn.label:SetText("Quality: any")
 	end
-	usableBtn.label:SetText(usableOnly and "Usable: yes" or "Usable: all")
+	M.usableBtn.label:SetText(M.usableOnly and "Usable: yes" or "Usable: all")
 end
 
 -- Applies a filter change and requeries at page 0. The filter buttons are
@@ -288,32 +291,32 @@ end
 -- only committed when the query actually sends; on refusal every piece of
 -- state, labels included, still describes the list on screen.
 local function Requery(newClass, newQuality, newUsable)
-	local oldClass, oldQuality, oldUsable = classIndex, qualityIndex, usableOnly
-	local oldPage = page
-	classIndex, qualityIndex, usableOnly = newClass, newQuality, newUsable
-	page = 0
+	local oldClass, oldQuality, oldUsable = M.classIndex, M.qualityIndex, M.usableOnly
+	local oldPage = M.page
+	M.classIndex, M.qualityIndex, M.usableOnly = newClass, newQuality, newUsable
+	M.page = 0
 	UpdateFilterLabels()
 	if not SendQuery() then
-		classIndex, qualityIndex, usableOnly = oldClass, oldQuality, oldUsable
-		page = oldPage
+		M.classIndex, M.qualityIndex, M.usableOnly = oldClass, oldQuality, oldUsable
+		M.page = oldPage
 		UpdateFilterLabels()
 	end
 end
 
 local function AcquireCatRow(i)
-	local row = catRows[i]
+	local row = M.catRows[i]
 	if row then return row end
-	row = WM.CreateTouchButton(catScroller.child, 100, 100, nil, 30)
+	row = WM.CreateTouchButton(M.catScroller.child, 100, 100, nil, 30)
 	row.label:ClearAllPoints()
 	row.label:SetPoint("LEFT", row, "LEFT", WM.Px(24), 0)
 	row.label:SetJustifyH("LEFT")
 	row.label:SetWidth(WM.Px(700))
 	row:SetScript("OnClick", function()
 		local newClass = this.classIndex
-		catOverlay:Hide()
-		Requery(newClass, qualityIndex, usableOnly)
+		M.catOverlay:Hide()
+		Requery(newClass, M.qualityIndex, M.usableOnly)
 	end)
-	catRows[i] = row
+	M.catRows[i] = row
 	return row
 end
 
@@ -322,9 +325,9 @@ local function OpenCategoryPicker()
 	local used = 0
 	local function Place(row)
 		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", catScroller.child, "TOPLEFT",
+		row:SetPoint("TOPLEFT", M.catScroller.child, "TOPLEFT",
 			0, -WM.Px((used - 1) * 108))
-		row:SetPoint("TOPRIGHT", catScroller.child, "TOPRIGHT",
+		row:SetPoint("TOPRIGHT", M.catScroller.child, "TOPRIGHT",
 			0, -WM.Px((used - 1) * 108))
 		row:SetHeight(WM.Px(100))
 		row:Show()
@@ -341,12 +344,12 @@ local function OpenCategoryPicker()
 		row.label:SetText(cats[i])
 		Place(row)
 	end
-	for i = used + 1, table.getn(catRows) do
-		catRows[i]:Hide()
+	for i = used + 1, table.getn(M.catRows) do
+		M.catRows[i]:Hide()
 	end
-	catScroller.SetContentHeight(WM.Px(used * 108))
-	catScroller.ScrollToTop()
-	catOverlay:Show()
+	M.catScroller.SetContentHeight(WM.Px(used * 108))
+	M.catScroller.ScrollToTop()
+	M.catOverlay:Show()
 end
 
 --------------------------------------------------------------------------------
@@ -354,36 +357,36 @@ end
 --------------------------------------------------------------------------------
 
 local function RefreshSell()
-	if not sellArea then return end
+	if not M.sellArea then return end
 	local name, texture, count, quality = GetAuctionSellItemInfo()
 	if name then
-		sellSlot.icon:SetTexture(texture or WM.TEX_QUESTION)
-		sellSlot.icon:SetVertexColor(1, 1, 1)
-		sellName:SetText(QualityColoredName(name, quality) ..
+		M.sellSlot.icon:SetTexture(texture or WM.TEX_QUESTION)
+		M.sellSlot.icon:SetVertexColor(1, 1, 1)
+		M.sellName:SetText(QualityColoredName(name, quality) ..
 			(count and count > 1 and (" x" .. count) or ""))
-		local ok, deposit = pcall(CalculateAuctionDeposit, duration)
-		depositText:SetText("Deposit: " .. WM.FormatMoney(ok and deposit or 0))
+		local ok, deposit = pcall(CalculateAuctionDeposit, M.duration)
+		M.depositText:SetText("Deposit: " .. WM.FormatMoney(ok and deposit or 0))
 	else
-		sellSlot.icon:SetTexture(WM.TEX_WHITE)
-		sellSlot.icon:SetVertexColor(0.12, 0.12, 0.14)
-		sellName:SetText("|cff9999a3No item loaded|r")
-		depositText:SetText("Deposit: —")
+		M.sellSlot.icon:SetTexture(WM.TEX_WHITE)
+		M.sellSlot.icon:SetVertexColor(0.12, 0.12, 0.14)
+		M.sellName:SetText("|cff9999a3No item loaded|r")
+		M.depositText:SetText("Deposit: —")
 	end
-	for d, b in pairs(durationBtns) do
-		if d == duration then
+	for d, b in pairs(M.durationBtns) do
+		if d == M.duration then
 			WM.TintBorder(b, WM.Colors.accent)
 		else
 			WM.TintBorder(b, WM.Colors.border)
 		end
 	end
-	WM.SetButtonEnabled(createBtn, name ~= nil and bidStepper.GetCopper() > 0)
+	WM.SetButtonEnabled(M.createBtn, name ~= nil and M.bidStepper.GetCopper() > 0)
 end
 
 local function CreateAuction()
 	local name = GetAuctionSellItemInfo()
 	if not name then return end
-	local bid = bidStepper.GetCopper()
-	local buyout = buyoutStepper.GetCopper()
+	local bid = M.bidStepper.GetCopper()
+	local buyout = M.buyoutStepper.GetCopper()
 	if bid <= 0 then
 		WM.Print("Auction: set a starting bid first.")
 		return
@@ -392,7 +395,7 @@ local function CreateAuction()
 		WM.Print("Auction: buyout can't be below the starting bid.")
 		return
 	end
-	StartAuction(bid, buyout, duration)
+	StartAuction(bid, buyout, M.duration)
 end
 
 local function LoadSellFromBag(bag, slot)
@@ -433,7 +436,7 @@ local function UpdateSellCell(cell)
 end
 
 local function CreateSellCell(bag, slot)
-	local cell = CreateFrame("Button", nil, sellScroller.child)
+	local cell = CreateFrame("Button", nil, M.sellScroller.child)
 	cell:SetWidth(WM.Px(CELL))
 	cell:SetHeight(WM.Px(CELL))
 	WM.SkinFrame(cell, { 0.07, 0.07, 0.09, 1 })
@@ -464,33 +467,33 @@ local function CreateSellCell(bag, slot)
 end
 
 local function RenderSellBags()
-	if not IsOpen() or curTab ~= "sell" then return end
+	if not IsOpen() or M.curTab ~= "sell" then return end
 	local index = 0
 	for bag = 0, 4 do
 		for slot = 1, GetContainerNumSlots(bag) do
 			index = index + 1
 			local key = bag .. ":" .. slot
-			local cell = sellCells[key]
+			local cell = M.sellCells[key]
 			if not cell then
 				cell = CreateSellCell(bag, slot)
-				sellCells[key] = cell
+				M.sellCells[key] = cell
 			end
 			local col = math.mod(index - 1, COLS)
 			local row = math.floor((index - 1) / COLS)
 			cell:ClearAllPoints()
-			cell:SetPoint("TOPLEFT", sellScroller.child, "TOPLEFT",
-				WM.Px(col * (CELL + 6)), -WM.Px(sellGridTop + row * (CELL + 6)))
+			cell:SetPoint("TOPLEFT", M.sellScroller.child, "TOPLEFT",
+				WM.Px(col * (CELL + 6)), -WM.Px(M.sellGridTop + row * (CELL + 6)))
 			UpdateSellCell(cell)
 			cell:Show()
 		end
 	end
-	for _, cell in pairs(sellCells) do
+	for _, cell in pairs(M.sellCells) do
 		if cell.slot > GetContainerNumSlots(cell.bag) then
 			cell:Hide()
 		end
 	end
-	sellScroller.SetContentHeight(
-		WM.Px(sellGridTop + math.ceil(index / COLS) * (CELL + 6) + 8))
+	M.sellScroller.SetContentHeight(
+		WM.Px(M.sellGridTop + math.ceil(index / COLS) * (CELL + 6) + 8))
 end
 
 --------------------------------------------------------------------------------
@@ -498,9 +501,9 @@ end
 --------------------------------------------------------------------------------
 
 local function AcquireOwnedRow(i)
-	local row = ownedRows[i]
+	local row = M.ownedRows[i]
 	if row then return row end
-	row = CreateFrame("Button", nil, ownedScroller.child)
+	row = CreateFrame("Button", nil, M.ownedScroller.child)
 	row:SetHeight(WM.Px(ROW_H))
 	WM.SkinFrame(row, WM.Colors.button)
 	row.icon = row:CreateTexture(nil, "ARTWORK")
@@ -530,7 +533,7 @@ local function AcquireOwnedRow(i)
 	row.cancelBtn:SetScript("OnClick", function()
 		local index, label, rawName = this.index, this.itemLabel, this.rawName
 		local rawMinBid, rawBuyout = this.rawMinBid, this.rawBuyout
-		confirm.Ask("Cancel the auction for " .. label ..
+		M.confirm.Ask("Cancel the auction for " .. label ..
 			"? If it already has a bid, the deposit is forfeit.",
 			"Cancel auction", function()
 			-- Same Confirm-time revalidation as bid/buyout: a sale/expiry
@@ -550,12 +553,12 @@ local function AcquireOwnedRow(i)
 	WM.AttachTooltip(row, function(tt, self)
 		tt:SetAuctionItem("owner", self.index)
 	end)
-	ownedRows[i] = row
+	M.ownedRows[i] = row
 	return row
 end
 
 local function RenderOwned()
-	if not IsOpen() or curTab ~= "owned" then return end
+	if not IsOpen() or M.curTab ~= "owned" then return end
 	local shown = GetNumAuctionItems("owner")
 	for i = 1, shown do
 		local name, texture, count, quality, _, _, minBid, _, buyoutPrice,
@@ -581,16 +584,16 @@ local function RenderOwned()
 		row.cancelBtn.rawMinBid = minBid
 		row.cancelBtn.rawBuyout = buyoutPrice
 		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", ownedScroller.child, "TOPLEFT",
+		row:SetPoint("TOPLEFT", M.ownedScroller.child, "TOPLEFT",
 			0, -WM.Px((i - 1) * (ROW_H + GAP)))
-		row:SetPoint("TOPRIGHT", ownedScroller.child, "TOPRIGHT",
+		row:SetPoint("TOPRIGHT", M.ownedScroller.child, "TOPRIGHT",
 			0, -WM.Px((i - 1) * (ROW_H + GAP)))
 		row:Show()
 	end
-	for i = shown + 1, table.getn(ownedRows) do
-		ownedRows[i]:Hide()
+	for i = shown + 1, table.getn(M.ownedRows) do
+		M.ownedRows[i]:Hide()
 	end
-	ownedScroller.SetContentHeight(WM.Px(shown * (ROW_H + GAP)))
+	M.ownedScroller.SetContentHeight(WM.Px(shown * (ROW_H + GAP)))
 end
 
 --------------------------------------------------------------------------------
@@ -598,12 +601,12 @@ end
 --------------------------------------------------------------------------------
 
 local function SetTab(t)
-	curTab = t
-	searchBox:ClearFocus()
-	WM.SetShown(browseArea, t == "browse")
-	WM.SetShown(sellArea, t == "sell")
-	WM.SetShown(ownedArea, t == "owned")
-	for key, b in pairs(tabBtns) do
+	M.curTab = t
+	M.searchBox:ClearFocus()
+	WM.SetShown(M.browseArea, t == "browse")
+	WM.SetShown(M.sellArea, t == "sell")
+	WM.SetShown(M.ownedArea, t == "owned")
+	for key, b in pairs(M.tabBtns) do
 		WM.TintBorder(b, key == t and WM.Colors.accent or WM.Colors.border)
 	end
 	if t == "browse" then
@@ -618,24 +621,24 @@ end
 
 local function Dismiss()
 	CloseAuctionHouse()
-	sheet:Hide()
+	M.sheet:Hide()
 end
 
 WM.OnInit(function()
-	sheet = CreateFrame("Frame", "WowMobileAuctionSheet", UIParent)
-	sheet:SetPoint("TOPLEFT", WM.Deck, "TOPLEFT", 0, 0)
-	sheet:SetPoint("BOTTOMRIGHT", WM.Deck, "BOTTOMRIGHT", 0, 0)
-	sheet:SetFrameStrata("DIALOG")
-	sheet:EnableMouse(true)
-	WM.SkinFrame(sheet, WM.Colors.panel)
-	sheet:Hide()
+	M.sheet = CreateFrame("Frame", "WowMobileAuctionSheet", UIParent)
+	M.sheet:SetPoint("TOPLEFT", WM.Deck, "TOPLEFT", 0, 0)
+	M.sheet:SetPoint("BOTTOMRIGHT", WM.Deck, "BOTTOMRIGHT", 0, 0)
+	M.sheet:SetFrameStrata("DIALOG")
+	M.sheet:EnableMouse(true)
+	WM.SkinFrame(M.sheet, WM.Colors.panel)
+	M.sheet:Hide()
 
-	local titleText = WM.CreateText(sheet, 40)
-	titleText:SetPoint("TOPLEFT", sheet, "TOPLEFT", WM.Px(24), -WM.Px(26))
+	local titleText = WM.CreateText(M.sheet, 40)
+	titleText:SetPoint("TOPLEFT", M.sheet, "TOPLEFT", WM.Px(24), -WM.Px(26))
 	titleText:SetText("Auction House")
 
-	local close = WM.CreateTouchButton(sheet, 100, 96, "X", 44)
-	close:SetPoint("TOPRIGHT", sheet, "TOPRIGHT", -WM.Px(4), -WM.Px(4))
+	local close = WM.CreateTouchButton(M.sheet, 100, 96, "X", 44)
+	close:SetPoint("TOPRIGHT", M.sheet, "TOPRIGHT", -WM.Px(4), -WM.Px(4))
 	close:SetScript("OnClick", Dismiss)
 
 	-- Tab row in the title bar band, right of the title.
@@ -647,146 +650,146 @@ WM.OnInit(function()
 	local prev
 	for i = table.getn(tabDefs), 1, -1 do
 		local def = tabDefs[i]
-		local b = WM.CreateTouchButton(sheet, 170, 96, def.label, 28)
+		local b = WM.CreateTouchButton(M.sheet, 170, 96, def.label, 28)
 		if prev then
 			b:SetPoint("RIGHT", prev, "LEFT", -WM.Px(6), 0)
 		else
 			b:SetPoint("TOPRIGHT", close, "TOPLEFT", -WM.Px(8), 0)
 		end
 		b:SetScript("OnClick", function() SetTab(def.key) end)
-		tabBtns[def.key] = b
+		M.tabBtns[def.key] = b
 		prev = b
 	end
 
-	local content = CreateFrame("Frame", nil, sheet)
-	content:SetPoint("TOPLEFT", sheet, "TOPLEFT", WM.Px(8), -WM.Px(104))
-	content:SetPoint("BOTTOMRIGHT", sheet, "BOTTOMRIGHT", -WM.Px(8), WM.Px(8))
+	local content = CreateFrame("Frame", nil, M.sheet)
+	content:SetPoint("TOPLEFT", M.sheet, "TOPLEFT", WM.Px(8), -WM.Px(104))
+	content:SetPoint("BOTTOMRIGHT", M.sheet, "BOTTOMRIGHT", -WM.Px(8), WM.Px(8))
 
-	confirm = WM.CreateConfirmOverlay(sheet)
+	M.confirm = WM.CreateConfirmOverlay(M.sheet)
 
 	--------------------------------------------------------------------------
 	-- Browse area
 	--------------------------------------------------------------------------
-	browseArea = CreateFrame("Frame", nil, content)
-	browseArea:SetAllPoints(content)
+	M.browseArea = CreateFrame("Frame", nil, content)
+	M.browseArea:SetAllPoints(content)
 
-	searchBox = WM.CreateEditBox(browseArea, 540, 90, 40)
-	searchBox:SetPoint("TOPLEFT", browseArea, "TOPLEFT", 0, 0)
+	M.searchBox = WM.CreateEditBox(M.browseArea, 540, 90, 40)
+	M.searchBox:SetPoint("TOPLEFT", M.browseArea, "TOPLEFT", 0, 0)
 	-- The phone keyboard's closing Enter (Core's edit-box protocol has already
 	-- dropped focus) runs the search, same as the Search button.
-	searchBox.onEnter = function()
-		local oldPage = page
-		page = 0
-		if not SendQuery() then page = oldPage end
+	M.searchBox.onEnter = function()
+		local oldPage = M.page
+		M.page = 0
+		if not SendQuery() then M.page = oldPage end
 	end
-	searchBtn = WM.CreateTouchButton(browseArea, 200, 90, "Search", 28)
-	searchBtn:SetPoint("LEFT", searchBox, "RIGHT", WM.Px(8), 0)
-	searchBtn:SetScript("OnClick", function()
-		searchBox:ClearFocus()
-		local oldPage = page
-		page = 0
-		if not SendQuery() then page = oldPage end
+	M.searchBtn = WM.CreateTouchButton(M.browseArea, 200, 90, "Search", 28)
+	M.searchBtn:SetPoint("LEFT", M.searchBox, "RIGHT", WM.Px(8), 0)
+	M.searchBtn:SetScript("OnClick", function()
+		M.searchBox:ClearFocus()
+		local oldPage = M.page
+		M.page = 0
+		if not SendQuery() then M.page = oldPage end
 	end)
-	catBtn = WM.CreateTouchButton(browseArea, 300, 90, "All categories", 24)
-	catBtn:SetPoint("LEFT", searchBtn, "RIGHT", WM.Px(8), 0)
-	catBtn:SetScript("OnClick", OpenCategoryPicker)
+	M.catBtn = WM.CreateTouchButton(M.browseArea, 300, 90, "All categories", 24)
+	M.catBtn:SetPoint("LEFT", M.searchBtn, "RIGHT", WM.Px(8), 0)
+	M.catBtn:SetScript("OnClick", OpenCategoryPicker)
 
-	qualityBtn = WM.CreateTouchButton(browseArea, 340, 90, "Quality: any", 24)
-	qualityBtn:SetPoint("TOPLEFT", browseArea, "TOPLEFT", 0, -WM.Px(98))
-	qualityBtn:SetScript("OnClick", function()
+	M.qualityBtn = WM.CreateTouchButton(M.browseArea, 340, 90, "Quality: any", 24)
+	M.qualityBtn:SetPoint("TOPLEFT", M.browseArea, "TOPLEFT", 0, -WM.Px(98))
+	M.qualityBtn:SetScript("OnClick", function()
 		-- Cycle any -> Good(2) -> Rare(3) -> Epic(4) -> any; passed straight
 		-- through as QueryAuctionItems' qualityIndex (minimum quality).
 		-- Computed locally and handed to Requery, which commits it only if
 		-- the throttle lets the query send.
 		local newQuality
-		if qualityIndex == nil then
+		if M.qualityIndex == nil then
 			newQuality = 2
-		elseif qualityIndex >= 4 then
+		elseif M.qualityIndex >= 4 then
 			newQuality = nil
 		else
-			newQuality = qualityIndex + 1
+			newQuality = M.qualityIndex + 1
 		end
-		Requery(classIndex, newQuality, usableOnly)
+		Requery(M.classIndex, newQuality, M.usableOnly)
 	end)
-	usableBtn = WM.CreateTouchButton(browseArea, 340, 90, "Usable: all", 24)
-	usableBtn:SetPoint("LEFT", qualityBtn, "RIGHT", WM.Px(8), 0)
-	usableBtn:SetScript("OnClick", function()
+	M.usableBtn = WM.CreateTouchButton(M.browseArea, 340, 90, "Usable: all", 24)
+	M.usableBtn:SetPoint("LEFT", M.qualityBtn, "RIGHT", WM.Px(8), 0)
+	M.usableBtn:SetScript("OnClick", function()
 		-- Explicit two-way toggle: `usableOnly and nil or 1` would always
 		-- yield 1 (Lua's `a and nil or c` falls through to c for BOTH truthy
 		-- and nil a), sticking the filter ON after the first tap.
-		Requery(classIndex, qualityIndex, (not usableOnly) and 1 or nil)
+		Requery(M.classIndex, M.qualityIndex, (not M.usableOnly) and 1 or nil)
 	end)
-	resultText = WM.CreateText(browseArea, 26)
-	resultText:SetPoint("LEFT", usableBtn, "RIGHT", WM.Px(20), 0)
-	resultText:SetTextColor(0.7, 0.7, 0.75)
+	M.resultText = WM.CreateText(M.browseArea, 26)
+	M.resultText:SetPoint("LEFT", M.usableBtn, "RIGHT", WM.Px(20), 0)
+	M.resultText:SetTextColor(0.7, 0.7, 0.75)
 
-	local results = CreateFrame("Frame", nil, browseArea)
-	results:SetPoint("TOPLEFT", browseArea, "TOPLEFT", 0, -WM.Px(200))
-	results:SetPoint("BOTTOMRIGHT", browseArea, "BOTTOMRIGHT", 0, WM.Px(104))
-	browseScroller = WM.Deck.CreateScroller(results)
+	local results = CreateFrame("Frame", nil, M.browseArea)
+	results:SetPoint("TOPLEFT", M.browseArea, "TOPLEFT", 0, -WM.Px(200))
+	results:SetPoint("BOTTOMRIGHT", M.browseArea, "BOTTOMRIGHT", 0, WM.Px(104))
+	M.browseScroller = WM.Deck.CreateScroller(results)
 
-	prevBtn = WM.CreateTouchButton(browseArea, 240, 96, "< Prev", 28)
-	prevBtn:SetPoint("BOTTOMLEFT", browseArea, "BOTTOMLEFT", 0, 0)
-	prevBtn:SetScript("OnClick", function()
+	M.prevBtn = WM.CreateTouchButton(M.browseArea, 240, 96, "< Prev", 28)
+	M.prevBtn:SetPoint("BOTTOMLEFT", M.browseArea, "BOTTOMLEFT", 0, 0)
+	M.prevBtn:SetScript("OnClick", function()
 		-- The 0.3 s throttle-poll enable leaves a window where the tap gets
 		-- refused; roll the page counter back so it never desyncs from the
 		-- displayed results.
-		if page > 0 then
-			page = page - 1
-			if not SendQuery() then page = page + 1 end
+		if M.page > 0 then
+			M.page = M.page - 1
+			if not SendQuery() then M.page = M.page + 1 end
 		end
 	end)
-	nextBtn = WM.CreateTouchButton(browseArea, 240, 96, "Next >", 28)
-	nextBtn:SetPoint("BOTTOMRIGHT", browseArea, "BOTTOMRIGHT", -WM.Px(98), 0)
-	nextBtn:SetScript("OnClick", function()
-		if morePages then
-			page = page + 1
-			if not SendQuery() then page = page - 1 end
+	M.nextBtn = WM.CreateTouchButton(M.browseArea, 240, 96, "Next >", 28)
+	M.nextBtn:SetPoint("BOTTOMRIGHT", M.browseArea, "BOTTOMRIGHT", -WM.Px(98), 0)
+	M.nextBtn:SetScript("OnClick", function()
+		if M.morePages then
+			M.page = M.page + 1
+			if not SendQuery() then M.page = M.page - 1 end
 		end
 	end)
-	pageText = WM.CreateText(browseArea, 28)
-	pageText:SetPoint("BOTTOM", browseArea, "BOTTOM", -WM.Px(50), WM.Px(34))
-	pageText:SetJustifyH("CENTER")
+	M.pageText = WM.CreateText(M.browseArea, 28)
+	M.pageText:SetPoint("BOTTOM", M.browseArea, "BOTTOM", -WM.Px(50), WM.Px(34))
+	M.pageText:SetJustifyH("CENTER")
 
 	-- Category picker overlay (FULLSCREEN_DIALOG — the shared technique).
-	catOverlay = CreateFrame("Frame", "WowMobileAuctionCategories", sheet)
-	catOverlay:SetFrameStrata("FULLSCREEN_DIALOG")
-	catOverlay:SetAllPoints(sheet)
-	catOverlay:EnableMouse(true)
-	WM.SkinFrame(catOverlay, WM.Colors.panel, WM.Colors.accent)
-	catOverlay:Hide()
-	local catTitle = WM.CreateText(catOverlay, 34)
-	catTitle:SetPoint("TOPLEFT", catOverlay, "TOPLEFT", WM.Px(24), -WM.Px(30))
+	M.catOverlay = CreateFrame("Frame", "WowMobileAuctionCategories", M.sheet)
+	M.catOverlay:SetFrameStrata("FULLSCREEN_DIALOG")
+	M.catOverlay:SetAllPoints(M.sheet)
+	M.catOverlay:EnableMouse(true)
+	WM.SkinFrame(M.catOverlay, WM.Colors.panel, WM.Colors.accent)
+	M.catOverlay:Hide()
+	local catTitle = WM.CreateText(M.catOverlay, 34)
+	catTitle:SetPoint("TOPLEFT", M.catOverlay, "TOPLEFT", WM.Px(24), -WM.Px(30))
 	catTitle:SetText("Category")
-	local catClose = WM.CreateTouchButton(catOverlay, 180, 96, "Cancel", 30)
-	catClose:SetPoint("TOPRIGHT", catOverlay, "TOPRIGHT", -WM.Px(4), -WM.Px(4))
-	catClose:SetScript("OnClick", function() catOverlay:Hide() end)
-	local catContent = CreateFrame("Frame", nil, catOverlay)
-	catContent:SetPoint("TOPLEFT", catOverlay, "TOPLEFT", WM.Px(8), -WM.Px(104))
-	catContent:SetPoint("BOTTOMRIGHT", catOverlay, "BOTTOMRIGHT", -WM.Px(8), WM.Px(8))
-	catScroller = WM.Deck.CreateScroller(catContent)
+	local catClose = WM.CreateTouchButton(M.catOverlay, 180, 96, "Cancel", 30)
+	catClose:SetPoint("TOPRIGHT", M.catOverlay, "TOPRIGHT", -WM.Px(4), -WM.Px(4))
+	catClose:SetScript("OnClick", function() M.catOverlay:Hide() end)
+	local catContent = CreateFrame("Frame", nil, M.catOverlay)
+	catContent:SetPoint("TOPLEFT", M.catOverlay, "TOPLEFT", WM.Px(8), -WM.Px(104))
+	catContent:SetPoint("BOTTOMRIGHT", M.catOverlay, "BOTTOMRIGHT", -WM.Px(8), WM.Px(8))
+	M.catScroller = WM.Deck.CreateScroller(catContent)
 
 	--------------------------------------------------------------------------
 	-- Sell area (everything in its scroller so the bag grid stays reachable)
 	--------------------------------------------------------------------------
-	sellArea = CreateFrame("Frame", nil, content)
-	sellArea:SetAllPoints(content)
-	sellArea:Hide()
-	sellScroller = WM.Deck.CreateScroller(sellArea)
-	local sc = sellScroller.child
+	M.sellArea = CreateFrame("Frame", nil, content)
+	M.sellArea:SetAllPoints(content)
+	M.sellArea:Hide()
+	M.sellScroller = WM.Deck.CreateScroller(M.sellArea)
+	local sc = M.sellScroller.child
 
-	sellSlot = CreateFrame("Button", nil, sc)
-	sellSlot:SetWidth(WM.Px(130))
-	sellSlot:SetHeight(WM.Px(130))
-	sellSlot:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(4))
-	WM.SkinFrame(sellSlot, { 0.07, 0.07, 0.09, 1 })
-	local shl = sellSlot:CreateTexture(nil, "HIGHLIGHT")
-	shl:SetAllPoints(sellSlot)
+	M.sellSlot = CreateFrame("Button", nil, sc)
+	M.sellSlot:SetWidth(WM.Px(130))
+	M.sellSlot:SetHeight(WM.Px(130))
+	M.sellSlot:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(4))
+	WM.SkinFrame(M.sellSlot, { 0.07, 0.07, 0.09, 1 })
+	local shl = M.sellSlot:CreateTexture(nil, "HIGHLIGHT")
+	shl:SetAllPoints(M.sellSlot)
 	shl:SetTexture(1, 1, 1, 0.10)
-	sellSlot.icon = sellSlot:CreateTexture(nil, "ARTWORK")
-	sellSlot.icon:SetPoint("TOPLEFT", sellSlot, "TOPLEFT", WM.Px(6), -WM.Px(6))
-	sellSlot.icon:SetPoint("BOTTOMRIGHT", sellSlot, "BOTTOMRIGHT", -WM.Px(6), WM.Px(6))
-	sellSlot:SetScript("OnClick", function()
+	M.sellSlot.icon = M.sellSlot:CreateTexture(nil, "ARTWORK")
+	M.sellSlot.icon:SetPoint("TOPLEFT", M.sellSlot, "TOPLEFT", WM.Px(6), -WM.Px(6))
+	M.sellSlot.icon:SetPoint("BOTTOMRIGHT", M.sellSlot, "BOTTOMRIGHT", -WM.Px(6), WM.Px(6))
+	M.sellSlot:SetScript("OnClick", function()
 		if WM.MoveMode.IsActive() or WM.MoveMode.CursorForeign() then
 			ClickAuctionSellItemButton()
 			WM.MoveMode.NoteSlotDrop()
@@ -796,16 +799,16 @@ WM.OnInit(function()
 		end
 		RefreshSell()
 	end)
-	WM.MoveMode.MakeTarget(sellSlot, "bag")
-	WM.AttachTooltip(sellSlot, function(tt)
+	WM.MoveMode.MakeTarget(M.sellSlot, "bag")
+	WM.AttachTooltip(M.sellSlot, function(tt)
 		tt:SetText("Auction item — tap a bag item below to load it")
 	end)
 
-	sellName = WM.CreateText(sc, 30)
-	sellName:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(150), -WM.Px(30))
-	sellName:SetJustifyH("LEFT")
-	sellName:SetWidth(WM.Px(680))
-	WM.SingleLine(sellName, 30)
+	M.sellName = WM.CreateText(sc, 30)
+	M.sellName:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(150), -WM.Px(30))
+	M.sellName:SetJustifyH("LEFT")
+	M.sellName:SetWidth(WM.Px(680))
+	WM.SingleLine(M.sellName, 30)
 	local sellHint = WM.CreateText(sc, 22)
 	sellHint:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(150), -WM.Px(84))
 	sellHint:SetJustifyH("LEFT")
@@ -817,14 +820,14 @@ WM.OnInit(function()
 	local bidLabel = WM.CreateText(sc, 28)
 	bidLabel:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(160))
 	bidLabel:SetText("Starting bid")
-	bidStepper = WM.CreateMoneyStepper(sc, { onChange = RefreshSell })
-	bidStepper:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -WM.Px(200))
+	M.bidStepper = WM.CreateMoneyStepper(sc, { onChange = RefreshSell })
+	M.bidStepper:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -WM.Px(200))
 
 	local buyoutLabel = WM.CreateText(sc, 28)
 	buyoutLabel:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(316))
 	buyoutLabel:SetText("Buyout (zero = no buyout)")
-	buyoutStepper = WM.CreateMoneyStepper(sc)
-	buyoutStepper:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -WM.Px(356))
+	M.buyoutStepper = WM.CreateMoneyStepper(sc)
+	M.buyoutStepper:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -WM.Px(356))
 
 	local durDefs = {
 		{ minutes = 120, label = "2 hours" },
@@ -836,47 +839,47 @@ WM.OnInit(function()
 		local b = WM.CreateTouchButton(sc, 306, 96, def.label, 28)
 		b:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px((i - 1) * 316), -WM.Px(472))
 		b:SetScript("OnClick", function()
-			duration = def.minutes
+			M.duration = def.minutes
 			RefreshSell()
 		end)
-		durationBtns[def.minutes] = b
+		M.durationBtns[def.minutes] = b
 	end
 
-	depositText = WM.CreateText(sc, 28)
-	depositText:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(606))
-	createBtn = WM.CreateTouchButton(sc, 440, 110, "Create auction", 32)
-	createBtn:SetPoint("TOPRIGHT", sc, "TOPRIGHT", 0, -WM.Px(584))
-	createBtn:SetScript("OnClick", CreateAuction)
+	M.depositText = WM.CreateText(sc, 28)
+	M.depositText:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(606))
+	M.createBtn = WM.CreateTouchButton(sc, 440, 110, "Create auction", 32)
+	M.createBtn:SetPoint("TOPRIGHT", sc, "TOPRIGHT", 0, -WM.Px(584))
+	M.createBtn:SetScript("OnClick", CreateAuction)
 
 	local sellBagsLabel = WM.CreateText(sc, 30)
 	sellBagsLabel:SetPoint("TOPLEFT", sc, "TOPLEFT", WM.Px(4), -WM.Px(722))
 	sellBagsLabel:SetTextColor(1, 0.82, 0)
 	sellBagsLabel:SetText("Your bags — tap an item to load it")
-	sellGridTop = 774
+	M.sellGridTop = 774
 
 	--------------------------------------------------------------------------
 	-- Owned area
 	--------------------------------------------------------------------------
-	ownedArea = CreateFrame("Frame", nil, content)
-	ownedArea:SetAllPoints(content)
-	ownedArea:Hide()
-	ownedScroller = WM.Deck.CreateScroller(ownedArea)
+	M.ownedArea = CreateFrame("Frame", nil, content)
+	M.ownedArea:SetAllPoints(content)
+	M.ownedArea:Hide()
+	M.ownedScroller = WM.Deck.CreateScroller(M.ownedArea)
 
 	WM.Deck.RegisterExclusive("auction", function()
-		if sheet:IsShown() then Dismiss() end
+		if M.sheet:IsShown() then Dismiss() end
 	end)
 
 	WM.On("AUCTION_HOUSE_SHOW", function()
 		WM.Deck.YieldTo("auction")
-		sheet:Show()
-		page = 0
+		M.sheet:Show()
+		M.page = 0
 		UpdateFilterLabels()
 		SetTab("browse")
-		browseScroller.ScrollToTop()
+		M.browseScroller.ScrollToTop()
 		SendQuery() -- initial unfiltered page 0 fill (throttle permitting)
 	end)
 	WM.On("AUCTION_HOUSE_CLOSED", function()
-		sheet:Hide()
+		M.sheet:Hide()
 	end)
 	-- Deliberately does NOT hide the confirm overlay: on 1.12 this event
 	-- re-fires for the SAME page as owner names backfill, so hiding here
@@ -894,22 +897,22 @@ WM.OnInit(function()
 		if IsOpen() then RefreshSell() end
 	end)
 	WM.On("BAG_UPDATE", function()
-		if IsOpen() and curTab == "sell" then RenderSellBags() end
+		if IsOpen() and M.curTab == "sell" then RenderSellBags() end
 	end)
 	WM.On("ITEM_LOCK_CHANGED", function()
-		if IsOpen() and curTab == "sell" then RenderSellBags() end
+		if IsOpen() and M.curTab == "sell" then RenderSellBags() end
 	end)
 	WM.On("PLAYER_MONEY", function()
-		if IsOpen() and curTab == "browse" then RenderBrowse() end
+		if IsOpen() and M.curTab == "browse" then RenderBrowse() end
 	end)
 
 	-- Query-throttle poll: one CanSendAuctionQuery C-call per 0.3 s while the
 	-- browse tab is up, driving the Search/Prev/Next enables. No allocations.
 	WM.Ticker(0.3, function()
-		if not IsOpen() or curTab ~= "browse" then return end
+		if not IsOpen() or M.curTab ~= "browse" then return end
 		local ready = CanSendAuctionQuery()
-		WM.SetButtonEnabled(searchBtn, ready and true or false)
-		WM.SetButtonEnabled(prevBtn, ready ~= nil and page > 0)
-		WM.SetButtonEnabled(nextBtn, ready ~= nil and morePages)
+		WM.SetButtonEnabled(M.searchBtn, ready and true or false)
+		WM.SetButtonEnabled(M.prevBtn, ready ~= nil and M.page > 0)
+		WM.SetButtonEnabled(M.nextBtn, ready ~= nil and M.morePages)
 	end)
 end)

@@ -43,13 +43,29 @@ WM.FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 
 --------------------------------------------------------------------------------
 -- Design-space conversion
--- All layout constants are written in *physical pixels* of the 1080-wide
--- streamed window. UIParent:GetWidth() is that same 1080 px expressed in UI
--- units (uiScale-dependent), so one factor converts design px -> UI units and
--- keeps physical touch-target sizes constant regardless of the uiScale cvar.
+-- All layout constants are written in design px of the 1080x1920 DESIGN
+-- space. WM.Px(x) resolves x as a FRACTION of the MEASURED window:
+-- x/1080 of UIParent's actual width in UI units — never an assumed physical
+-- resolution or a uiScale value that may not have taken effect. That makes
+-- every size correct at every real resolution and every effective scale
+-- (UIParent:GetWidth() already folds the live scale in). Vertical sizes use
+-- the same width fraction deliberately: the streamed window is the largest
+-- 9:16 rect (ARCHITECTURE.md §1), so uniform scaling keeps squares square;
+-- a window that is NOT that shape cannot host the design at all and is
+-- detected below (WM.CheckLayoutFresh / Viewport.Verify) rather than guessed
+-- around.
+--
+-- The factor is (re)measured at PLAYER_LOGIN immediately before the module
+-- inits size their frames (WM.RebaseLayout), and the geometry it was based
+-- on is snapshotted: if UIParent later measures differently (a uiScale cvar
+-- that only applied after our layout, a resolution change), every frame
+-- sized earlier is wrong on screen — WM.CheckLayoutFresh detects exactly
+-- that by re-measuring, records it as a module error (/wm errors) and raises
+-- the "Finish setup — reload UI" banner.
 --------------------------------------------------------------------------------
 
 local pxFactor = UIParent:GetWidth() / 1080
+local layoutBasisW, layoutBasisH -- UIParent size the current layout was built against
 
 function WM.Px(px)
 	return px * pxFactor
@@ -57,6 +73,37 @@ end
 
 function WM.UpdatePxFactor()
 	pxFactor = UIParent:GetWidth() / 1080
+end
+
+-- Re-measure the window and adopt it as the layout baseline. Called right
+-- before module inits run, and again by Config after applying the uiScale
+-- cvar (so when the cvar applies synchronously, the whole deck lays out
+-- against the post-scale geometry with no reload needed).
+function WM.RebaseLayout()
+	WM.UpdatePxFactor()
+	layoutBasisW, layoutBasisH = UIParent:GetWidth(), UIParent:GetHeight()
+end
+
+-- True while the frames sized via WM.Px still match the live window; on
+-- drift, records the problem and shows the setup banner. See the section
+-- comment. Returns false on drift.
+function WM.CheckLayoutFresh()
+	if not layoutBasisW then return true end
+	local w, h = UIParent:GetWidth(), UIParent:GetHeight()
+	if math.abs(w - layoutBasisW) > 0.5 or math.abs(h - layoutBasisH) > 0.5 then
+		WM.ReportError(string.format(
+			"Core.lua: window geometry changed after layout (%.0fx%.0f -> %.0fx%.0f UI units)"
+				.. " — a uiScale/resolution change applied late; on-screen sizes are stale until reload",
+			layoutBasisW, layoutBasisH, w, h))
+		-- The world square's math is pure measurement — re-apply so at least
+		-- the 3D viewport is right while the deck awaits its reload.
+		if WM.Viewport then
+			pcall(WM.Viewport.Apply)
+		end
+		WM.ShowSetupBanner("Display scale changed after WoW Mobile laid out — the interface is mis-sized.")
+		return false
+	end
+	return true
 end
 
 --------------------------------------------------------------------------------
@@ -136,6 +183,63 @@ function WM.GetErrors()
 end
 
 --------------------------------------------------------------------------------
+-- Setup banner ("Finish setup — reload UI")
+-- Raised when the layout provably no longer matches the live window
+-- (WM.CheckLayoutFresh) or the world square failed verification
+-- (Viewport.Verify): conditions a chat line cannot surface on a phone. A
+-- fullscreen-dialog strip at the very bottom of the SCREEN (a place that
+-- exists at every resolution, however broken the deck is) with one huge
+-- ReloadUI button. Sized from a FRESHLY measured UIParent width on every
+-- Show — WM.Px may be exactly what went stale.
+--------------------------------------------------------------------------------
+
+local setupBanner
+
+function WM.ShowSetupBanner(msg)
+	local w = UIParent:GetWidth()
+	local function px(v) return v * w / 1080 end
+	if not setupBanner then
+		setupBanner = CreateFrame("Frame", "WowMobileSetupBanner", UIParent)
+		setupBanner:SetFrameStrata("FULLSCREEN_DIALOG")
+		setupBanner:EnableMouse(true) -- swallow taps on the (mis-laid-out) UI beneath
+		local bg = setupBanner:CreateTexture(nil, "BACKGROUND")
+		bg:SetAllPoints(setupBanner)
+		bg:SetTexture(0.10, 0.10, 0.35, 0.97)
+		setupBanner.text = setupBanner:CreateFontString(nil, "OVERLAY")
+		setupBanner.text:SetTextColor(0.95, 0.95, 1)
+		setupBanner.text:SetJustifyH("CENTER")
+		setupBanner.button = CreateFrame("Button", "WowMobileSetupReload", setupBanner)
+		local bbg = setupBanner.button:CreateTexture(nil, "BACKGROUND")
+		bbg:SetAllPoints(setupBanner.button)
+		bbg:SetTexture(1.00, 0.82, 0.00, 1)
+		local bhl = setupBanner.button:CreateTexture(nil, "HIGHLIGHT")
+		bhl:SetAllPoints(setupBanner.button)
+		bhl:SetTexture(1, 1, 1, 0.15)
+		setupBanner.button.label = setupBanner.button:CreateFontString(nil, "OVERLAY")
+		setupBanner.button.label:SetTextColor(0.1, 0.1, 0.1)
+		setupBanner.button.label:SetPoint("CENTER", setupBanner.button, "CENTER", 0, 0)
+		setupBanner.button:SetScript("OnClick", function() ReloadUI() end)
+	end
+	-- (Re)size with the live measurement each time it is raised.
+	setupBanner:ClearAllPoints()
+	setupBanner:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+	setupBanner:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+	setupBanner:SetHeight(px(260))
+	setupBanner.text:SetFont(WM.FONT, px(30), "")
+	setupBanner.text:SetPoint("TOPLEFT", setupBanner, "TOPLEFT", px(20), -px(16))
+	setupBanner.text:SetPoint("TOPRIGHT", setupBanner, "TOPRIGHT", -px(20), -px(16))
+	setupBanner.text:SetText((msg or "WoW Mobile needs a UI reload to finish setting up.")
+		.. " Reloading applies the correct sizes.")
+	setupBanner.button:ClearAllPoints()
+	setupBanner.button:SetPoint("BOTTOM", setupBanner, "BOTTOM", 0, px(16))
+	setupBanner.button:SetWidth(px(720))
+	setupBanner.button:SetHeight(px(140))
+	setupBanner.button.label:SetFont(WM.FONT, px(40), "")
+	setupBanner.button.label:SetText("Finish setup — reload UI")
+	setupBanner:Show()
+end
+
+--------------------------------------------------------------------------------
 -- Event bus (1.12 handler convention: read the event/argN globals)
 --------------------------------------------------------------------------------
 
@@ -192,6 +296,9 @@ function WM.OnInit(fn)
 end
 
 WM.On("PLAYER_LOGIN", function()
+	-- Measure the REAL window right before anything is sized: file-load-time
+	-- measurements can predate the client settling its resolution/scale.
+	WM.RebaseLayout()
 	for i = 1, table.getn(inits) do
 		-- Crash guard: a failed module init is recorded and bannered, and
 		-- every later module still initializes (no cascade).
@@ -201,6 +308,17 @@ WM.On("PLAYER_LOGIN", function()
 		end
 	end
 	inits = {} -- PLAYER_LOGIN fires once per session; free the closures
+	-- A uiScale cvar that applies AFTER our layout (some clients defer it —
+	-- the OctoWow field failure) resizes UIParent under frames that were
+	-- already sized: re-measure shortly after login and again once the world
+	-- has settled; drift raises the reload banner.
+	WM.After(1, WM.CheckLayoutFresh)
+	WM.After(5, WM.CheckLayoutFresh)
+end)
+
+-- Loading screens are another moment clients settle geometry late.
+WM.On("PLAYER_ENTERING_WORLD", function()
+	WM.CheckLayoutFresh()
 end)
 
 --------------------------------------------------------------------------------

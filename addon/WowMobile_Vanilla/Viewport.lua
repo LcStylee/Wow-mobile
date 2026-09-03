@@ -59,22 +59,100 @@ function Viewport.OnApply(fn)
 	table.insert(reflowers, fn)
 end
 
-function Viewport.Apply()
-	local heightPx = Viewport.HeightPx()
-	local ratio = heightPx / 1080
-	-- Height in UI units equals UIParent width in UI units at ratio 1.0
-	-- (uniform scale); converted into WorldFrame's own coordinate space
-	-- because WorldFrame does not inherit uiScale from UIParent.
+-- The intended square height in UI units, derived ONLY from live
+-- measurements taken at call time: UIParent's width (scale-free — a design
+-- ratio of 1.0 means "square = window width", true at any resolution and any
+-- effective scale) capped so the fixed deck stack still fits below it. The
+-- cap only engages when the window is not the portrait 9:16 shape the design
+-- assumes (a landscape/clamped window — the "world stretched across the
+-- whole screen" field failure); the caller reports that.
+-- Returns heightUI, clamped(boolean).
+local function ComputeHeightUI()
+	local ratio = Viewport.HeightPx() / 1080
 	local heightUI = UIParent:GetWidth() * ratio
+	local deckFixed = (WM.Config and WM.Config.DECK_FIXED_PX) or 790
+	local maxUI = UIParent:GetHeight() - WM.Px(deckFixed)
+	if maxUI < UIParent:GetHeight() * 0.25 then
+		maxUI = UIParent:GetHeight() * 0.25 -- degenerate window: keep SOME world
+	end
+	if heightUI > maxUI then
+		return maxUI, true
+	end
+	return heightUI, false
+end
+
+local badShapeReported = false
+local verifyQueued = false
+
+function Viewport.Apply()
+	local heightUI, clamped = ComputeHeightUI()
+	-- What the overlays must lay out against: the square that actually
+	-- applied, expressed back in design px (equals the configured height
+	-- whenever the clamp did not engage).
+	local heightPx = heightUI * 1080 / UIParent:GetWidth()
+	-- Converted into WorldFrame's own coordinate space because WorldFrame
+	-- does not inherit uiScale from UIParent (both effective scales are LIVE
+	-- measurements, so this is right whatever the cvars say).
 	local heightWF = heightUI * UIParent:GetEffectiveScale() / WorldFrame:GetEffectiveScale()
 	WorldFrame:ClearAllPoints()
 	WorldFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
 	WorldFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
 	WorldFrame:SetHeight(heightWF)
 	square:SetHeight(heightUI)
+	if clamped and not badShapeReported then
+		badShapeReported = true
+		WM.ReportError(string.format(
+			"Viewport.lua: window is not the portrait shape the deck needs (%.0fx%.0f UI units)"
+				.. " — world square clamped; run the server wizard so it writes the 9:16"
+				.. " gxWindowedResolution, then reload",
+			UIParent:GetWidth(), UIParent:GetHeight()))
+		WM.ShowSetupBanner("The WoW window is not the portrait size WoW Mobile configured.")
+	end
 	for i = 1, table.getn(reflowers) do
 		reflowers[i](heightPx)
 	end
+	-- Self-verification: measure what actually ended up on screen shortly
+	-- after (geometry settles within a frame or two). One pending check at a
+	-- time — Apply re-runs on login/world-entry/setting changes.
+	if not verifyQueued then
+		verifyQueued = true
+		WM.After(0.5, function()
+			verifyQueued = false
+			Viewport.Verify()
+		end)
+	end
+end
+
+-- Measure WorldFrame's ACTUAL on-screen rect against the intended square
+-- (both sides in physical screen px via the live effective scales). Any
+-- mismatch — a client that reset WorldFrame behind our back, a scale that
+-- shifted after Apply, SetHeight silently refused — is recorded like a crash
+-- (/wm errors lists it) and raises the reload banner: a stretched world must
+-- never pass silently again.
+local verifyReported = false
+
+function Viewport.Verify()
+	local wfL, wfR = WorldFrame:GetLeft(), WorldFrame:GetRight()
+	local wfT, wfB = WorldFrame:GetTop(), WorldFrame:GetBottom()
+	local uL, uR, uT = UIParent:GetLeft(), UIParent:GetRight(), UIParent:GetTop()
+	if not wfL or not wfR or not wfT or not wfB or not uL then return end
+	local ws = WorldFrame:GetEffectiveScale()
+	local us = UIParent:GetEffectiveScale()
+	local wantH = ComputeHeightUI() * us -- intended square, re-measured NOW
+	local wantW = (uR - uL) * us
+	local tol = 2 + wantW * 0.005 -- rounding slack: 0.5% + 2 screen px
+	local badTop = math.abs(wfT * ws - uT * us) > tol
+	local badW = math.abs((wfR - wfL) * ws - wantW) > tol
+	local badH = math.abs((wfT - wfB) * ws - wantH) > tol
+	if not (badTop or badW or badH) then return end
+	if not verifyReported then
+		verifyReported = true
+		WM.ReportError(string.format(
+			"Viewport.lua: world square did not apply — WorldFrame is %.0fx%.0f px at top %.0f,"
+				.. " wanted %.0fx%.0f at top %.0f (world looks stretched); reload to reapply",
+			(wfR - wfL) * ws, (wfT - wfB) * ws, wfT * ws, wantW, wantH, uT * us))
+	end
+	WM.ShowSetupBanner("The 3D world viewport did not apply — the world looks stretched.")
 end
 
 WM.OnInit(function()
@@ -98,11 +176,17 @@ end)
 -- (UI_SCALE_CHANGED / DISPLAY_SIZE_CHANGED are later-client events — TryOn
 -- drops them silently if this 1.12 build lacks them.)
 WM.On("PLAYER_ENTERING_WORLD", function() Viewport.Apply() end)
+-- The freshness check also compares the LIVE window against the size the
+-- deck's frames were laid out with; a change here means those frames are
+-- stale — the check raises the reload banner (the square itself re-applies
+-- correctly either way).
 WM.TryOn("UI_SCALE_CHANGED", function()
 	WM.UpdatePxFactor()
 	Viewport.Apply()
+	WM.CheckLayoutFresh()
 end)
 WM.TryOn("DISPLAY_SIZE_CHANGED", function()
 	WM.UpdatePxFactor()
 	Viewport.Apply()
+	WM.CheckLayoutFresh()
 end)

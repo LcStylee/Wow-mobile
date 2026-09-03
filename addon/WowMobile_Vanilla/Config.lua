@@ -31,6 +31,7 @@ local DESIGN_WIDTH = 1080
 -- usable world strip.
 local RATIO_MIN = 0.60
 local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band
+Config.DECK_FIXED_PX = DECK_FIXED_PX -- Viewport clamps the square against it
 
 local function RatioMax()
 	local aspect = UIParent:GetHeight() / UIParent:GetWidth()
@@ -111,6 +112,10 @@ function Config.SetScale(v)
 	SetCVar("useUiScale", 1)
 	SetCVar("uiScale", v)
 	WM.Print(string.format("UI scale set to %.2f — /wm reload to fully re-lay-out the deck", v))
+	-- If the cvar resized UIParent right now, every already-sized frame is
+	-- stale: the drift check raises the reload banner (a chat hint alone is
+	-- easy to miss on the phone).
+	WM.After(0.2, WM.CheckLayoutFresh)
 end
 
 function Config.Reset()
@@ -123,11 +128,18 @@ function Config.Reset()
 	WM.Print("options reset to defaults — /wm reload recommended")
 end
 
--- Apply the persisted uiScale override once the world is up.
+-- Apply the persisted uiScale override once the world is up. This OnInit is
+-- registered before every layout module's (toc order), so when the cvar
+-- applies synchronously UIParent has already resized by the time they size
+-- their frames — RebaseLayout re-measures so they lay out against the REAL
+-- post-scale geometry (never the assumed one). A client that defers the
+-- cvar to the next reload instead trips Core's post-login
+-- WM.CheckLayoutFresh drift checks, which raise the reload banner.
 WM.OnInit(function()
 	if WM.db and WM.db.uiScale then
 		SetCVar("useUiScale", 1)
 		SetCVar("uiScale", WM.db.uiScale)
+		WM.RebaseLayout()
 	end
 end)
 

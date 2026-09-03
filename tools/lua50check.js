@@ -172,6 +172,342 @@ function tokenize(src, report) {
 }
 
 // ---------------------------------------------------------------------------
+// Closure-limit analysis (Lua 5.0 per-function hard limits)
+//
+// Lua 5.0 caps a single function at 32 UPVALUES (MAXUPVALUES; 5.1 raised it
+// to 60) and 200 active LOCALS (MAXVARS). Exceeding either is a COMPILE
+// error ("too many upvalues" / "too many local variables") that kills the
+// whole chunk — the crash guard's pcall never even runs, so the module is
+// silently dead (field failure: Mail.lua:686). The syntax gate (luaparse,
+// 5.1 grammar) does not model 5.0's limits, so we count them here.
+//
+// Semantics (mirrors lparser.c singlevaraux): a function's upvalue count is
+// the number of DISTINCT locals declared in strictly-enclosing functions
+// that are referenced anywhere inside it — including references made only by
+// functions nested deeper (every intermediate function gets a pass-through
+// upvalue slot). Locals count is the maximum number of simultaneously active
+// local slots (params + declarations, block-scoped; each `for` adds 3 hidden
+// control vars).
+//
+// We flag at >=30 upvalues / >=190 locals to leave headroom below the hard
+// limits. The idiomatic fix for upvalue overflow: move shared closure state
+// into one module-level table so closures capture a single table reference.
+//
+// Known (accepted) approximations, all safe at the 30/190 thresholds:
+//   * `local x = <expr>` declares x before <expr> is scanned, so a
+//     shadowing `local x = x` resolves the RHS to the new local (undercounts
+//     that one capture);
+//   * a `repeat ... until <cond>` block's locals go out of scope at the
+//     `until` token, so condition references to them resolve outward.
+// ---------------------------------------------------------------------------
+
+const UPVALUE_LIMIT = 32;  // Lua 5.0 MAXUPVALUES
+const UPVALUE_FLAG = 30;   // headroom threshold
+const LOCALS_LIMIT = 200;  // Lua 5.0 MAXVARS
+const LOCALS_FLAG = 190;   // headroom threshold
+
+// Analyzes the token stream of one chunk; returns an array of per-function
+// records { name, line, upvals, maxLocals } (main chunk included, upvals
+// always 0 there). `report` gets called for threshold violations.
+function analyzeClosures(tokens, report) {
+  const results = [];
+  let varCounter = 0;
+
+  // Function records. funcStack[0] is the main chunk.
+  const funcStack = [{ name: "main chunk", line: 0, upvals: new Set(), active: 0, maxActive: 0 }];
+  // Scope records: { fnDepth, locals: Map(name -> id), nslots, kind }.
+  const scopeStack = [{ fnDepth: 0, locals: new Map(), nslots: 0, kind: "function" }];
+  // Innermost grouping bracket ('(', '{', '[') for table-key detection.
+  const groupStack = [];
+  let pendingForDo = false; // the next `do` belongs to a `for` header
+
+  function curFn() { return funcStack[funcStack.length - 1]; }
+
+  function declareLocal(name) {
+    const scope = scopeStack[scopeStack.length - 1];
+    varCounter++;
+    scope.locals.set(name, varCounter);
+    scope.nslots++;
+    const fn = funcStack[scope.fnDepth];
+    fn.active++;
+    if (fn.active > fn.maxActive) fn.maxActive = fn.active;
+  }
+
+  function declareHidden(count) {
+    const scope = scopeStack[scopeStack.length - 1];
+    scope.nslots += count;
+    const fn = funcStack[scope.fnDepth];
+    fn.active += count;
+    if (fn.active > fn.maxActive) fn.maxActive = fn.active;
+  }
+
+  function pushScope(kind) {
+    scopeStack.push({ fnDepth: funcStack.length - 1, locals: new Map(), nslots: 0, kind: kind });
+  }
+
+  function finalizeFn(fn) {
+    const rec = { name: fn.name, line: fn.line, upvals: fn.upvals.size, maxLocals: fn.maxActive };
+    results.push(rec);
+    if (fn.upvals.size >= UPVALUE_FLAG) {
+      report(fn.line, "function '" + fn.name + "' captures " + fn.upvals.size +
+        " upvalues (Lua 5.0 COMPILE limit " + UPVALUE_LIMIT + "; flagged at >=" +
+        UPVALUE_FLAG + ") — move shared closure state into a module-level table");
+    }
+    if (fn.maxActive >= LOCALS_FLAG) {
+      report(fn.line, "function '" + fn.name + "' has " + fn.maxActive +
+        " active locals (Lua 5.0 COMPILE limit " + LOCALS_LIMIT + "; flagged at >=" +
+        LOCALS_FLAG + ") — split the function or hoist state into tables");
+    }
+  }
+
+  function popScope() {
+    if (scopeStack.length <= 1) return; // defensive; syntax gate owns real errors
+    const scope = scopeStack.pop();
+    funcStack[scope.fnDepth].active -= scope.nslots;
+    if (scope.kind === "function" && funcStack.length > 1) {
+      finalizeFn(funcStack.pop());
+    }
+  }
+
+  // Resolve a name reference: find its declaring scope; if declared in an
+  // outer FUNCTION, add it to the upvalue set of every function level between
+  // the declaration and the current function (pass-through slots included).
+  function resolve(name) {
+    for (let s = scopeStack.length - 1; s >= 0; s--) {
+      const id = scopeStack[s].locals.get(name);
+      if (id !== undefined) {
+        const declDepth = scopeStack[s].fnDepth;
+        for (let f = declDepth + 1; f < funcStack.length; f++) {
+          funcStack[f].upvals.add(id);
+        }
+        return;
+      }
+    }
+    // Not found: global — no cost.
+  }
+
+  let i = 0;
+  const n = tokens.length;
+  while (i < n) {
+    const t = tokens[i];
+
+    if (t.type === "keyword") {
+      if (t.value === "function") {
+        // Header: function [Name ('.' Name)* (':' Name)?] '(' params ')'
+        let j = i + 1;
+        let isMethod = false;
+        let headerName = "anonymous";
+        if (tokens[j] && tokens[j].type === "name") {
+          headerName = tokens[j].value;
+          resolve(tokens[j].value); // the base name is a real read/write
+          j++;
+          while (tokens[j] && (tokens[j].value === "." || tokens[j].value === ":") &&
+              tokens[j + 1] && tokens[j + 1].type === "name") {
+            if (tokens[j].value === ":") isMethod = true;
+            headerName += tokens[j].value + tokens[j + 1].value;
+            j += 2;
+          }
+        }
+        funcStack.push({ name: headerName, line: t.line, upvals: new Set(), active: 0, maxActive: 0 });
+        pushScope("function");
+        if (isMethod) declareLocal("self");
+        if (tokens[j] && tokens[j].value === "(") {
+          j++;
+          while (j < n && tokens[j].value !== ")") {
+            if (tokens[j].type === "name") declareLocal(tokens[j].value);
+            else if (tokens[j].value === "...") declareLocal("arg"); // 5.0 implicit arg table
+            j++;
+          }
+        }
+        i = j + 1;
+        continue;
+      }
+      if (t.value === "local") {
+        if (tokens[i + 1] && tokens[i + 1].value === "function" &&
+            tokens[i + 2] && tokens[i + 2].type === "name") {
+          // `local function f` == `local f; f = function...`: declare f
+          // first so it is visible inside its own body (recursion).
+          declareLocal(tokens[i + 2].value);
+          // Let the `function` branch parse the header; its base-name resolve
+          // hits the local we just declared (same function level: no upvalue).
+          i++;
+          continue;
+        }
+        let j = i + 1;
+        while (tokens[j] && tokens[j].type === "name") {
+          declareLocal(tokens[j].value);
+          j++;
+          if (tokens[j] && tokens[j].value === ",") j++;
+          else break;
+        }
+        i = j;
+        continue;
+      }
+      if (t.value === "for") {
+        pushScope("for");
+        pendingForDo = true;
+        declareHidden(3); // numeric/generic for: 3 internal control slots
+        let j = i + 1;
+        while (tokens[j] && tokens[j].type === "name") {
+          declareLocal(tokens[j].value);
+          j++;
+          if (tokens[j] && tokens[j].value === ",") j++;
+          else break;
+        }
+        i = j; // resume at '=' / 'in'; bound expressions scan as references
+        continue;
+      }
+      if (t.value === "do") {
+        if (pendingForDo) pendingForDo = false; // for-header scope already pushed
+        else pushScope("block");
+        i++;
+        continue;
+      }
+      if (t.value === "then") { pushScope("block"); i++; continue; }
+      if (t.value === "elseif") { popScope(); i++; continue; } // its `then` re-pushes
+      if (t.value === "else") { popScope(); pushScope("block"); i++; continue; }
+      if (t.value === "repeat") { pushScope("block"); i++; continue; }
+      if (t.value === "until") { popScope(); i++; continue; }
+      if (t.value === "end") { popScope(); i++; continue; }
+      i++;
+      continue;
+    }
+
+    if (t.type === "op") {
+      if (t.value === "(" || t.value === "{" || t.value === "[") groupStack.push(t.value);
+      else if (t.value === ")" || t.value === "}" || t.value === "]") groupStack.pop();
+      i++;
+      continue;
+    }
+
+    if (t.type === "name") {
+      const prev = tokens[i - 1];
+      const next = tokens[i + 1];
+      const isMember = prev && prev.type === "op" && (prev.value === "." || prev.value === ":");
+      // `{ key = v }` table-constructor keys are not variable references:
+      // only when the innermost grouping bracket is '{'.
+      const isTableKey = groupStack[groupStack.length - 1] === "{" &&
+        prev && (prev.value === "{" || prev.value === ",") &&
+        next && next.value === "=";
+      if (!isMember && !isTableKey) resolve(t.value);
+      i++;
+      continue;
+    }
+
+    i++; // strings / numbers
+  }
+
+  // EOF: close any remaining scopes (main chunk last).
+  while (scopeStack.length > 1) popScope();
+  finalizeFn(funcStack[0]);
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Self-test for the closure counter (run with --selftest). Synthetic chunks
+// with known upvalue/local counts verify the counter before it judges the
+// addon.
+// ---------------------------------------------------------------------------
+
+function selftest() {
+  function analyze(src) {
+    const flagged = [];
+    const tokens = tokenize(src, function () {});
+    const recs = analyzeClosures(tokens, function (ln, msg) { flagged.push(msg); });
+    return { recs: recs, flagged: flagged };
+  }
+  function fnRec(r, name) {
+    for (let k = 0; k < r.recs.length; k++) {
+      if (r.recs[k].name === name) return r.recs[k];
+    }
+    return null;
+  }
+  function genUpvalChunk(count) {
+    const decls = [];
+    const refs = [];
+    for (let k = 1; k <= count; k++) {
+      decls.push("local u" + k + " = " + k);
+      refs.push("u" + k);
+    }
+    return decls.join("\n") + "\nlocal function f()\n  return " +
+      refs.join(" + ") + "\nend\n";
+  }
+  let failures = 0;
+  function expect(cond, what) {
+    if (!cond) { failures++; console.error("selftest FAIL: " + what); }
+    else console.log("selftest ok: " + what);
+  }
+
+  // 29 upvalues: under threshold, exact count, no flag.
+  let r = analyze(genUpvalChunk(29));
+  expect(fnRec(r, "f") && fnRec(r, "f").upvals === 29, "29 upvalues counted as 29");
+  expect(r.flagged.length === 0, "29 upvalues not flagged");
+
+  // 32 upvalues: at the hard limit, flagged (>=30).
+  r = analyze(genUpvalChunk(32));
+  expect(fnRec(r, "f") && fnRec(r, "f").upvals === 32, "32 upvalues counted as 32");
+  expect(r.flagged.length === 1, "32 upvalues flagged");
+
+  // 33 upvalues: over the hard limit (would not even compile), flagged.
+  r = analyze(genUpvalChunk(33));
+  expect(fnRec(r, "f") && fnRec(r, "f").upvals === 33, "33 upvalues counted as 33");
+  expect(r.flagged.length === 1, "33 upvalues flagged");
+
+  // Pass-through capture: a local referenced only by an inner-inner closure
+  // still occupies an upvalue slot in the intermediate function.
+  r = analyze(
+    "local x = 1\nlocal y = 2\n" +
+    "local function outer()\n" +
+    "  local function inner() return x + y end\n" +
+    "  return inner\nend\n");
+  expect(fnRec(r, "outer") && fnRec(r, "outer").upvals === 2,
+    "intermediate function gets pass-through upvalue slots");
+  expect(fnRec(r, "inner") && fnRec(r, "inner").upvals === 2,
+    "innermost closure counts outer-outer captures");
+
+  // Locals declared inside the same function are NOT upvalues.
+  r = analyze("local function g()\n  local a = 1\n  local h = function() return a end\n  return h\nend\n");
+  expect(fnRec(r, "g") && fnRec(r, "g").upvals === 0, "own locals are not upvalues");
+  expect(fnRec(r, "anonymous").upvals === 1, "nested closure captures one upvalue");
+
+  // Table-key names and member accesses are not references.
+  r = analyze("local t = 1\nlocal function k()\n  local m = { t = 1, u = 2 }\n  return m.t\nend\n");
+  expect(fnRec(r, "k") && fnRec(r, "k").upvals === 0, "table keys / members not counted");
+
+  // Block scoping frees local slots; max simultaneous is what counts.
+  r = analyze(
+    "local function b()\n" +
+    "  do local a1, a2, a3 = 1, 2, 3 end\n" +
+    "  do local b1, b2 = 1, 2 end\n" +
+    "end\n");
+  expect(fnRec(r, "b") && fnRec(r, "b").maxLocals === 3, "block locals freed on scope exit");
+
+  // Locals threshold: 195 simultaneously-active locals flags.
+  {
+    const decls = [];
+    for (let k = 1; k <= 195; k++) decls.push("local v" + k + " = 0");
+    r = analyze("local function big()\n" + decls.join("\n") + "\nend\n");
+    expect(fnRec(r, "big") && fnRec(r, "big").maxLocals === 195, "195 locals counted");
+    expect(r.flagged.length === 1, "195 locals flagged");
+  }
+
+  // for-loop control vars: 3 hidden + visible, scoped to the loop.
+  r = analyze("local function fl()\n  for i = 1, 10 do local q = i end\nend\n");
+  expect(fnRec(r, "fl") && fnRec(r, "fl").maxLocals === 5, "for loop = 3 hidden + i + q");
+
+  // Method definitions declare an implicit self (no upvalue for it).
+  r = analyze("local T = {}\nfunction T:m()\n  return self\nend\n");
+  expect(fnRec(r, "T:m") && fnRec(r, "T:m").upvals === 0, "method self is a param, not an upvalue");
+
+  if (failures > 0) {
+    console.error(failures + " selftest failure(s)");
+    process.exit(1);
+  }
+  console.log("closure-counter selftests pass");
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // Token-stream checks
 // ---------------------------------------------------------------------------
 
@@ -208,6 +544,9 @@ function checkFile(file) {
   const errors = [];
   const report = (ln, msg) => errors.push(file + ":" + ln + ": " + msg);
   const tokens = tokenize(src, report);
+
+  // Per-function closure limits (upvalues / locals) — see analyzeClosures.
+  analyzeClosures(tokens, report);
 
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -261,9 +600,13 @@ function checkFile(file) {
 
 // ---------------------------------------------------------------------------
 
+if (process.argv.indexOf("--selftest") !== -1) {
+  selftest();
+}
+
 const files = process.argv.slice(2);
 if (files.length === 0) {
-  console.error("usage: node lua50check.js <files.lua...>");
+  console.error("usage: node lua50check.js <files.lua...> | node lua50check.js --selftest");
   process.exit(2);
 }
 
