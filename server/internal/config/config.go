@@ -34,6 +34,17 @@ const (
 	CaptureTest   = "test"
 )
 
+// --client-type values: an explicit client-type override for the recorded
+// game, beating every wizard detection (version stamp, name/path heuristics,
+// remembered answer, ask-dialog) — the escape hatch for custom clients the
+// rules misread (e.g. vanilla-plus builds with unusual version stamps).
+// Empty means auto-detect.
+const (
+	ClientTypeAuto   = ""
+	ClientTypeEra    = "era"    // official WoW Classic Era (1.15)
+	ClientTypeLegacy = "legacy" // 1.12-engine client (private servers, vanilla-plus customs)
+)
+
 // ResolutionFit is the --resolution value (and default) that sizes the
 // window to the largest 9:16 portrait client area fitting the primary
 // monitor's work area. A 1080x1920 design window cannot physically fit a
@@ -70,6 +81,7 @@ type Config struct {
 	Setup           bool   // --setup: print WoW configuration help and exit
 	WowDir          string // --wow-dir: WoW game directory (skips wizard auto-detection)
 	GameExe         string // --game-exe: exact game executable (private servers); beats --wow-dir
+	ClientType      string // --client-type: "era"|"legacy" override ("" = detect); beats every wizard detection
 	Yes             bool   // --yes: first-run wizard accepts every default without prompting
 	ChooseGame      bool   // --choose-game: always show the game-install picker, even over a remembered choice
 	SkipSetup       bool   // --skip-setup: skip the first-run wizard entirely
@@ -104,6 +116,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.BoolVar(&cfg.Setup, "setup", false, "print WoW Config.wtf and addon setup instructions, then exit")
 	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW game directory (e.g. the _classic_era_ folder, or a private-server folder containing Wow.exe); skips the wizard's auto-detection")
 	fs.StringVar(&cfg.GameExe, "game-exe", "", "exact game executable to record and launch (private servers, e.g. VanillaFixes.exe); overrides --wow-dir and every auto-detection")
+	fs.StringVar(&cfg.ClientType, "client-type", ClientTypeAuto, "force the client type instead of detecting it: \"era\" (official WoW Classic Era 1.15) or \"legacy\" (1.12-engine client — private servers and vanilla-plus customs like Turtle WoW or OctoWow); remembered with the chosen game")
 	fs.BoolVar(&cfg.Yes, "yes", false, "first-run wizard: accept every default without prompting (non-interactive)")
 	fs.BoolVar(&cfg.ChooseGame, "choose-game", false, "show the game-install picker at startup (the World of Warcraft installs found, with detected versions), even when a game is already remembered")
 	fs.BoolVar(&cfg.SkipSetup, "skip-setup", false, "skip the first-run setup wizard entirely")
@@ -148,6 +161,11 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	case CaptureWindow, CaptureTest:
 	default:
 		return nil, fmt.Errorf("--capture %q: must be window|test", cfg.Capture)
+	}
+	switch cfg.ClientType {
+	case ClientTypeAuto, ClientTypeEra, ClientTypeLegacy:
+	default:
+		return nil, fmt.Errorf("--client-type %q: must be era or legacy (or omit it to auto-detect)", cfg.ClientType)
 	}
 	if cfg.WindowTitle == "" {
 		return nil, fmt.Errorf("--window-title must not be empty")

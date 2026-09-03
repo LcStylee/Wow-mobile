@@ -313,6 +313,18 @@ func trayWndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		}
 		return 0
 	case wmClose:
+		// WM_CLOSE also arrives from OUTSIDE: `taskkill /IM wowstreamd.exe`
+		// without /F — the installer's graceful pre-install close — delivers
+		// it to this hidden top-level window. Treat it as a full quit (same
+		// as the menu's Quit), not just a teardown of the tray window, or a
+		// graceful taskkill would strand a headless streaming process that
+		// only /F can end. Tray.Close posts this same message during an
+		// already-running shutdown; OnQuit there re-cancels an already
+		// cancelled context — a harmless no-op.
+		t.removeIcon()
+		if t.opts.OnQuit != nil {
+			t.opts.OnQuit()
+		}
 		procDestroyWindow.Call(hwnd) //nolint:errcheck
 		return 0
 	case wmDestroy:

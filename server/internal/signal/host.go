@@ -96,7 +96,7 @@ func (s *Server) handleHostQR(w http.ResponseWriter, r *http.Request) {
 	w.Write(svg) //nolint:errcheck
 }
 
-// quitHeader is the dashboard's proof-of-intent header on POST /host/api/quit.
+// QuitHeader is the dashboard's proof-of-intent header on POST /host/api/quit.
 // LoopbackOnly checks the TCP peer, but a browser running ON this PC is a
 // loopback peer too: once the user has accepted the certificate for
 // 127.0.0.1, any website open in that browser could fire a cross-origin
@@ -104,14 +104,18 @@ func (s *Server) handleHostQR(w http.ResponseWriter, r *http.Request) {
 // Access enforcement send it) — a drive-by kill of the stream. A custom
 // header cannot be attached to a no-cors cross-origin request, and the CORS
 // preflight it would otherwise trigger is never answered with an allowance,
-// so requiring it limits quit to same-origin dashboard code.
-const quitHeader = "X-Wowmobile-Quit"
+// so requiring it limits quit to same-origin dashboard code — plus the one
+// other legitimate loopback caller: the single-instance "Replace it" flow in
+// cmd/wowstreamd, which sends the same header on its loopback-to-loopback
+// takeover POST (exported for exactly that caller; the LoopbackOnly guard is
+// unchanged).
+const QuitHeader = "X-Wowmobile-Quit"
 
 // handleHostQuit gracefully shuts the whole server down — identical to
 // Ctrl+C: inputs released, peer closed, ffmpeg stopped, listener drained.
 func (s *Server) handleHostQuit(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get(quitHeader) == "" {
-		http.Error(w, "quit requires the dashboard's "+quitHeader+" header", http.StatusForbidden)
+	if r.Header.Get(QuitHeader) == "" {
+		http.Error(w, "quit requires the dashboard's "+QuitHeader+" header", http.StatusForbidden)
 		return
 	}
 	s.log.Info("shutdown requested via host dashboard")

@@ -600,6 +600,287 @@ func TestStreamOnlyClientSkipsAddon(t *testing.T) {
 	}
 }
 
+// A vanilla-plus stamp (1.18 on a Wow.exe — OctoWow-style, the v0.3.2 field
+// report) is NOT conclusive: it falls through to the name heuristics, which
+// classify Wow.exe as legacy — the 1.12 addon port is installed, no prompt.
+func TestVanillaPlusStampFallsThroughToHeuristics(t *testing.T) {
+	dir := makeGameDir(t, "Wow.exe", true) // legacy Config.wtf pre-satisfied
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t} // zero scripted answers: any prompt fails
+	opts := baseOpts(t, "", sys, p)
+	opts.GameExeFlag = filepath.Join(dir, "Wow.exe")
+	opts.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, opts.Out.(*bytes.Buffer).String())
+	}
+	if res.ClientType != ClientTypeLegacy {
+		t.Fatalf("1.18-stamped Wow.exe must classify legacy via heuristics: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile_Vanilla", "WowMobile_Vanilla.toc")); err != nil {
+		t.Fatalf("vanilla addon not installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile")); !os.IsNotExist(err) {
+		t.Fatal("Classic Era addon must not be installed for a vanilla-plus client")
+	}
+}
+
+// A vanilla-plus stamp on an exe the heuristics don't know either: the ask
+// fires with wording that names the found stamp and defaults to the 1.12
+// engine — also the non-interactive/--yes default.
+func TestVanillaPlusStampCustomExeAsksDefaultLegacy(t *testing.T) {
+	dir := makeGameDir(t, "OctoWow.exe", true) // legacy Config.wtf pre-satisfied
+	exe := filepath.Join(dir, "OctoWow.exe")
+	probe := func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+
+	// Interactive: the question describes the vanilla-plus find; answering
+	// the default (No) lands on legacy.
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{false}}
+	opts := baseOpts(t, "", sys, p)
+	opts.GameExeFlag = exe
+	opts.versionProbe = probe
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ClientType != ClientTypeLegacy {
+		t.Fatalf("declined Classic Era must mean legacy: %+v", res)
+	}
+	question := ""
+	for _, q := range p.asked {
+		if strings.HasPrefix(q, "confirm: ") {
+			question = q
+			break
+		}
+	}
+	for _, want := range []string{"1.18", "vanilla-plus", "1.12 engine"} {
+		if !strings.Contains(question, want) {
+			t.Errorf("ask wording must mention %q, got %q", want, question)
+		}
+	}
+
+	// --yes: never guesses Classic Era for a vanilla-plus stamp — the
+	// default is the 1.12 engine, and no prompt may block.
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p2 := NewConsolePrompter(blockingReader{}, io.Discard, true, true)
+	opts2 := baseOpts(t, "", sys2, p2)
+	opts2.Store = LoadStore(t.TempDir())
+	opts2.GameExeFlag = exe
+	opts2.versionProbe = probe
+	opts2.Yes = true
+	done := make(chan struct{})
+	var res2 *Result
+	var err2 error
+	go func() { res2, err2 = Run(opts2); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("--yes run blocked on the vanilla-plus client-type prompt")
+	}
+	if err2 != nil {
+		t.Fatalf("Run (--yes): %v", err2)
+	}
+	if res2.ClientType != ClientTypeLegacy {
+		t.Fatalf("--yes must default a vanilla-plus stamp to legacy, got %q", res2.ClientType)
+	}
+}
+
+// --client-type beats every detection (here: the WowClassic.exe name and a
+// Classic Era stamp both say era; the flag forces legacy) and is persisted
+// with the game like a prompted answer.
+func TestClientTypeFlagBeatsDetection(t *testing.T) {
+	dir := makeGameDir(t, GameExeName, false)
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf only
+	storeDir := t.TempDir()
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+	opts.GameExeFlag = filepath.Join(dir, GameExeName)
+	opts.ClientTypeFlag = ClientTypeLegacy
+	opts.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 15}, true }
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, opts.Out.(*bytes.Buffer).String())
+	}
+	if res.ClientType != ClientTypeLegacy {
+		t.Fatalf("--client-type legacy must beat the era detection: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile_Vanilla", "WowMobile_Vanilla.toc")); err != nil {
+		t.Fatalf("forced legacy type must install the vanilla addon: %v", err)
+	}
+	after := LoadStore(storeDir)
+	if after.Get(KeyClientType) != string(ClientTypeLegacy) {
+		t.Fatalf("--client-type not persisted: %q", after.Get(KeyClientType))
+	}
+	if !strings.Contains(opts.Out.(*bytes.Buffer).String(), "client type forced to 1.12-era client (--client-type)") {
+		t.Fatalf("forced type not logged:\n%s", opts.Out.(*bytes.Buffer).String())
+	}
+}
+
+// migrationStore seeds the persisted state releases <= 0.3.2 left behind for
+// a vanilla-plus client: exe recorded and chosen, classified classicEra by
+// the old >=1.13 stamp rule.
+func migrationStore(t *testing.T, exe string) string {
+	t.Helper()
+	storeDir := t.TempDir()
+	store := LoadStore(storeDir)
+	store.Set(KeyGameExe, exe)
+	store.Set(KeyClientType, string(ClientTypeClassicEra))
+	store.Set(KeyGameChosen, "1")
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return storeDir
+}
+
+// The bad-classification migration: a remembered classicEra for a
+// vanilla-plus-stamped custom exe is re-resolved once at wizard time; on the
+// corrected answer the 1.12 addon is installed AND the wrongly installed
+// Classic Era addon is removed from AddOns (verified as ours first).
+func TestVanillaPlusMigrationReclassifiesAndRemovesWrongAddon(t *testing.T) {
+	dir := makeGameDir(t, "OctoWow.exe", true) // legacy Config.wtf pre-satisfied
+	exe := filepath.Join(dir, "OctoWow.exe")
+	// The prior (misclassified) run installed the Classic Era addon.
+	src := addonSrc()
+	wrongDir := filepath.Join(dir, "Interface", "AddOns", "WowMobile")
+	if err := ApplyAddon(src, wrongDir, mustPlan(t, src, wrongDir)); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := migrationStore(t, exe)
+
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{false}} // re-ask: No -> 1.12 engine
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+	opts.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+
+	res, err := Run(opts)
+	out := opts.Out.(*bytes.Buffer).String()
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, out)
+	}
+	if res.GameExe != exe || res.ClientType != ClientTypeLegacy {
+		t.Fatalf("migration must correct the type to legacy: %+v", res)
+	}
+	if _, err := os.Stat(wrongDir); !os.IsNotExist(err) {
+		t.Fatalf("wrongly installed Classic Era addon not removed (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile_Vanilla", "WowMobile_Vanilla.toc")); err != nil {
+		t.Fatalf("correct 1.12 addon not installed: %v", err)
+	}
+	for _, want := range []string{
+		"corrected to 1.12-era client",
+		"removed the wrongly installed WowMobile",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("migration report missing %q:\n%s", want, out)
+		}
+	}
+	after := LoadStore(storeDir)
+	if after.Get(KeyClientType) != string(ClientTypeLegacy) || after.Get(KeyVanillaPlusResolvedFor) != exe {
+		t.Fatalf("migration outcome not persisted: type=%q resolved=%q",
+			after.Get(KeyClientType), after.Get(KeyVanillaPlusResolvedFor))
+	}
+
+	// Second run: settled — the persisted legacy answer is reused silently.
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts2 := baseOpts(t, "", sys2, &scriptPrompter{t: t})
+	opts2.Store = LoadStore(storeDir)
+	opts2.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+	res2, err := Run(opts2)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if res2.ClientType != ClientTypeLegacy {
+		t.Fatalf("corrected type not reused: %+v", res2)
+	}
+}
+
+// The migration asks once and respects a user who INSISTS on Classic Era:
+// the answer is recorded (KeyVanillaPlusResolvedFor), nothing is removed,
+// and later runs never re-ask.
+func TestVanillaPlusMigrationUserKeepsEra(t *testing.T) {
+	dir := makeGameDir(t, "OctoWow.exe", true)
+	exe := filepath.Join(dir, "OctoWow.exe")
+	// Era Config.wtf so no config prompt interferes.
+	if err := os.WriteFile(filepath.Join(dir, "WTF", "Config.wtf"),
+		FreshConfig(PortraitSettingsFor(ClientTypeClassicEra, 1080, 1920)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := addonSrc()
+	eraDir := filepath.Join(dir, "Interface", "AddOns", "WowMobile")
+	if err := ApplyAddon(src, eraDir, mustPlan(t, src, eraDir)); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := migrationStore(t, exe)
+	probe := func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // re-ask: Yes -> keep era
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+	opts.versionProbe = probe
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, opts.Out.(*bytes.Buffer).String())
+	}
+	if res.ClientType != ClientTypeClassicEra {
+		t.Fatalf("insisted era answer not honored: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(eraDir, "WowMobile.toc")); err != nil {
+		t.Fatalf("era addon must stay installed: %v", err)
+	}
+	if LoadStore(storeDir).Get(KeyVanillaPlusResolvedFor) != exe {
+		t.Fatal("insisted answer must be marked resolved so it is never re-asked")
+	}
+
+	// Second run: zero prompts.
+	sys2 := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	opts2 := baseOpts(t, "", sys2, &scriptPrompter{t: t})
+	opts2.Store = LoadStore(storeDir)
+	opts2.versionProbe = probe
+	if res2, err := Run(opts2); err != nil || res2.ClientType != ClientTypeClassicEra {
+		t.Fatalf("settled era answer not reused silently: %+v err=%v", res2, err)
+	}
+}
+
+// The migration's cleanup must never delete a WowMobile folder this app did
+// not install: a TOC without the ownership marker is left byte-for-byte
+// alone, reported plainly.
+func TestVanillaPlusMigrationLeavesForeignFolder(t *testing.T) {
+	dir := makeGameDir(t, "OctoWow.exe", true)
+	exe := filepath.Join(dir, "OctoWow.exe")
+	foreign := filepath.Join(dir, "Interface", "AddOns", "WowMobile")
+	if err := os.MkdirAll(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreignTOC := []byte("## Title: Not Ours\n")
+	if err := os.WriteFile(filepath.Join(foreign, "WowMobile.toc"), foreignTOC, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := migrationStore(t, exe)
+
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{false}} // re-ask: No -> legacy
+	opts := baseOpts(t, "", sys, p)
+	opts.Store = LoadStore(storeDir)
+	opts.versionProbe = func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 18}, true }
+
+	if _, err := Run(opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(foreign, "WowMobile.toc"))
+	if err != nil || !bytes.Equal(data, foreignTOC) {
+		t.Fatalf("foreign folder touched: %q err=%v", data, err)
+	}
+	if !strings.Contains(opts.Out.(*bytes.Buffer).String(), "untouched") {
+		t.Fatalf("foreign-folder outcome not reported:\n%s", opts.Out.(*bytes.Buffer).String())
+	}
+}
+
 // --yes with an unrecognized exe must not guess Classic Era: outside a
 // _classic_era_ tree the logged default is legacy.
 func TestYesUnknownExeDefaultsLegacy(t *testing.T) {

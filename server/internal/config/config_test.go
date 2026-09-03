@@ -71,6 +71,23 @@ func TestParseChooseGame(t *testing.T) {
 	}
 }
 
+// --client-type accepts exactly era|legacy (and defaults to auto-detect).
+func TestParseClientType(t *testing.T) {
+	for flag, want := range map[string]string{"era": ClientTypeEra, "legacy": ClientTypeLegacy} {
+		cfg, err := Parse([]string{"--client-type", flag}, io.Discard)
+		if err != nil {
+			t.Fatalf("--client-type %s rejected: %v", flag, err)
+		}
+		if cfg.ClientType != want {
+			t.Errorf("--client-type %s parsed as %q", flag, cfg.ClientType)
+		}
+	}
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.ClientType != ClientTypeAuto {
+		t.Fatalf("--client-type must default to auto-detect, got %q err=%v", cfg.ClientType, err)
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	bad := [][]string{
 		{"--choose-game", "--skip-setup"}, // the picker is part of setup
@@ -83,6 +100,8 @@ func TestParseRejects(t *testing.T) {
 		{"--bitrate-kbps", "10"},
 		{"--encoder", "vp9"},
 		{"--window-title", ""},
+		{"--client-type", "classic"}, // must be era|legacy
+		{"--client-type", "1.12"},
 		{"positional"},
 	}
 	for _, args := range bad {

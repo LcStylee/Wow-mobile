@@ -181,13 +181,19 @@ func productSubdirs(root string) []string {
 // version stamp first (rename-proof), then the name/path heuristics. A
 // stamped non-1.x major (retail 11.x, an expansion client) is deliberately
 // NOT run through the 1.x name heuristics — its Wow.exe would be misread as
-// a vanilla client — and stays unknown here; the label carries the truth.
+// a vanilla client — and stays unknown here; the label carries the truth. A
+// 1.16+ vanilla-plus stamp (Turtle 1.17, OctoWow 1.18 — 1.12-engine custom
+// clients) is inconclusive on its own, so it DOES fall through to the
+// heuristics, exactly like an unstamped exe.
 func classifyCandidate(exe string, v GameVersion) ClientType {
 	if v != (GameVersion{}) {
 		if ct, ok := ClientTypeFromVersion(v); ok {
 			return ct
 		}
-		return "" // non-1.x major: neither supported type
+		if v.Major != 1 {
+			return "" // non-1.x major: neither supported type
+		}
+		// vanilla-plus stamp: fall through to the name/path heuristics.
 	}
 	if ct, ok := DetectClientType(exe); ok {
 		return ct
@@ -230,7 +236,16 @@ func candidateLabel(exe string, v GameVersion, ct ClientType) string {
 		if v.Major == 1 {
 			ver = fmt.Sprintf("%d.%d", v.Major, v.Minor)
 		}
+		if isVanillaPlusStamp(v) {
+			// The stamp is the client's own content version; say what engine
+			// it actually runs so the pick is informed.
+			return fmt.Sprintf("Vanilla-plus %s custom client (1.12 engine) — %s", ver, dir)
+		}
 		return fmt.Sprintf("Vanilla %s private client — %s", ver, dir)
+	case isVanillaPlusStamp(v):
+		// Stamped vanilla-plus but an exe name the heuristics don't know:
+		// the version is known, only the final classification is the user's.
+		return fmt.Sprintf("Vanilla-plus %d.%d custom client (1.12 engine) — %s", v.Major, v.Minor, exe)
 	default:
 		return "World of Warcraft (version unknown) — " + exe
 	}

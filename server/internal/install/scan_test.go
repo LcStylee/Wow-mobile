@@ -106,6 +106,44 @@ func TestAssembleCandidatesDedupeOrderAndLabels(t *testing.T) {
 	}
 }
 
+// Vanilla-plus stamps (1.16+ — Turtle 1.17, OctoWow 1.18) are inconclusive:
+// the scanner classifies through the name heuristics like an unstamped exe,
+// and the labels say what was found instead of pretending Classic Era.
+func TestAssembleCandidatesVanillaPlusStamps(t *testing.T) {
+	turtle := makeGameDir(t, "Wow.exe", false)
+	turtleExe := filepath.Join(turtle, "Wow.exe")
+	octo := makeGameDir(t, "OctoWow.exe", false)
+	octoExe := filepath.Join(octo, "OctoWow.exe")
+	versions := map[string]GameVersion{
+		turtleExe: {Major: 1, Minor: 17},
+		octoExe:   {Major: 1, Minor: 18},
+	}
+	probe := func(exe string) (GameVersion, bool) {
+		v, ok := versions[exe]
+		return v, ok
+	}
+
+	cands := assembleCandidates(GameScanSources{Exes: []string{turtleExe, octoExe}}, probe)
+	if len(cands) != 2 {
+		t.Fatalf("want 2 candidates, got %+v", cands)
+	}
+	// Wow.exe: the name heuristic settles it — legacy, engine named honestly.
+	if cands[0].Type != ClientTypeLegacy {
+		t.Errorf("1.17-stamped Wow.exe must classify legacy via heuristics, got %q", cands[0].Type)
+	}
+	if want := "Vanilla-plus 1.17 custom client (1.12 engine) — " + turtle; cands[0].Label != want {
+		t.Errorf("turtle label:\nwant %q\ngot  %q", want, cands[0].Label)
+	}
+	// OctoWow.exe: no heuristic knows the name — unclassified (the wizard
+	// asks), but the label still reports the stamp and the real engine.
+	if cands[1].Type != "" {
+		t.Errorf("1.18-stamped unknown exe must stay unclassified in the scan, got %q", cands[1].Type)
+	}
+	if want := "Vanilla-plus 1.18 custom client (1.12 engine) — " + octoExe; cands[1].Label != want {
+		t.Errorf("octo label:\nwant %q\ngot  %q", want, cands[1].Label)
+	}
+}
+
 func TestClientTypeForModernMajor(t *testing.T) {
 	cases := []struct {
 		v    GameVersion

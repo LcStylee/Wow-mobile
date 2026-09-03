@@ -58,10 +58,18 @@ func TestClientTypeFromVersion(t *testing.T) {
 		want   ClientType
 		wantOK bool
 	}{
-		{GameVersion{1, 12}, ClientTypeLegacy, true},
 		{GameVersion{1, 0}, ClientTypeLegacy, true},
+		{GameVersion{1, 12}, ClientTypeLegacy, true},
 		{GameVersion{1, 13}, ClientTypeClassicEra, true},
+		{GameVersion{1, 14}, ClientTypeClassicEra, true},
 		{GameVersion{1, 15}, ClientTypeClassicEra, true},
+		// Official Classic Era stamps stop at 1.15: a higher 1.x stamp is a
+		// vanilla-plus custom client's own content version (1.12 engine) and
+		// must NOT be classified — heuristics and finally the user decide
+		// (v0.3.2 field report: OctoWow "1.18.1" misfiled as Classic Era).
+		{GameVersion{1, 16}, "", false},
+		{GameVersion{1, 17}, "", false}, // Turtle WoW
+		{GameVersion{1, 18}, "", false}, // OctoWow
 		{GameVersion{2, 4}, "", false},  // TBC private client: heuristics/user decide
 		{GameVersion{3, 3}, "", false},  // WotLK
 		{GameVersion{11, 0}, "", false}, // retail
@@ -70,6 +78,25 @@ func TestClientTypeFromVersion(t *testing.T) {
 		got, ok := ClientTypeFromVersion(tc.v)
 		if got != tc.want || ok != tc.wantOK {
 			t.Errorf("ClientTypeFromVersion(%v) = (%q, %v), want (%q, %v)", tc.v, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}
+
+func TestIsVanillaPlusStamp(t *testing.T) {
+	cases := []struct {
+		v    GameVersion
+		want bool
+	}{
+		{GameVersion{1, 12}, false},
+		{GameVersion{1, 15}, false},
+		{GameVersion{1, 16}, true},
+		{GameVersion{1, 17}, true},
+		{GameVersion{1, 18}, true},
+		{GameVersion{2, 18}, false}, // major must be 1
+	}
+	for _, tc := range cases {
+		if got := isVanillaPlusStamp(tc.v); got != tc.want {
+			t.Errorf("isVanillaPlusStamp(%v) = %v, want %v", tc.v, got, tc.want)
 		}
 	}
 }

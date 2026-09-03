@@ -172,6 +172,12 @@ type Options struct {
 	WowDirFlag    string // --wow-dir override, "" = auto-detect
 	GameExeFlag   string // --game-exe override: exact game executable, beats everything
 	FFmpegFlag    string // --ffmpeg override, "" = search
+	// ClientTypeFlag carries an explicit --client-type era|legacy override
+	// (already mapped to a ClientType); it beats every detection — version
+	// stamp, heuristics, remembered answer, ask-dialog — and is persisted
+	// with the chosen game exactly like a prompted answer. The escape hatch
+	// for any client the detection rules misread. "" = detect.
+	ClientTypeFlag ClientType
 
 	Interactive bool // a user can answer prompts (terminal stdin, or GUI dialogs)
 	Yes         bool // --yes: accept every default
@@ -251,14 +257,15 @@ func Run(opts Options) (res *Result, err error) {
 
 	begin(StepGame)
 	var streamOnly bool
-	if res.GameExe, res.ClientType, streamOnly, err = stepLocateGame(&opts); err != nil {
+	var staleVariant ClientType // wrongly installed variant to clean up ("" = none)
+	if res.GameExe, res.ClientType, streamOnly, staleVariant, err = stepLocateGame(&opts); err != nil {
 		return nil, err
 	}
 	res.GameDir = filepath.Dir(res.GameExe)
 	opts.Status.SetClientType(string(res.ClientType))
 
 	begin(StepAddon)
-	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType, streamOnly); err != nil {
+	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType, streamOnly, staleVariant); err != nil {
 		return nil, err
 	}
 	begin(StepConfig)
@@ -413,9 +420,14 @@ func persistResolution(opts *Options, w, h int) {
 // else happens with the game — never auto-proceed, even with a single find,
 // because multi-install machines are common and guessing picks wrong
 // (--choose-game re-opens the picker over a remembered choice). It then
-// resolves the client type and persists both. streamOnly reports a stamped
-// non-1.x client: streaming works, but no addon variant can load there.
-func stepLocateGame(opts *Options) (string, ClientType, bool, error) {
+// resolves the client type (--client-type beats every detection) and persists
+// both. streamOnly reports a stamped non-1.x client: streaming works, but no
+// addon variant can load there. staleVariant names the addon variant a PRIOR
+// run wrongly installed for this same exe ("" = none): when a remembered
+// Classic Era classification of a vanilla-plus-stamped exe (the pre-fix
+// >=1.13 rule) is corrected to legacy, the Classic Era addon it planted must
+// be cleaned out of AddOns — stepInstallAddon does the verified removal.
+func stepLocateGame(opts *Options) (string, ClientType, bool, ClientType, error) {
 	const label = "World of Warcraft"
 	exe := ""
 	knownType := ClientType("") // type already classified by the scanner
@@ -428,13 +440,13 @@ func stepLocateGame(opts *Options) (string, ClientType, bool, error) {
 		// error, not later at launch. Accepted verbatim otherwise — any exe
 		// name works (private servers).
 		if st, err := os.Stat(opts.GameExeFlag); err != nil || st.IsDir() {
-			return "", "", false, fmt.Errorf("--game-exe %q: not an existing file", opts.GameExeFlag)
+			return "", "", false, "", fmt.Errorf("--game-exe %q: not an existing file", opts.GameExeFlag)
 		}
 		exe = opts.GameExeFlag
 	case opts.WowDirFlag != "":
 		e, err := ResolveGameExe(opts.WowDirFlag)
 		if err != nil {
-			return "", "", false, fmt.Errorf("--wow-dir: %w", err)
+			return "", "", false, "", fmt.Errorf("--wow-dir: %w", err)
 		}
 		exe = e
 	default:
@@ -444,7 +456,7 @@ func stepLocateGame(opts *Options) (string, ClientType, bool, error) {
 		if exe == "" {
 			var err error
 			if exe, knownType, chosenFrom, err = chooseGameFromScan(opts); err != nil {
-				return "", "", false, err
+				return "", "", false, "", err
 			}
 		}
 	}
@@ -453,24 +465,50 @@ func stepLocateGame(opts *Options) (string, ClientType, bool, error) {
 		stepLine(opts.Out, 1, label, "not found automatically")
 		var err error
 		if exe, err = selectGamePathLoop(opts, ""); err != nil {
-			return "", "", false, err
+			return "", "", false, "", err
 		}
 	}
 
 	ct := knownType
-	if ct == "" {
+	explicit := false // the type was forced/answered for a vanilla-plus stamp
+	switch {
+	case opts.ClientTypeFlag != "":
+		// --client-type: the user's word beats every detection — including a
+		// scanner classification and any remembered answer — and rules out
+		// the stream-only downgrade (they named a supported type on purpose).
+		ct, streamOnly, explicit = opts.ClientTypeFlag, false, true
+		fmt.Fprintf(opts.Out, "  client type forced to %s (--client-type)\n", ct)
+	case ct == "":
 		var err error
-		if ct, streamOnly, err = resolveClientType(opts, exe); err != nil {
-			return "", "", false, err
+		if ct, streamOnly, explicit, err = resolveClientType(opts, exe); err != nil {
+			return "", "", false, "", err
 		}
 	}
-	persistGame(opts, exe, ct)
+
+	// Misclassification migration (v0.3.2 field report): a vanilla-plus
+	// stamped exe (OctoWow 1.18, Turtle 1.17) that the old >=1.13 rule
+	// recorded as Classic Era just got re-resolved to legacy — say so plainly
+	// and have the addon step remove the Classic Era addon that cannot load
+	// on its 1.12 engine.
+	staleVariant := ClientType("")
+	if opts.Store.Get(KeyGameExe) == exe &&
+		ClientType(opts.Store.Get(KeyClientType)) == ClientTypeClassicEra &&
+		ct == ClientTypeLegacy {
+		if v, ok := opts.peVersion(exe); ok && isVanillaPlusStamp(v) {
+			staleVariant = ClientTypeClassicEra
+			fmt.Fprintf(opts.Out,
+				"  note: %s was set up as Classic Era earlier, but its %d.%d version stamp marks a vanilla-plus custom client on the 1.12 engine — corrected to %s.\n",
+				filepath.Base(exe), v.Major, v.Minor, ct)
+		}
+	}
+
+	persistGame(opts, exe, ct, explicit)
 	result := fmt.Sprintf("found: %s (%s)", exe, ct)
 	if chosenFrom > 0 {
 		result = fmt.Sprintf("chosen: %s (%s) — from %d found", exe, ct, chosenFrom)
 	}
 	step(opts, 1, StepGame, label, hoststatus.StateOK, result)
-	return exe, ct, streamOnly, nil
+	return exe, ct, streamOnly, staleVariant, nil
 }
 
 // rememberedGameExe returns the persisted prior choice while it is still
@@ -574,10 +612,23 @@ func selectGamePathLoop(opts *Options, prevInvalid string) (string, error) {
 // paths, else legacy) and the choice is logged either way. streamOnly is
 // true for a stamped non-1.x client (expansion/retail): the returned type is
 // only the nearer window-settings family — no addon variant can load there.
-func resolveClientType(opts *Options, exe string) (ClientType, bool, error) {
+//
+// A vanilla-plus stamp (major 1, minor 1.16+ — Turtle 1.17, OctoWow 1.18:
+// custom clients on the 1.12 engine) is NOT conclusive: it falls through to
+// the heuristics and, failing those, to the ask — whose text then says what
+// was found and defaults to the 1.12 engine. explicit reports that the type
+// was answered for such a stamp (KeyVanillaPlusResolvedFor is then recorded,
+// so the misclassification migration below never re-asks a settled answer).
+// That migration is the persisted-answer guard: a remembered classicEra for a
+// vanilla-plus-stamped exe WITHOUT the resolved marker is the pre-fix >=1.13
+// rule's doing (v0.3.2 field report) and is re-resolved once instead of
+// being trusted.
+func resolveClientType(opts *Options, exe string) (ct ClientType, streamOnly, explicit bool, err error) {
+	var vpStamp GameVersion
+	haveVPStamp := false
 	if v, ok := opts.peVersion(exe); ok {
 		if ct, ok := ClientTypeFromVersion(v); ok {
-			return ct, false, nil
+			return ct, false, false, nil
 		}
 		if v.Major != 1 {
 			// A stamped non-1.x client (expansion/retail, or a 0.x-stamped
@@ -590,29 +641,52 @@ func resolveClientType(opts *Options, exe string) (ClientType, bool, error) {
 			ct := clientTypeForModernMajor(v)
 			fmt.Fprintf(opts.Out, "  %s is a %d.%d client — streaming works, but the touch UI addon needs Classic Era (1.15) or 1.12; using %s window settings.\n",
 				filepath.Base(exe), v.Major, v.Minor, ct)
-			return ct, true, nil
+			return ct, true, false, nil
 		}
+		vpStamp, haveVPStamp = v, true // 1.16+: inconclusive, fall through
 	}
 	if ct, ok := DetectClientType(exe); ok {
-		return ct, false, nil
+		return ct, false, false, nil
 	}
 	if opts.Store.Get(KeyGameExe) == exe {
-		if ct := ClientType(opts.Store.Get(KeyClientType)); ct.valid() {
-			return ct, false, nil
+		prev := ClientType(opts.Store.Get(KeyClientType))
+		stale := haveVPStamp && prev == ClientTypeClassicEra &&
+			opts.Store.Get(KeyVanillaPlusResolvedFor) != exe
+		if prev.valid() && !stale {
+			return prev, false, false, nil
+		}
+		if stale {
+			fmt.Fprintf(opts.Out,
+				"  the remembered Classic Era classification for %s predates the corrected vanilla-plus rule — re-checking it once.\n",
+				filepath.Base(exe))
 		}
 	}
 	def := DefaultClientType(exe) == ClientTypeClassicEra
-	isClassic, err := opts.Prompt.Confirm(
-		"Is "+filepath.Base(exe)+" a WoW Classic Era (1.15) client? Choose No for a 1.12-era private-server client.", def)
-	if err != nil {
-		return "", false, err
+	question := "Is " + filepath.Base(exe) + " a WoW Classic Era (1.15) client? Choose No for a 1.12-era private-server client."
+	if haveVPStamp {
+		// Say what was found; official Classic Era stamps are 1.13–1.15, so a
+		// higher 1.x stamp all but names a vanilla-plus client — default to
+		// its real engine.
+		def = false
+		question = fmt.Sprintf(
+			"%s reports version %d.%d — this looks like a custom vanilla-plus client (%d.%d), and these run the 1.12 engine (Turtle WoW, OctoWow, …). Treat it as a WoW Classic Era (1.15) client anyway? Choose No for the 1.12 engine (recommended).",
+			filepath.Base(exe), vpStamp.Major, vpStamp.Minor, vpStamp.Major, vpStamp.Minor)
 	}
-	ct := ClientTypeLegacy
+	isClassic, err := opts.Prompt.Confirm(question, def)
+	if err != nil {
+		return "", false, false, err
+	}
+	ct = ClientTypeLegacy
 	if isClassic {
 		ct = ClientTypeClassicEra
 	}
-	fmt.Fprintf(opts.Out, "  Unrecognized game program %s — treating it as a %s client.\n", filepath.Base(exe), ct)
-	return ct, false, nil
+	if haveVPStamp {
+		fmt.Fprintf(opts.Out, "  Treating %s (vanilla-plus %d.%d stamp) as a %s client.\n",
+			filepath.Base(exe), vpStamp.Major, vpStamp.Minor, ct)
+	} else {
+		fmt.Fprintf(opts.Out, "  Unrecognized game program %s — treating it as a %s client.\n", filepath.Base(exe), ct)
+	}
+	return ct, false, haveVPStamp, nil
 }
 
 // persistGame stores the resolved exe and client type together (the type is
@@ -620,12 +694,25 @@ func resolveClientType(opts *Options, exe string) (ClientType, bool, error) {
 // every call site follows an explicit resolution — a flag, a picker pick, a
 // pasted/browsed path, a --yes/non-interactive sole find, or a fast path
 // that itself required the marker — never a silent auto-detection.
-func persistGame(opts *Options, exe string, ct ClientType) {
+// vpResolved additionally records KeyVanillaPlusResolvedFor for this exe (an
+// explicit answer/flag settled a vanilla-plus stamp's type — never re-ask); a
+// marker left behind for a DIFFERENT exe is cleared, since it only ever
+// speaks for the exe it was written with.
+func persistGame(opts *Options, exe string, ct ClientType, vpResolved bool) {
+	marker := opts.Store.Get(KeyVanillaPlusResolvedFor)
+	wantMarker := marker
+	switch {
+	case vpResolved:
+		wantMarker = exe
+	case marker != "" && marker != exe:
+		wantMarker = ""
+	}
 	if opts.Store.Get(KeyGameExe) != exe || opts.Store.Get(KeyClientType) != string(ct) ||
-		opts.Store.Get(KeyGameChosen) != "1" {
+		opts.Store.Get(KeyGameChosen) != "1" || wantMarker != marker {
 		opts.Store.Set(KeyGameExe, exe)
 		opts.Store.Set(KeyClientType, string(ct))
 		opts.Store.Set(KeyGameChosen, "1")
+		opts.Store.Set(KeyVanillaPlusResolvedFor, wantMarker)
 		saveStore(opts)
 	}
 }
@@ -650,17 +737,22 @@ func saveStore(opts *Options) {
 // skipped instead. The skip also keeps LegacyAddonNote honest: the legacy
 // branch below then only ever fires for an actual 1.12-era client, never for
 // a 2.x–7.x expansion client that merely shares the legacy settings family.
-func stepInstallAddon(opts *Options, gameDir string, ct ClientType, streamOnly bool) error {
+//
+// staleVariant ("" = none) names a variant a PRIOR run installed under a
+// classification stepLocateGame just corrected (the vanilla-plus migration):
+// that folder is removed — but ONLY after RemoveInstalledAddon verifies it
+// really is this app's addon (ownership marker in the TOC, and only the
+// variant's own files are deleted); anything else in AddOns stays untouched,
+// always. The outcome lands in the step summary so windowed mode (no
+// console) sees it on the dashboard too.
+func stepInstallAddon(opts *Options, gameDir string, ct ClientType, streamOnly bool, staleVariant ClientType) error {
 	const label = "WowMobile addon"
 	if streamOnly {
 		step(opts, 2, StepAddon, label, hoststatus.StateSkipped,
 			"skipped — stream only: the touch UI addon needs a Classic Era (1.15) or 1.12 client")
 		return nil
 	}
-	src, folder := opts.AddonFS, "WowMobile"
-	if ct == ClientTypeLegacy {
-		src, folder = opts.VanillaAddonFS, "WowMobile_Vanilla"
-	}
+	src, folder := addonVariant(opts, ct)
 	dest := filepath.Join(gameDir, "Interface", "AddOns", folder)
 	plan, err := PlanAddon(src, dest)
 	if err != nil {
@@ -675,6 +767,11 @@ func stepInstallAddon(opts *Options, gameDir string, ct ClientType, streamOnly b
 	if ct == ClientTypeLegacy {
 		summary += " (WowMobile_Vanilla, 1.12 port)"
 	}
+	if staleVariant.valid() && staleVariant != ct {
+		if note := removeStaleAddon(opts, gameDir, staleVariant); note != "" {
+			summary += "; " + note
+		}
+	}
 	step(opts, 2, StepAddon, label, hoststatus.StateOK, summary)
 	if ct == ClientTypeLegacy {
 		fmt.Fprintln(opts.Out, "  "+LegacyAddonNote)
@@ -688,6 +785,44 @@ func stepInstallAddon(opts *Options, gameDir string, ct ClientType, streamOnly b
 		}
 	}
 	return nil
+}
+
+// addonVariant maps a client type to its embedded addon source and AddOns
+// folder name: the Classic Era addon (WowMobile, Interface 11507) or its 1.12
+// port (WowMobile_Vanilla, Interface 11200).
+func addonVariant(opts *Options, ct ClientType) (fs.FS, string) {
+	if ct == ClientTypeLegacy {
+		return opts.VanillaAddonFS, "WowMobile_Vanilla"
+	}
+	return opts.AddonFS, "WowMobile"
+}
+
+// removeStaleAddon deletes the wrongly installed addon variant for a
+// corrected classification (the vanilla-plus migration) and reports plainly
+// what happened — on the console AND, via the returned short note, in the
+// addon step's dashboard detail (windowed mode has no console). Never fatal:
+// a leftover folder degrades to an honest message, not a failed wizard.
+func removeStaleAddon(opts *Options, gameDir string, stale ClientType) string {
+	src, folder := addonVariant(opts, stale)
+	dest := filepath.Join(gameDir, "Interface", "AddOns", folder)
+	removal, err := RemoveInstalledAddon(src, dest)
+	switch {
+	case err != nil:
+		fmt.Fprintf(opts.Out, "  warning: could not remove the wrongly installed %s addon: %v — delete %s by hand.\n", folder, err, dest)
+		return fmt.Sprintf("could not remove the old %s folder (delete it by hand)", folder)
+	case removal == AddonRemovalDone:
+		what := fmt.Sprintf("removed the wrongly installed %s (%s) addon — it cannot load on this client", folder, stale)
+		if _, statErr := os.Stat(dest); statErr == nil {
+			// Foreign files kept the folder alive; ours are gone, theirs stay.
+			what += " (files not belonging to it were kept)"
+		}
+		fmt.Fprintf(opts.Out, "  %s: %s\n", what, dest)
+		return what
+	case removal == AddonRemovalForeign:
+		fmt.Fprintf(opts.Out, "  left %s untouched: it does not carry this app's addon marker, so WoW Mobile did not install it.\n", dest)
+		return fmt.Sprintf("left the existing %s folder untouched (not installed by WoW Mobile)", folder)
+	}
+	return "" // nothing was installed there — nothing to report
 }
 
 // stepConfigWTF ensures the portrait-window settings in <gameDir>\WTF\

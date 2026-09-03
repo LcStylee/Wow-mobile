@@ -101,27 +101,53 @@ FunctionEnd
 ; ------------------------------------------------------------------ install
 Section "WoW Mobile (required)" SecMain
   SectionIn RO
-  ; Running-instance guard, mirroring the uninstaller's: the common upgrade
-  ; path is running WowMobile-Setup.exe while the current wowstreamd.exe sits
-  ; in the tray, and overwriting a running exe fails. GUI-mode instances are
-  ; detected by their tray window class — a hidden top-level window
-  ; (tray_windows.go: WS_POPUP, class "WowMobileTray"), so plain FindWindow
-  ; sees it. Console-mode instances have no such window; they are caught by
-  ; the File error check below. /SD IDCANCEL makes silent (/S) installs fail
-  ; fast instead of clobbering half an install.
+  ; Running-instance guard (field report v0.3.2): the common upgrade path is
+  ; running WowMobile-Setup.exe while the current wowstreamd.exe sits in the
+  ; tray — overwriting a running exe fails the File write mid-install, and a
+  ; surviving old instance then made the freshly launched new one die on the
+  ; port bind. So: detect ANY running wowstreamd.exe (GUI tray or console
+  ; mode alike) via tasklist, tell the user it will be closed, then close it
+  ; GRACEFULLY first — taskkill WITHOUT /F sends WM_CLOSE, which reaches
+  ; GUI-mode instances via the WowMobileTray window's handler as a clean quit
+  ; (winui/tray_windows.go); a console-mode instance has no top-level window
+  ; for taskkill to close, rides out the ~5 s wait, and is ended by the /F
+  ; fallback. Declining aborts cleanly before anything is written.
+  ; nsExec ships inside stock NSIS 3 (like the System plugin already used
+  ; above): no extra plugins, and no console windows flashing.
+  ; /SD IDOK makes silent (/S) installs close-and-continue, matching the
+  ; unattended-upgrade expectation.
 checkRunning:
-  FindWindow $0 "WowMobileTray"
-  StrCmp $0 0 0 stillRunning
-  ; Older releases created the tray window as a MESSAGE-ONLY window, which
-  ; plain FindWindow never enumerates — search under HWND_MESSAGE ((HWND)-3)
-  ; too, so upgrading over a running old version is caught here as well.
-  System::Call 'user32::FindWindowExW(p -3, p 0, w "WowMobileTray", p 0) p .r0'
-  StrCmp $0 0 notRunning
-stillRunning:
-  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
-      "WoW Mobile is still running.$\r$\n$\r$\nQuit it (tray icon > Quit WoW Mobile), then click Retry." \
-      /SD IDCANCEL IDRETRY checkRunning
+  nsExec::ExecToStack '"$SYSDIR\cmd.exe" /c tasklist /NH /FI "IMAGENAME eq wowstreamd.exe" | "$SYSDIR\find.exe" /i "wowstreamd.exe"'
+  Pop $0 ; find.exe exit code: 0 = a wowstreamd.exe process exists
+  Pop $1 ; matched line (unused)
+  StrCmp $0 "0" 0 notRunning
+  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
+      "WoW Mobile is running and will be closed to update.$\r$\n$\r$\nClick OK to close it and continue, or Cancel to abort the install." \
+      /SD IDOK IDOK closeApp
   Abort "Install cancelled: WoW Mobile is still running."
+closeApp:
+  ; Graceful close: WM_CLOSE only, no /F.
+  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM wowstreamd.exe'
+  Pop $0
+  Pop $1
+  StrCpy $R1 0
+waitClosed:
+  Sleep 500
+  nsExec::ExecToStack '"$SYSDIR\cmd.exe" /c tasklist /NH /FI "IMAGENAME eq wowstreamd.exe" | "$SYSDIR\find.exe" /i "wowstreamd.exe"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" 0 notRunning ; no longer listed: continue the install
+  IntOp $R1 $R1 + 1
+  IntCmp $R1 10 forceClose 0 forceClose
+  Goto waitClosed
+forceClose:
+  ; Still alive after ~5 s of graceful waiting: force it, then give the file
+  ; lock a moment to release. If even this fails, the File error check below
+  ; still aborts cleanly instead of half-installing.
+  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /F /IM wowstreamd.exe'
+  Pop $0
+  Pop $1
+  Sleep 500
 notRunning:
   SetOutPath "$INSTDIR"
   ; If the File write still fails (a console-mode wowstreamd.exe holds the

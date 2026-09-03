@@ -52,6 +52,16 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		prompt = install.NewConsolePrompter(os.Stdin, os.Stdout, interactive, cfg.Yes)
 	}
 
+	// --client-type: the config layer validated the value; map it onto the
+	// install package's ClientType ("" stays "detect").
+	var clientTypeFlag install.ClientType
+	switch cfg.ClientType {
+	case config.ClientTypeEra:
+		clientTypeFlag = install.ClientTypeClassicEra
+	case config.ClientTypeLegacy:
+		clientTypeFlag = install.ClientTypeLegacy
+	}
+
 	res, err := install.Run(install.Options{
 		Out:            os.Stdout,
 		Prompt:         prompt,
@@ -65,6 +75,7 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		WindowTitle:    cfg.WindowTitle,
 		WowDirFlag:     cfg.WowDir,
 		GameExeFlag:    cfg.GameExe,
+		ClientTypeFlag: clientTypeFlag,
 		FFmpegFlag:     cfg.FFmpegPath,
 		Interactive:    interactive,
 		Yes:            cfg.Yes,

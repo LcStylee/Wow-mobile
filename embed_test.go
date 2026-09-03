@@ -34,6 +34,28 @@ func TestEmbeddedHostDashboardMatchesDisk(t *testing.T) {
 	assertFSEqualsDisk(t, HostFS, "client/host")
 }
 
+// Both shipped TOCs must carry the ownership marker RemoveInstalledAddon
+// (server/internal/install, which this root package cannot import) verifies
+// before it will delete a wrongly installed variant during the client-type
+// migration — lose the line and the cleanup silently degrades to "left
+// untouched". install's TestShippedTOCsCarryOwnershipMarker binds the same
+// files to the actual constant.
+func TestAddonTOCsCarryOwnershipMarker(t *testing.T) {
+	const marker = "## Author: WoW Mobile project" // == install.AddonOwnershipMarker
+	for _, path := range []string{
+		"addon/WowMobile/WowMobile.toc",
+		"addon/WowMobile_Vanilla/WowMobile_Vanilla.toc",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if !bytes.Contains(data, []byte(marker)) {
+			t.Errorf("%s lacks the ownership marker %q", path, marker)
+		}
+	}
+}
+
 // assertFSEqualsDisk compares the embedded tree with the on-disk dir in both
 // directions. devOnly names files or directories that are expected on disk
 // but asserted ABSENT from the embedded FS.

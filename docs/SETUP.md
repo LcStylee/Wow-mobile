@@ -29,6 +29,11 @@ strongly recommended).
 3. **Scan the QR code** on the dashboard with your phone — see
    [Pair the phone](#pair-the-phone).
 
+   *Updating over a running WoW Mobile:* if the app is running when you
+   install, the installer says **"WoW Mobile is running and will be closed to
+   update"** — OK closes it gracefully (a forced close only after ~5 s of
+   waiting) and continues; Cancel aborts with nothing changed.
+
 While WoW Mobile is running you'll find its icon in the **system tray**
 (notification area): left-click opens the dashboard, right-click offers
 **Open dashboard**, **Choose game…** and **Quit**. **Choose game…** shows the
@@ -37,6 +42,17 @@ during setup, so switching means a restart with `--choose-game` — see
 [step 1](#what-the-setup-does)); the dashboard carries the same hint. The
 dashboard's Quit button does the same as the tray's — a clean stop that
 releases every held key.
+
+**Only one copy runs at a time.** Launching WoW Mobile while it is already
+running is never an error: the second launch shows a small dialog — **Open
+dashboard** (the running copy's status page), **Replace it** (asks the
+running copy to quit, waits up to 5 s, then starts), or **Exit**. From an
+interactive console of its own (`--console`) the same three choices are
+offered as a prompt; from a shared shell console the launch prints the
+running copy's dashboard address and exits cleanly, leaving it in charge
+(pass `--yes` to replace instead). This also covers an older (pre-0.3.3)
+WoW Mobile still holding the port: it is recognized by its dashboard and
+offered the same choices.
 
 *Portable alternative:* the same Releases page also carries the bare
 `wowstreamd.exe`. Double-clicking it gives the identical dialogs-and-dashboard
@@ -191,14 +207,32 @@ WoW Mobile also hosts 1.12-era private-server clients (launched through
   launches; addon dir and `Config.wtf` are looked up next to it.
 - **Client type — detected automatically:** the wizard first reads the
   version stamp embedded in the exe itself (official clients carry it:
-  `1.12.x` means a vanilla client, `1.13`+ the Classic-Era lineage), which
-  survives any rename. Only when the stamp is missing or stripped do the
-  name/path heuristics apply (`WowClassic.exe` or a `_classic_era_` path
-  means Classic Era; `Wow.exe`/`VanillaFixes.exe` outside a `_classic_era_`
-  tree means a 1.12 client), and only when those are also inconclusive does
-  the wizard ask ("Is this a Classic Era (1.15) client?"). Under `--yes` it
-  does **not** guess — it assumes Classic Era only when `_classic_era_`
-  appears in the path, otherwise a 1.12 client, and logs the choice.
+  `1.0`–`1.12` means a vanilla client, `1.13`–`1.15` the Classic-Era
+  lineage), which survives any rename. A **higher 1.x stamp is treated as
+  inconclusive**: vanilla-plus custom clients stamp their own content version
+  there while running the 1.12 engine (Turtle WoW reports 1.17, OctoWow
+  1.18), so such a stamp falls through to the name/path heuristics — which
+  also apply when the stamp is missing or stripped (`WowClassic.exe` or a
+  `_classic_era_` path means Classic Era; `Wow.exe`/`VanillaFixes.exe`
+  outside a `_classic_era_` tree means a 1.12 client). Only when those are
+  also inconclusive does the wizard ask; for a 1.16+ stamp the question says
+  what was found ("this looks like a custom vanilla-plus client (1.18) —
+  these run the 1.12 engine") and defaults to the 1.12 engine. Under `--yes`
+  it does **not** guess — it assumes Classic Era only when `_classic_era_`
+  appears in the path, otherwise a 1.12 client (vanilla-plus stamps always
+  default to 1.12), and logs the choice. `--client-type era|legacy` is the
+  escape hatch that beats every detection and is remembered with the game.
+- **Earlier misclassification is corrected automatically:** versions up to
+  0.3.2 filed any 1.13+ stamp as Classic Era, so a vanilla-plus client got
+  the Classic Era addon — which cannot load on its 1.12 engine (the game
+  then renders squeezed with no touch UI). On the next start the wizard
+  notices the remembered Classic Era type against the 1.16+ stamp, re-runs
+  the classification once (heuristics, then the ask above), and on the
+  corrected answer installs `WowMobile_Vanilla` **and removes the wrongly
+  installed `WowMobile` folder** — only after verifying its TOC carries this
+  app's own marker, deleting only the files the app ships; anything else in
+  `AddOns` is never touched. What happened is reported on the wizard output
+  and the dashboard's addon step.
 - **Config.wtf / window size — honest limits:** on a **windowed** 1.12 client
   `gxResolution` governs **fullscreen mode only**: the window opens at the
   client's own remembered/default size (800x600 out of the box) and ignores
@@ -405,6 +439,7 @@ The defaults are right for most setups. All flags:
 | `--client-dir` | embedded client | Serve the phone client PWA from a disk directory (development) |
 | `--wow-dir` | scan & choose | Game directory — `_classic_era_`, its parent, or any folder containing a known game exe; bypasses the wizard's install picker |
 | `--game-exe` | scan & choose | Exact game executable to record and launch (private servers, any name); overrides `--wow-dir` and bypasses the picker |
+| `--client-type` | detect | Force the client type instead of detecting it: `era` (official Classic Era 1.15) or `legacy` (1.12-engine client — private servers and vanilla-plus customs like Turtle 1.17 / OctoWow 1.18). Beats the version stamp, the name/path heuristics, and any remembered answer; persisted with the chosen game |
 | `--choose-game` | off | Show the install picker at startup (the WoW installs found, with detected versions) even when a game is already remembered |
 | `--yes` | off | Wizard: accept every default without prompting (non-interactive). One found install is used; several abort with a list — pass `--game-exe` to pick |
 | `--skip-setup` | off | Skip the first-run wizard entirely |
@@ -492,6 +527,10 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 | Symptom | Cause and fix |
 |---|---|
 | Windows SmartScreen blocks `WowMobile-Setup.exe` / `wowstreamd.exe` | The release binaries are unsigned. Click **More info → Run anyway**, or build from source ([step 4](#4-build-and-run-wowstreamd)). |
+| Launching says **"WoW Mobile is already running"** | Not an error — only one copy runs at a time, and an older copy is still in the tray (typical right after installing an update). Pick **Open dashboard** to use the running copy, **Replace it** to swap in the new launch (it asks the old one to quit and waits up to 5 s), or **Exit**. Console: the same `[O/R/X]` prompt; `--yes` replaces without asking. |
+| `bind: Only one usage of each socket address` / "port 8443 is in use" | Usually another program owns the port — running WoW Mobile copies (current or pre-0.3.3) are recognized and offered Open/Replace/Exit before this can appear, so an error here means either a different program or an old WoW Mobile too wedged to answer its own dashboard (check the tray / Task Manager for `wowstreamd.exe`). Close it, or pass `--addr :8444` (any free port). |
+| Game looks **stretched/squeezed in-game** on the phone, no touch UI | The addon is not loading. At WoW's **character select → AddOns**, check the right variant is listed and enabled: **WoW Mobile** on Classic Era, **WoW Mobile (Vanilla)** on any 1.12-engine client — including vanilla-plus customs (Turtle, OctoWow), whose 1.16+ version stamps older WoW Mobile releases misread as Classic Era, installing the variant that cannot load there. Re-run `wowstreamd`: the wizard corrects that classification and swaps the addon ([Private servers](#private-servers-112-clients)); `--client-type legacy` forces it. Note the **login screen** always looks stretched — addons cannot run there, so judge only in-game/at character select. |
+| Client's version says 1.16/1.17/1.18 — which type is it? | A vanilla-plus custom client on the **1.12 engine** (official Classic Era stamps stop at 1.15). The wizard treats such stamps as inconclusive and defaults to the 1.12 client type; `--client-type era\|legacy` overrides any detection. |
 | Nothing seems to happen after launching / where did it go? | WoW Mobile runs windowed with no terminal: look for the **tray icon** (left-click opens the dashboard) and the dashboard tab at `https://127.0.0.1:8443/host/`. Quit via the tray menu or the dashboard's **Quit** button. `--console` from a terminal gets you the full text log. |
 | Wizard: `[1/5] World of Warcraft ..... not found automatically` | Non-standard install location the scan can't see. Use the **folder picker** that appears (the `World of Warcraft` or `_classic_era_` folder both work, as does any folder with `Wow.exe`/`VanillaFixes.exe`), choose "Pick the game program (.exe)…", or pass `--wow-dir`/`--game-exe` — the choice is remembered in `%APPDATA%\wowstreamd\config.json`. |
 | WoW Mobile is set up against the **wrong WoW install** (several on this PC) | Restart with `--choose-game`: the picker lists the installs found (with detected versions) and your new choice replaces the remembered one. The tray icon's **Choose game…** item shows the exact command; `--game-exe`/`--wow-dir` pin an install permanently. |

@@ -28,9 +28,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -161,6 +165,22 @@ func run(ui *appUI) error {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
+
+	// One running copy per machine (Windows; no-op elsewhere). The common
+	// second launch is right after installing over a running version: the old
+	// instance still sits in the tray, and without this guard the new one
+	// died with "bind: Only one usage of each socket address" (v0.3.2 field
+	// report). Instead the user chooses: open the running instance's
+	// dashboard, replace it (loopback quit + bounded wait), or exit — never
+	// an error for the app merely already running.
+	release, proceed, err := ensureSingleInstance(cfg, ui, log)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil // the running instance stays in charge; this copy exits cleanly
+	}
+	defer release()
 
 	// Dashboard state: the wizard fills the checklist as it runs, the signal
 	// server serves it loopback-only at /host/api/status.
@@ -411,10 +431,30 @@ func run(ui *appUI) error {
 	server.EnableHostUI(sig.HostUI{FS: hostFS, Status: status, Quit: quit})
 
 	// Bind before the banner: a port-in-use failure must surface as the error,
-	// never after a full "ready" message.
+	// never after a full "ready" message. The single-instance mutex rules out
+	// another CURRENT wowstreamd, but a pre-0.3.3 instance claimed no mutex —
+	// handleBindConflict probes for that exact case (its dashboard answers on
+	// the port) and runs the open/replace/exit choice; anything else falls
+	// through to describeListenError's plain-words message.
 	if err := server.Listen(); err != nil {
-		return err
+		retry, done, herr := handleBindConflict(cfg, ui, log, err)
+		if herr != nil {
+			return herr
+		}
+		if done {
+			return nil // resolved: dashboard opened, or the running copy stays in charge
+		}
+		if !retry {
+			return describeListenError(cfg.Addr, err)
+		}
+		if err := server.Listen(); err != nil {
+			return describeListenError(cfg.Addr, err)
+		}
 	}
+	// Remember the successfully bound port: a future second launch reads it
+	// to reach THIS instance's loopback dashboard (open it, or ask it to
+	// quit for "Replace it") even under a non-default --addr. Best-effort.
+	persistBoundPort(server.Port(), log)
 	// Harness support: with --addr :0 the kernel picks the port; publish the
 	// real one. The file is written atomically-enough (tmp+rename) so a reader
 	// polling for it never sees a partial write.
@@ -476,6 +516,54 @@ func run(ui *appUI) error {
 		}
 	}()
 	return server.Serve(runCtx)
+}
+
+// describeListenError turns the opaque address-in-use bind failure into an
+// actionable message naming the culprit class and both ways out. Every other
+// listen error passes through untouched. The mutex guard and
+// handleBindConflict (which catches mutex-less pre-0.3.3 instances whose
+// dashboard answers) run first, so by the time this fires the holder is some
+// other program — or an old WoW Mobile too wedged to answer its own status
+// endpoint, which the message admits.
+func describeListenError(addr string, err error) error {
+	if !isAddrInUse(err) {
+		return err
+	}
+	port := "8443"
+	if _, p, splitErr := net.SplitHostPort(addr); splitErr == nil && p != "" {
+		port = p
+	}
+	alt := ":8444"
+	if n, convErr := strconv.Atoi(port); convErr == nil && n > 0 && n < 65535 {
+		alt = fmt.Sprintf(":%d", n+1)
+	}
+	return fmt.Errorf("port %s is in use by another program — possibly an unresponsive older WoW Mobile (check the system tray / Task Manager for wowstreamd.exe). Close it, or pass --addr %s to use a different port (%w)", port, alt, err)
+}
+
+// persistBoundPort records the bound port in the config store (KeyLastPort)
+// for the single-instance guard of a FUTURE launch. Best-effort: a failure
+// only costs that guard its non-default-port discovery (it falls back to
+// 8443), so it is logged, never fatal.
+func persistBoundPort(port int, log *slog.Logger) {
+	// Only the Windows single-instance guard ever reads KeyLastPort
+	// (singleinstance_other.go is a no-op), so Linux dev runs and the e2e
+	// harness must not write it into the developer's real config store.
+	if runtime.GOOS != "windows" {
+		return
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
+	val := strconv.Itoa(port)
+	if store.Get(install.KeyLastPort) == val {
+		return
+	}
+	store.Set(install.KeyLastPort, val)
+	if err := store.Save(); err != nil {
+		log.Warn("could not remember the bound port for the already-running guard", "err", err)
+	}
 }
 
 // writePortFile publishes the bound TCP port for test harnesses (--port-file):

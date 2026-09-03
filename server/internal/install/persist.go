@@ -44,6 +44,21 @@ const (
 	// it at character select) was already shown (the dashboard note and the
 	// console print repeat every run; the modal dialog must not).
 	KeyLegacyNoticeShown = "legacy_addon_notice_shown"
+	// KeyVanillaPlusResolvedFor names the game exe whose vanilla-plus version
+	// stamp (major 1, minor 1.16+ — Turtle 1.17, OctoWow 1.18) had its client
+	// type explicitly resolved under the corrected inconclusive-stamp rule
+	// (the user answered the ask-dialog, or --client-type forced it). Only
+	// trusted while it equals KeyGameExe. Without it, a KeyClientType of
+	// classicEra recorded for such an exe is treated as the pre-fix
+	// misclassification (releases <= 0.3.2 classified any 1.13+ stamp as
+	// Classic Era) and re-resolved once at wizard time.
+	KeyVanillaPlusResolvedFor = "vanillaplus_type_resolved_exe"
+	// KeyLastPort records the TCP port the server actually bound on its most
+	// recent successful start (decimal string). The single-instance guard in
+	// cmd/wowstreamd reads it when a second copy starts, to open (or quit,
+	// for "Replace it") the RUNNING instance's loopback dashboard even under
+	// a non-default --addr; 8443 is the fallback when absent.
+	KeyLastPort = "last_port"
 )
 
 // StoreFileName is the persisted settings file inside the wowstreamd config

@@ -60,19 +60,49 @@ func fixedFileVersion(data []byte) (GameVersion, bool) {
 	return GameVersion{}, false
 }
 
-// ClientTypeFromVersion maps a stamped version to a client type: 1.13+ is the
-// Classic(-Era) lineage, 1.0–1.12 the vanilla client. Other majors (2.x/3.x
-// private clients, or a launcher's own version stamp outside those ranges)
-// are not classified — the name/path heuristics and, finally, the user
-// decide. Note this still classifies VanillaFixes.exe correctly by accident
-// AND by design: its own version stamps are 1.x < 1.13, and its name is in
-// the legacy heuristic table anyway.
+// Official Classic(-Era) lineage stamps are exactly 1.13–1.15 today
+// (1.13 Classic, 1.14 Season of Mastery, 1.15 Classic Era). A major-1 stamp
+// ABOVE that range is NOT a newer official client: it is how vanilla-plus
+// custom clients advertise themselves (Turtle WoW stamps 1.17, OctoWow 1.18
+// — both run the 1.12 engine, field report v0.3.2), so such stamps must
+// never be treated as conclusive evidence of a Classic Era client.
+const (
+	classicEraMinMinor = 13
+	classicEraMaxMinor = 15
+)
+
+// isVanillaPlusStamp reports a major-1 stamp above the official Classic Era
+// range: a vanilla-plus custom client (1.12 engine) announcing its own
+// content version. Inconclusive for classification on its own — but a strong
+// hint toward the 1.12 engine, which the wizard's ask-dialog default uses.
+func isVanillaPlusStamp(v GameVersion) bool {
+	return v.Major == 1 && v.Minor > classicEraMaxMinor
+}
+
+// ClientTypeFromVersion maps a stamped version to a client type: 1.13–1.15 is
+// the official Classic(-Era) lineage, 1.0–1.12 the vanilla client. Everything
+// else is not classified — the name/path heuristics and, finally, the user
+// decide. That covers two distinct cases:
+//
+//   - non-1.x majors (2.x/3.x private clients, retail, or a launcher's own
+//     stamp), and
+//   - major-1 minors ABOVE 1.15 (isVanillaPlusStamp): vanilla-plus custom
+//     clients on the 1.12 engine whose content version outruns the official
+//     Classic Era range — classifying those as Classic Era installed the
+//     wrong addon variant (v0.3.2 field report: OctoWow "1.18.1").
+//
+// Note this still classifies VanillaFixes.exe correctly by accident AND by
+// design: its own version stamps are 1.x < 1.13, and its name is in the
+// legacy heuristic table anyway.
 func ClientTypeFromVersion(v GameVersion) (ClientType, bool) {
 	if v.Major != 1 {
 		return "", false
 	}
-	if v.Minor >= 13 {
+	switch {
+	case v.Minor < classicEraMinMinor:
+		return ClientTypeLegacy, true
+	case v.Minor <= classicEraMaxMinor:
 		return ClientTypeClassicEra, true
 	}
-	return ClientTypeLegacy, true
+	return "", false // 1.16+: vanilla-plus custom stamp, not conclusive
 }
