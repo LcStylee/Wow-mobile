@@ -71,6 +71,50 @@ export function resolveMode(prevMode, candidate, prevW, w) {
 }
 
 /**
+ * User override from Settings ("Controls below the game"): 'always' forces
+ * the deck, 'never' forces the overlay, 'auto' (and any unknown stored
+ * value) keeps the measured candidate. Pure (unit-tested). The escape hatch
+ * exists because the auto decision reads viewport numbers that engines get
+ * wrong in exotic embeddings (webviews, misreported insets) — a misdetected
+ * device must not be stuck with chrome floating over the game.
+ * @param override 'auto' | 'always' | 'never' (anything else = 'auto')
+ * @param candidate the measured mode ('deck' | 'overlay')
+ * @returns 'deck' | 'overlay'
+ */
+export function applyOverride(override, candidate) {
+  if (override === 'always') return 'deck';
+  if (override === 'never') return 'overlay';
+  return candidate;
+}
+
+/**
+ * Pick the viewport size the layout decision uses. Pure (unit-tested).
+ *
+ * window.visualViewport is preferred where present: on iOS its height tracks
+ * the ACTUAL visible viewport (matching the 100dvh the CSS boxes use) in both
+ * Safari tabs (dynamic toolbar) and standalone home-screen PWAs, whereas
+ * documentElement.clientHeight is the stable/small layout viewport, which in
+ * a Safari tab under-reports by the toolbar height and would deny the deck to
+ * phones that fit it. Two exceptions fall back to the layout viewport:
+ *   - pinch-zoom (scale ≠ 1): visualViewport reports the zoomed-in window,
+ *     but pinch-zoom moves no CSS boxes, so the decision must not change;
+ *   - degenerate/absent visualViewport (0x0 during some engine transitions).
+ * @param vv        window.visualViewport (or null/undefined)
+ * @param fallbackW documentElement.clientWidth (|| innerWidth)
+ * @param fallbackH documentElement.clientHeight (|| innerHeight)
+ * @returns {w, h} CSS px
+ */
+export function viewportSize(vv, fallbackW, fallbackH) {
+  if (vv && vv.width > 0 && vv.height > 0) {
+    const scale = vv.scale || 1;
+    if (scale > 0.99 && scale < 1.01) {
+      return { w: vv.width, h: vv.height };
+    }
+  }
+  return { w: fallbackW, h: fallbackH };
+}
+
+/**
  * Measure the safe-area insets in px. env() is only readable through CSS, so
  * a hidden probe element carries the two values in its box size.
  */
@@ -91,7 +135,7 @@ function measureSafeInsets(doc) {
  * dims after FADE_AFTER_MS idle and wakes on any touch of it or of the game
  * surface (buttons stay tappable while dimmed — opacity only).
  */
-export function initLayout() {
+export function initLayout(settings) {
   const body = document.body;
   const hud = document.getElementById('hud');
 
@@ -106,23 +150,30 @@ export function initLayout() {
   // In overlay mode #hud is pointer-events:none with only its buttons live,
   // so a pointerdown reaching #hud is always a button press that also ACTS —
   // deliberate for hold keys (Spc must stay holdable through a faded bar),
-  // but End on a 35%-opacity bar is a destructive mis-tap waiting to happen:
-  // for #btn-disconnect ONLY, a tap that lands while the bar is faded wakes
-  // the bar and swallows that one click (the now-visible button acts on the
-  // next tap).
-  const disconnect = document.getElementById('btn-disconnect');
+  // but a destructive control on a 35%-opacity bar is a mis-tap waiting to
+  // happen: for #btn-disconnect (End) and #update-pill (instant reload; it
+  // hangs below the bar over the world square's top edge and inherits the
+  // bar's faded opacity), a tap that lands while the bar is faded wakes the
+  // bar and swallows that one click (the now-visible button acts on the next
+  // tap).
+  const guarded = [
+    document.getElementById('btn-disconnect'),
+    document.getElementById('update-pill'),
+  ];
   hud.addEventListener('pointerdown', (e) => {
     const wasFaded = hud.classList.contains('faded');
     wakeFade();
-    if (wasFaded && disconnect && disconnect.contains(e.target)) {
+    if (!wasFaded) return;
+    const btn = guarded.find((b) => b && b.contains(e.target));
+    if (btn) {
       const swallow = (ev) => {
         ev.stopImmediatePropagation();
         ev.preventDefault();
       };
-      disconnect.addEventListener('click', swallow, { capture: true, once: true });
+      btn.addEventListener('click', swallow, { capture: true, once: true });
       // A drag off the button never fires the click: drop the stale guard.
       setTimeout(
-        () => disconnect.removeEventListener('click', swallow, { capture: true }),
+        () => btn.removeEventListener('click', swallow, { capture: true }),
         700,
       );
     }
@@ -159,14 +210,25 @@ export function initLayout() {
     }
     heldWhileTyping = false;
     const insets = measureSafeInsets(document);
-    // documentElement.clientWidth/Height matches the CSS viewport units the
-    // geometry uses (100vw/100dvh) more closely than window.inner* — with
-    // desktop scrollbars or pinch-zoom the two can diverge a few px near the
-    // deck threshold, and the decision must match the box CSS will render.
-    const w = document.documentElement.clientWidth || window.innerWidth;
-    const h = document.documentElement.clientHeight || window.innerHeight;
+    // visualViewport preferred, documentElement.clientWidth/Height fallback
+    // (see viewportSize): on iOS the visual viewport tracks the 100dvh the
+    // CSS boxes use — in a Safari tab the layout viewport under-reports by
+    // the toolbar height — while pinch-zoom and degenerate readings fall
+    // back to the layout viewport, which matches the CSS units more closely
+    // than window.inner* (desktop scrollbars).
+    const { w, h } = viewportSize(
+      window.visualViewport,
+      document.documentElement.clientWidth || window.innerWidth,
+      document.documentElement.clientHeight || window.innerHeight,
+    );
     const candidate = layoutMode(w, h, insets.top, insets.bottom);
-    const mode = resolveMode(appliedMode, candidate, appliedW, w);
+    // Settings escape hatch first ('always'/'never' pin the mode outright);
+    // in 'auto' the soft-keyboard flip guard arbitrates as before.
+    const override = settings ? settings.get('deckLayout') : 'auto';
+    const mode = applyOverride(
+      override,
+      resolveMode(appliedMode, candidate, appliedW, w),
+    );
     appliedMode = mode;
     appliedW = w;
     const wasOverlay = body.classList.contains('layout-overlay');
@@ -187,6 +249,21 @@ export function initLayout() {
   });
 
   window.addEventListener('resize', apply);
+  // The visual viewport can resize without a window resize event (iOS
+  // toolbar collapse, keyboard geometry) — listen to it directly where it
+  // exists, since its size now feeds the decision.
+  window.visualViewport?.addEventListener?.('resize', apply);
   screen.orientation?.addEventListener?.('change', apply);
+  // The Settings "Controls below the game" select re-decides immediately.
+  // The applied-mode memory is dropped first: it exists only for the soft-
+  // keyboard flip guard, and holding a previously FORCED mode against a
+  // fresh 'auto' decision (deck→overlay refused at unchanged width) would
+  // make "back to Auto" appear to do nothing until the next rotation.
+  settings?.onChange?.((key) => {
+    if (key !== 'deckLayout') return;
+    appliedMode = null;
+    appliedW = null;
+    apply();
+  });
   apply();
 }

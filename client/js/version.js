@@ -8,7 +8,14 @@
 // through a server.
 export const CLIENT_VERSION = '__WM_VERSION__';
 
-/** Human form for UI surfaces: 'dev' builds and raw placeholders read clearly. */
+/**
+ * Human form for UI surfaces: 'dev' builds and raw placeholders read clearly,
+ * and numeric stamps get a stable "v" prefix — release ldflags may stamp a
+ * bare semver ("0.4.3") or a v-tagged one ("v0.4.3"), and next to labeled
+ * stats like "enc 4.2 ms" a bare "0.4.3" lacks context. Non-numeric stamps
+ * ("dev", "unstamped") read as-is; "vdev" would not.
+ */
 export function displayVersion() {
-  return CLIENT_VERSION.startsWith('__') ? 'unstamped' : CLIENT_VERSION;
+  if (CLIENT_VERSION.startsWith('__')) return 'unstamped';
+  return /^\d/.test(CLIENT_VERSION) ? `v${CLIENT_VERSION}` : CLIENT_VERSION;
 }

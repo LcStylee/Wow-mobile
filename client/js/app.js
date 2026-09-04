@@ -25,7 +25,7 @@ const DISCONNECT_GRACE_MS = 3500; // let a Wi-Fi blip recover before reconnectin
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
 
 class App {
-  #settings = new Settings();
+  #settings;
   #sender = new InputSender();
   #hud;
   #joystick;
@@ -71,7 +71,9 @@ class App {
   #wakeLock = null;
   #wakeLockRequest = null; // in-flight wakeLock.request; concurrent acquires share it
 
-  constructor() {
+  /** @param settings shared Settings instance (layout.js reads it too). */
+  constructor(settings) {
+    this.#settings = settings;
     this.#hud = new Hud({
       settings: this.#settings,
       actions: {
@@ -120,6 +122,19 @@ class App {
     // Build identity, stamped by the server into js/version.js: what THIS
     // cached shell actually is, verifiable at a glance (stale-PWA triage).
     document.getElementById('connect-version').textContent = `client ${displayVersion()}`;
+  }
+
+  /**
+   * True once a session actually delivered a hello and is still wanted — an
+   * automatic shell reload now would yank a playing (or briefly
+   * reconnecting) stream, so initShellUpdate defers to the "Update ready"
+   * pill instead. A PRE-hello connect attempt is deliberately not busy: with
+   * a saved pairing boot() starts connecting immediately, which is exactly
+   * when a launch-time update lands, and a reload there just re-runs the
+   * same auto-connect on the new shell.
+   */
+  get busy() {
+    return this.#wanted && this.#everConnected;
   }
 
   // ---- boot ---------------------------------------------------------------
@@ -909,16 +924,134 @@ function waitIceGatheringComplete(pc, timeoutMs) {
   });
 }
 
-// Pick the chrome layout (bottom deck vs auto-fading overlay bar) before the
-// app shows anything, and keep it current across resizes/orientation changes.
-initLayout();
+/**
+ * Shell auto-update. The service worker's cache is version-named (server-
+ * stamped, sw.js), so a new server release means a new sw.js byte-for-byte —
+ * but iOS home-screen PWAs check for a new worker LAZILY, and even once the
+ * new worker activates (skipWaiting + clients.claim) the PAGE that is open
+ * was already served from the old cache. Without help the user can run the
+ * old UI indefinitely (the v0.4.2 field report). So:
+ *   - registration.update() on every launch AND every return to the
+ *     foreground (iOS usually RESUMES an installed PWA rather than launching
+ *     it fresh, so foregrounding is the real "app open" signal there);
+ *   - when a new worker takes control, reload ONCE automatically — a
+ *     sessionStorage flag guards against reload loops — so the next paint is
+ *     the new shell within one open/close cycle;
+ *   - EXCEPT while a stream session is live (app.busy — hello delivered and
+ *     still wanted), the QR scanner is open, or a text field has focus
+ *     (mid-typed pairing token): never yank a playing stream or an active
+ *     pairing gesture — show the deck's "Update ready — tap to refresh" pill
+ *     and let the user pick the moment.
+ * Install/offline shell only; never touches /api/ (see sw.js, served
+ * no-cache so update() always compares against the live server).
+ */
+function initShellUpdate(app) {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  const RELOADED_KEY = 'wowmobile.updateReloaded';
+  const pill = document.getElementById('update-pill');
+  const showPill = () => {
+    pill.hidden = false;
+    // The deck clips overflow; .has-update lifts it so the pill can float
+    // above the deck without disturbing its height budget (styles.css).
+    document.getElementById('hud').classList.add('has-update');
+  };
+  pill.addEventListener('click', (e) => {
+    // The × corner dismisses for this session instead of reloading — the
+    // pill floats over the world square's bottom strip (tooltips park
+    // there), and mid-dungeon the update can wait; it re-offers on the next
+    // app launch (the waiting worker survives) or the next update event.
+    if (e.target && e.target.id === 'update-pill-dismiss') {
+      pill.hidden = true;
+      document.getElementById('hud').classList.remove('has-update');
+      return;
+    }
+    pill.hidden = true;
+    location.reload();
+  });
 
-const app = new App();
-app.boot();
-
-// Install/offline shell only; never touches /api/ (see sw.js).
-if ('serviceWorker' in navigator && window.isSecureContext) {
+  let registration = null;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker
+      .register('./sw.js')
+      .then((reg) => {
+        registration = reg;
+        // register() alone may reuse the already-installed worker without a
+        // network check; update() forces the byte-compare against the server.
+        reg.update().catch(() => {});
+        // A settled page (controlled, no update in flight) means any earlier
+        // auto-reload completed: clear the once-guard so a SECOND update
+        // later in this long-lived PWA session can auto-reload too. Delayed,
+        // so even a pathologically per-request-stamped shell (never the
+        // release stamping — sw.js is stable per version) could reload at
+        // most once per interval, never in a tight loop.
+        if (!reg.waiting && !reg.installing) {
+          setTimeout(() => {
+            try {
+              sessionStorage.removeItem(RELOADED_KEY);
+            } catch {
+              // Storage blocked: the guard read fails open the same way.
+            }
+          }, 30000);
+        }
+      })
+      .catch(() => {});
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      registration?.update().catch(() => {});
+    }
+  });
+
+  // The pre-hello auto-reload is fine for the idle auto-connect path (it just
+  // re-runs the same connect on the new shell), but NOT while the user is
+  // actively mid-pairing: an open QR scanner or a focused text field (the
+  // token entry, most credential-shaped of all) would be silently dropped —
+  // the scanner closes, the half-typed token is gone. Defer those to the pill
+  // like a live stream.
+  const midInteraction = () => {
+    if (!document.getElementById('overlay-scan').hidden) return true;
+    const el = document.activeElement;
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+  };
+
+  // A first-install claim (clients.claim with no previous controller) also
+  // fires controllerchange, but the open page came straight from the network
+  // — nothing stale to replace, so only a controller-to-controller handover
+  // triggers the refresh logic.
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) {
+      hadController = true;
+      return;
+    }
+    let alreadyReloaded = false;
+    try {
+      alreadyReloaded = sessionStorage.getItem(RELOADED_KEY) === '1';
+    } catch {
+      // Storage blocked: fall through — worst case is one extra reload.
+    }
+    if (alreadyReloaded || app.busy || midInteraction()) {
+      showPill();
+      return;
+    }
+    try {
+      sessionStorage.setItem(RELOADED_KEY, '1');
+    } catch {
+      /* storage blocked (see above) */
+    }
+    location.reload();
   });
 }
+
+// One Settings instance shared by the layout decision (deckLayout override)
+// and the app (created before either consumer reads it).
+const settings = new Settings();
+
+// Pick the chrome layout (bottom deck vs auto-fading overlay bar) before the
+// app shows anything, and keep it current across resizes/orientation changes.
+initLayout(settings);
+
+const app = new App(settings);
+app.boot();
+
+initShellUpdate(app);

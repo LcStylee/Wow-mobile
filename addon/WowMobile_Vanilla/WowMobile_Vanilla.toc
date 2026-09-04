@@ -4,7 +4,7 @@
 ## Title: WoW Mobile (Vanilla)
 ## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in the centered 9:16 band of a native landscape window (band layout, the 1.12 default) or fills a portrait window; 1080x1920 design space, world square + control deck.
 ## Author: WoW Mobile project
-## Version: 1.0.0
+## Version: 0.4.3
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/timers,

@@ -286,6 +286,11 @@ body.layout-overlay #rail.collapsed .rail-strip {
   opacity: 0.55;
 }
 
+/* Shell version: present but quieter than the live stats around it. */
+.st-version {
+  opacity: 0.65;
+}
+
 #st-state[data-state='connected'] {
   color: var(--live);
 }
@@ -324,6 +329,67 @@ body.layout-overlay #rail.collapsed .rail-strip {
 /* The expanded panel escapes the deck's box upward. */
 #hud.expanded {
   overflow: visible;
+}
+
+/* ---- "Update ready" pill --------------------------------------------------
+ * Shown by app.js when a new shell took control while a stream session was
+ * live (the automatic reload is deferred to a tap so it never interrupts
+ * play). Absolutely positioned so it never disturbs the deck's height budget
+ * (layout.js MIN_DECK_PX); .has-update lifts the deck's overflow clip the
+ * same way .expanded does. */
+#hud.has-update {
+  overflow: visible;
+}
+
+/* The × dismiss corner: its own generous hit box inside the pill so a
+ * dungeon-time dismissal never mis-fires the reload. */
+#update-pill-dismiss {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+#update-pill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #14120a;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  z-index: 45;
+}
+
+/* While the expanded stats panel is open it occupies the pill's anchor (both
+ * layouts: bottom calc(100%+8px) in deck, top calc(100%+8px) in overlay), and
+ * a tappable reload button painting over stat text is a mis-tap trap — hide
+ * the pill for the moment; closing the panel brings it straight back. */
+#hud.expanded #update-pill {
+  display: none;
+}
+
+/* Overlay layout: the bar sits at the top edge, so the pill hangs BELOW it
+ * (above it is the notch) and must stay tappable through the bar's
+ * pointer-events:none (covered by the `#hud button` rule, restated for
+ * clarity next to the geometry override). It hangs over the world square's
+ * top edge (the addon's buff/target tap row) and inherits the bar's 0.35
+ * faded opacity — a child cannot paint above its parent's opacity — so while
+ * faded it gets the same first-tap-wakes-only click swallow as
+ * #btn-disconnect (layout.js): a mis-tap on the dim pill wakes the bar
+ * instead of instantly reloading mid-play. */
+body.layout-overlay #update-pill {
+  bottom: auto;
+  top: calc(100% + 8px);
+  pointer-events: auto;
 }
 
 /* ---- overlay layout (fallback): same chrome as a top bar ------------------ */
@@ -717,4 +783,13 @@ body.layout-overlay #hud.collapsed #hud-actions button:not(#btn-hud) {
   font-size: 13px;
   z-index: 80;
   pointer-events: none;
+}
+
+/* Sub-360px deck widths: drop the least load-bearing stat (encode time) so
+ * the compact line's version tail always fits untruncated. The full readout
+ * stays available in the expanded panel. */
+@media (max-width: 359px) {
+  #st-enc {
+    display: none;
+  }
 }

@@ -23,6 +23,29 @@ local WM = WowMobile
 WM.name = "WowMobile"
 WM.Layout = {} -- named anchor frames of the control-deck stack
 
+-- Addon version. Stock 1.12 has NO GetAddOnMetadata (it arrived in 2.0;
+-- GetAddOnInfo exposes no "## Version" field either — verified against the
+-- 1.12 FrameXML/GlueXML sources), so the TOC's "## Version:" is unreadable
+-- from Lua and this constant is the source of truth at runtime. KEEP IT IN
+-- SYNC with WowMobile_Vanilla.toc — client/tests/version-sync.test.js fails
+-- the client suite if the two drift. When a modified client (e.g. a private-
+-- server fork) does provide GetAddOnMetadata, prefer the TOC's value — it is
+-- the file the wizard actually wrote. Surfaced by the login line below and
+-- /wm status (Config.lua): a running game keeps OLD addon code until
+-- /reload even after the wizard updates the files, and this is how a field
+-- report proves which code is live.
+WM.VERSION = "0.4.3"
+
+function WM.Version()
+	if GetAddOnMetadata then
+		local ok, v = pcall(GetAddOnMetadata, "WowMobile_Vanilla", "Version")
+		if ok and v then
+			return v
+		end
+	end
+	return WM.VERSION
+end
+
 -- Solid 8x8 white texture shipped with the 1.12 client; tinted via
 -- SetTexture(r,g,b,a) / SetStatusBarColor everywhere we need flat fills.
 WM.TEX_WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -381,6 +404,10 @@ WM.On("PLAYER_LOGIN", function()
 		end
 	end
 	inits = {} -- PLAYER_LOGIN fires once per session; free the closures
+	-- Version line AFTER the inits so it rides the addon's own chat strip
+	-- (Chat.lua published WM.ChatDeliver during the loop above): the one
+	-- glance that tells a /reload-less session apart from the fresh install.
+	WM.Print("v" .. WM.Version() .. " loaded — /wm for commands")
 	-- A uiScale cvar that applies AFTER our layout (some clients defer it —
 	-- the OctoWow field failure) resizes UIParent under frames that were
 	-- already sized: re-measure shortly after login and again once the world

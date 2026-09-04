@@ -53,7 +53,14 @@
       <span id="st-bitrate">– kb/s</span>
       <span id="st-fps">– fps</span>
       <span id="st-enc">enc –</span>
+      <!-- Shell version (server-stamped js/version.js): stale-cached-PWA
+           triage at a glance, in the compact line AND the expanded panel. -->
+      <span id="st-version" class="st-version"></span>
     </button>
+    <!-- "Update ready" pill: a new service worker took control mid-play, so
+         the automatic once-per-session reload was deferred (app.js); floats
+         above the deck, tap = reload into the new shell. -->
+    <button id="update-pill" type="button" hidden>Update ready — tap to refresh<span id="update-pill-dismiss" aria-label="Dismiss until next launch">×</span></button>
   </footer>
 
   <!-- Settings sheet -->
@@ -94,6 +101,17 @@
     <label class="row">
       <input id="set-rail" type="checkbox">
       Show quick keys
+    </label>
+    <label>
+      Controls below the game
+      <!-- Deck-vs-overlay escape hatch (settings.js deckLayout, layout.js
+           applyOverride): Auto measures the viewport; Always/Never pin the
+           mode for devices the measurement misdetects. -->
+      <select id="set-deck">
+        <option value="auto">Auto</option>
+        <option value="always">Always</option>
+        <option value="never">Never</option>
+      </select>
     </label>
     <!-- Build identity of the RUNNING (possibly cached) shell, stamped by the
          server into js/version.js: makes "what version is this phone on"

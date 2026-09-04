@@ -4,7 +4,7 @@
 ## Title: WoW Mobile
 ## Notes: Portrait touch UI overhaul for streaming WoW Classic Era to a phone (1080x1920 window, 1080x1080 world viewport + control deck).
 ## Author: WoW Mobile project
-## Version: 1.0.0
+## Version: 0.4.3
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/queue,

@@ -32,6 +32,10 @@ export const DEFAULTS = Object.freeze({
   showRail: true, // quick-keys row visible
   hudVisible: true, // stats expanded (overlay layout: strip shown at all)
   audio: false, // stream audio unmuted
+  // Deck-vs-overlay escape hatch ("Controls below the game"): 'auto' lets
+  // layout.js measure, 'always'/'never' pin the mode for devices the
+  // measurement misdetects (layout.js applyOverride; unknown values = auto).
+  deckLayout: 'auto',
 });
 
 // What DEFAULTS held before SCHEMA_VERSION 2 — needed to tell "stored because

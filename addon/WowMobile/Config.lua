@@ -187,6 +187,10 @@ end
 -- /wm status: one-glance health — band mode, viewport geometry, deck
 -- presence, errors.
 local function PrintStatus()
+	-- Version first: the wizard updates the files on disk, but a RUNNING game
+	-- keeps the old code until /reload — this line is the proof of which
+	-- addon code is actually live (mirror of the phone client's version line).
+	WM.Print("version: " .. WM.DisplayVersion() .. " (a lower version than the installer means the game needs /reload)")
 	local lo, hi = Config.HeightBounds()
 	local vp = (WM.db and WM.db.viewport and WM.db.viewport.height) or 1080
 	local band = WM.Band

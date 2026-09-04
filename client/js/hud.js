@@ -94,6 +94,19 @@ export class Hud {
     rail.checked = settings.get('showRail');
     rail.addEventListener('change', () => settings.set('showRail', rail.checked));
 
+    // Deck-vs-overlay escape hatch ("Controls below the game"). layout.js
+    // subscribes to the setting and re-decides immediately; the HUD only owns
+    // the control. A stored value the select has no option for (future
+    // schema drift) leaves selectedIndex -1: snap UI and setting back to
+    // auto, mirroring the bitrate select's self-heal above.
+    const deck = $('set-deck');
+    deck.value = String(settings.get('deckLayout'));
+    if (deck.selectedIndex < 0) {
+      deck.value = 'auto';
+      settings.set('deckLayout', 'auto');
+    }
+    deck.addEventListener('change', () => settings.set('deckLayout', deck.value));
+
     const applyVisibility = () => {
       const visible = settings.get('hudVisible');
       // Collapsed: only meaningful in the overlay layout, where CSS then
@@ -111,8 +124,12 @@ export class Hud {
     this.setState('idle');
 
     // Version of the shell that is ACTUALLY running (server-stamped, rides
-    // the service-worker cache) — the stale-cached-client tripwire.
+    // the service-worker cache) — the stale-cached-client tripwire. Shown in
+    // the settings sheet AND as a dim tail of the deck stats line (the same
+    // element renders one-per-line in the expanded readout panel), so "what
+    // version is this phone on" is answerable without opening anything.
     $('sheet-version').textContent = `WoW Mobile client ${displayVersion()}`;
+    $('st-version').textContent = displayVersion();
   }
 
   #bindRange(id, key) {

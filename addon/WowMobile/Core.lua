@@ -15,6 +15,32 @@ local ADDON_NAME, WM = ...
 WM.name = ADDON_NAME
 WM.Layout = {} -- named anchor frames of the control-deck stack, filled by Deck/bar modules
 
+-- Addon version, read from the .toc's "## Version:" so it can never drift
+-- from what the wizard actually installed. C_AddOns.GetAddOnMetadata on
+-- 10.x-engine clients (Classic Era 1.15 included); the legacy global is the
+-- fallback for older builds where the namespace does not exist yet. Surfaced
+-- by the login line below and /wm status (Config.lua) — a running game keeps
+-- OLD addon code until /reload even after the wizard updates the files, and
+-- this is how a field report proves which code is live.
+function WM.Version()
+	local get = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+	local ok, v
+	if get then
+		ok, v = pcall(get, ADDON_NAME, "Version")
+	end
+	return (ok and v) or "unknown"
+end
+
+-- Display form: "v" only in front of a number — never "vunknown" when the
+-- metadata read failed (mirrors the phone client's displayVersion()).
+function WM.DisplayVersion()
+	local v = WM.Version()
+	if string.match(v, "^%d") then
+		return "v" .. v
+	end
+	return v
+end
+
 -- Solid 8x8 white texture shipped with the client; tinted via SetColorTexture /
 -- SetStatusBarColor everywhere we need flat fills.
 WM.TEX_WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -275,6 +301,10 @@ WM.On("PLAYER_LOGIN", function()
 		end
 	end
 	inits = {} -- PLAYER_LOGIN fires once per session; free the closures
+	-- Version line AFTER the inits so it rides the addon's own chat strip
+	-- (Chat.lua published WM.ChatDeliver during the loop above): the one
+	-- glance that tells a /reload-less session apart from the fresh install.
+	WM.Print(WM.DisplayVersion() .. " loaded — /wm for commands")
 end)
 
 --------------------------------------------------------------------------------
