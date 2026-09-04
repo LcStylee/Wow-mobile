@@ -37,6 +37,16 @@ WM.OnInit(function()
 	holder:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT", -WM.Px(10), -WM.Px(10))
 	holder:SetWidth(WM.Px(MAP_SIZE))
 	holder:SetHeight(WM.Px(MAP_SIZE))
+	-- Opaque backdrop under the whole cluster: the round map leaves its
+	-- corners transparent, and if the 3D world ever fails to render behind
+	-- this region the 1.12 engine paints WHITE there (field evidence v0.4.0:
+	-- the mail badge and a zoom button floated in a bare white strip). The
+	-- cluster must never sit on a bare region — the zoom buttons below carry
+	-- their own opaque SkinFrame fills, so blacking the holder square
+	-- completes the coverage. BACKGROUND layer: the map and badge draw over.
+	local holderBg = holder:CreateTexture(nil, "BACKGROUND")
+	holderBg:SetAllPoints(holder)
+	holderBg:SetTexture(0, 0, 0, 1)
 
 	Minimap:SetParent(holder)
 	Minimap:ClearAllPoints()

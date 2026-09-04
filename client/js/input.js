@@ -53,6 +53,9 @@ export class TouchLayer {
     // Fires when videoWidth/videoHeight change (stream (re)negotiation).
     video.addEventListener('resize', invalidate);
     screen.orientation?.addEventListener?.('change', invalidate);
+    // layout.js announces deck⇄overlay flips that move the #video/#touch
+    // boxes without a resize event (e.g. the focusout-held re-evaluation).
+    window.addEventListener('wm-layout-change', invalidate);
     // The world/deck split depends on the configured viewport height
     // (mirrors the addon's /wm viewport — see #geometry); re-split live when
     // the user changes it in the settings sheet.

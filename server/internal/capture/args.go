@@ -66,9 +66,16 @@ type Config struct {
 	// this rect — SOURCE-LOCAL pixels, i.e. client-area coordinates for window
 	// capture — before the scale to Width x Height. Band mode (the band
 	// contract, docs/ARCHITECTURE.md) sets it to the centered 9:16 band of a
-	// landscape window. Ignored on the zero-copy ddagrab path: there the
-	// caller folds the crop into CaptureRect instead (ddagrab crops at grab
-	// time and has no filter stage).
+	// landscape window. Client-area coordinates are correct for gdigrab
+	// AS-IS, with no window-decoration offset: ffmpeg's gdigrab `title=`
+	// input BitBlts from GetDC(hwnd) — the CLIENT-AREA device context, whose
+	// (0,0) is client (0,0) — sized via GetClientRect (libavdevice/gdigrab.c;
+	// title bar and borders are never in the frame). Audited against the
+	// v0.4.0 field report's band-edge UI cut, which traced to the addon-side
+	// gxResolution basis mismatch (window.BandBasisCheck), not to a shifted
+	// crop. Ignored on the zero-copy ddagrab path: there the caller folds the
+	// crop into CaptureRect instead (ddagrab crops at grab time and has no
+	// filter stage), built from ClientToScreen — also decoration-free.
 	CropRect *Rect
 	// SourceW/SourceH describe the full source frame CropRect cuts from.
 	// Only the synthetic test source consumes them (testsrc2 must generate

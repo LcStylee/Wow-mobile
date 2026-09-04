@@ -17,40 +17,54 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- The stream. Muted for autoplay policy; the HUD sound button unmutes. -->
+  <!-- The stream, anchored to the TOP of the screen at its native 9:16
+       aspect (deck layout; see js/layout.js). Muted for autoplay policy; the
+       deck's sound button unmutes. -->
   <video id="video" autoplay playsinline muted></video>
 
   <!-- Gesture layer: exactly covers the video; the joystick renders inside. -->
   <div id="touch"></div>
 
-  <!-- Quick rail: floating edge keys (Space/Esc/chat/M/B). -->
-  <aside id="rail" hidden></aside>
-
-  <!-- HUD strip. The HUD chip collapses stats AND the other action chips to
-       itself, keeping the top edge of the world square (addon buff/target tap
-       region) reachable on exact 9:16 screens where the strip overlaps it. -->
-  <header id="hud">
-    <div id="hud-stats">
+  <!-- The phone deck (#hud for historic wiring): ALL native chrome, stacked
+       in the bottom dead zone below the 9:16 video — quick keys row (#rail,
+       filled by quickbar.js), Snd/Set/End, and the compact stats line
+       (tappable to expand the readout into a panel). Nothing overlays the
+       video in deck layout; on screens at most ~16:9 tall (body.
+       layout-overlay) the same bar floats along the top edge and auto-fades. -->
+  <footer id="hud">
+    <div id="hud-top">
+      <!-- Quick keys: Space/Esc/chat/M/B as one row of true hold-buttons. -->
+      <aside id="rail" hidden></aside>
+      <div id="hud-actions">
+        <!-- Label is just "Snd" — an on/off suffix clips at 320px-wide decks;
+           the state rides the accent color + title/aria-pressed (hud.js). -->
+      <button id="btn-audio" type="button" title="Sound: off"
+              aria-pressed="false">Snd</button>
+        <!-- HUD collapse only matters in overlay layout (deck chrome never
+             covers the game); CSS hides this button in deck layout. -->
+        <button id="btn-hud" type="button" title="Toggle HUD">HUD</button>
+        <button id="btn-settings" type="button" title="Settings">Set</button>
+        <button id="btn-disconnect" type="button" title="Disconnect">End</button>
+      </div>
+    </div>
+    <button id="hud-stats" type="button" title="Connection stats — tap to expand">
       <span id="st-state" data-state="idle">offline</span>
       <span id="st-rtt">– ms</span>
-      <span id="st-bitrate">– kbps</span>
+      <span id="st-bitrate">– kb/s</span>
       <span id="st-fps">– fps</span>
       <span id="st-enc">enc –</span>
-    </div>
-    <div id="hud-actions">
-      <button id="btn-audio" type="button">Snd off</button>
-      <button id="btn-hud" type="button" title="Toggle HUD">HUD</button>
-      <button id="btn-settings" type="button" title="Settings">Set</button>
-      <button id="btn-disconnect" type="button" title="Disconnect">End</button>
-    </div>
-  </header>
+    </button>
+  </footer>
 
   <!-- Settings sheet -->
   <section id="sheet" hidden>
     <h2>Settings</h2>
     <label>
       Camera sensitivity
-      <input id="set-sensitivity" type="range" min="0.5" max="3" step="0.1">
+      <!-- Default 0.8 (settings.js). Range reaches down to a quarter of that
+           for tremor-friendly panning and up past the old 1.6 default for
+           users who prefer the twitchy feel. -->
+      <input id="set-sensitivity" type="range" min="0.2" max="3" step="0.05">
       <output for="set-sensitivity"></output>
     </label>
     <label>

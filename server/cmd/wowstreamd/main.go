@@ -105,6 +105,19 @@ type platform struct {
 	// FindWindow-based `title=` input (the --window-title flag is only a
 	// substring). Also called before every ffmpeg launch.
 	windowTitle func() string
+	// bandBasis (optional; Windows window capture only) returns the physical
+	// client size the ADDON starts its band computation from: the
+	// gxResolution CVar in the game's Config.wtf — the only physical-size
+	// source a 1.12 client exposes to Lua (ARCHITECTURE.md's band contract).
+	// ok=false when no Config.wtf is locatable or it holds no parsable
+	// gxResolution. Band layout compares it against the live client rect
+	// before every ffmpeg launch (window.BandBasisCheck, mirroring the
+	// addon's chosen-basis logic): a stale CVar an up-to-date addon
+	// compensates for is an informational log note, and the dashboard warning
+	// fires only when the addon's band really lands off the stream's crop —
+	// the addon-UI-cut-at-the-band-edge failure the v0.4.0 field report hit.
+	// Nil on platforms without a game install (test platform, non-Windows).
+	bandBasis func() (w, h int, ok bool)
 	// enforceWindowSize (optional; Windows window capture only) resizes the
 	// game window's client area to the configured resolution when it is a
 	// plain windowed (non-maximized, non-fullscreen) window of a different
@@ -325,6 +338,14 @@ func run(ui *appUI) error {
 				"window", fmt.Sprintf("%dx%d", aw, ah))
 		}
 	}
+	// reportBandBasis surfaces band mode's basis diagnostics (the addon's
+	// gxResolution vs the live client rect the stream crops from) — see
+	// newBandBasisReporter for the semantics. Band mode is the warning row's
+	// ONLY writer (reportGeometry owns it in portrait mode), so the two never
+	// fight over status.SetWarning.
+	reportBandBasis := newBandBasisReporter(plat.bandBasis, status.SetWarning,
+		func(msg string) { log.Warn(msg) },
+		func(msg string) { log.Info(msg) })
 	// enforceSize runs the direct-window-resize path (Windows window capture,
 	// PORTRAIT layout only): a windowed game at the wrong size is resized to
 	// the configured resolution BEFORE the geometry self-heal reads it —
@@ -362,7 +383,14 @@ func run(ui *appUI) error {
 		if bandMode {
 			f, fok := window.ComputeBandFrame(aw, ah)
 			if !fok {
-				return rc, true // degenerate rect (mid-resize): keep the fallback frame
+				// Degenerate rect (mid-resize, minimized race): keep the
+				// fallback frame. reportBand/reportBandBasis are deliberately
+				// skipped too — the basis is unknowable without a real rect,
+				// so the dashboard warning row holds its last state rather
+				// than flapping; the next launch with a readable rect (the
+				// geometry watchdog forces one within seconds of the window
+				// settling) re-evaluates and updates or clears it.
+				return rc, true
 			}
 			c.Width, c.Height = f.EncW, f.EncH
 			c.CropRect, c.SourceW, c.SourceH = nil, 0, 0
@@ -372,6 +400,7 @@ func run(ui *appUI) error {
 			}
 			geom.set(f.EncW, f.EncH)
 			reportBand(aw, ah, f)
+			reportBandBasis(aw, ah, f)
 			return rc, true
 		}
 		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
@@ -807,6 +836,114 @@ func normPath(p string) string {
 		p = strings.ToLower(p)
 	}
 	return p
+}
+
+// newBandBasisReporter builds band mode's per-launch basis reporter,
+// extracted from run() so bandbasis_test.go can drive it: the addon computes
+// ITS band from the gxResolution CVar while the stream crops from the LIVE
+// client rect, and window.BandBasisCheck mirrors the addon's chosen-basis
+// logic to grade any disagreement. A genuine mis-placement (the addon's UI
+// really sits shifted/cut at the stream's band edges) goes to the dashboard
+// warning row and the warn log; a stale-CVar note (an up-to-date addon
+// compensates automatically — typically a desktop-sized gxResolution with
+// the window maximized above the taskbar) is logged informationally and
+// never occupies the warning row. Checked once per capture (re)launch —
+// never in a hot path — reported only on change, and the row clears when the
+// check clears (sizes reconciled, portrait live window, basis unreadable).
+// basis may be nil (no reader on this platform): the reporter is then inert.
+func newBandBasisReporter(basis func() (int, int, bool), setWarning func(string), warnLog, infoLog func(string)) func(aw, ah int, f window.BandFrame) {
+	last := "\x00never-reported" // sentinel unequal to any real state
+	return func(aw, ah int, f window.BandFrame) {
+		if basis == nil {
+			return
+		}
+		msg, warn := "", false
+		if f.Banded {
+			if bw, bh, ok := basis(); ok {
+				msg, warn = window.BandBasisCheck(aw, ah, bw, bh)
+			}
+		}
+		if msg == last {
+			return
+		}
+		last = msg
+		if warn {
+			setWarning(msg)
+			warnLog(msg)
+			return
+		}
+		setWarning("") // a note (or a clean check) never occupies the warning row
+		if msg != "" {
+			infoLog(msg)
+		}
+	}
+}
+
+// newBandBasisReader returns the platform.bandBasis implementation: it reads
+// the gxResolution CVar from the game's Config.wtf — the size the 1.12 addon
+// computes its band from. The path is cached only once FOUND — locating it
+// again while unresolved costs one os.Stat and covers the brand-new install
+// whose Config.wtf (or wizard store entry) appears mid-session — and the
+// FILE is re-read on every call: WoW rewrites Config.wtf on exit, so a
+// mid-session game restart with a corrected gxResolution must clear the
+// band-basis warning on the next capture launch. A cached path whose file
+// disappears is dropped and re-located, so a mid-session wizard re-run that
+// picks a DIFFERENT install stops feeding the diagnostic the old install's
+// values. Calls happen only per ffmpeg launch — never per frame or per
+// watchdog poll.
+func newBandBasisReader(cfg *config.Config) func() (int, int, bool) {
+	var mu sync.Mutex
+	var path string // "" until locateConfigWTF succeeds once
+	return func() (int, int, bool) {
+		mu.Lock()
+		if path == "" {
+			path = locateConfigWTF(cfg)
+		}
+		p := path
+		mu.Unlock()
+		if p == "" {
+			return 0, 0, false
+		}
+		content, err := os.ReadFile(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				mu.Lock()
+				if path == p {
+					path = "" // stale cache (install switched/removed): re-locate next call
+				}
+				mu.Unlock()
+			}
+			return 0, 0, false
+		}
+		return install.ReadResolutionSetting(content, "gxResolution")
+	}
+}
+
+// locateConfigWTF finds the running game's WTF\Config.wtf when it can:
+// --game-exe names the install outright; otherwise the wizard's remembered
+// game exe (KeyGameExe — the wizard runs before the platform is built, so the
+// store is fresh) under the same trust rule fallbackLayout applies (an
+// explicit --wow-dir only honors a store entry recorded under that
+// directory); a bare --wow-dir with no usable store entry is probed for a
+// 1.12-style layout (WTF directly under the game dir). "" when nothing is
+// locatable — the caller then simply skips the basis comparison.
+func locateConfigWTF(cfg *config.Config) string {
+	if cfg.GameExe != "" {
+		return install.ConfigWTFPath(cfg.GameExe)
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
+		if exe := store.Get(install.KeyGameExe); exe != "" && storedClientTypeTrusted(store, "", cfg.WowDir) {
+			return install.ConfigWTFPath(exe)
+		}
+	}
+	if cfg.WowDir != "" {
+		p := filepath.Join(cfg.WowDir, "WTF", "Config.wtf")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // resolveFitResolution fills cfg.Width/Height when --resolution fit was not

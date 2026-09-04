@@ -14,6 +14,7 @@ import { TouchLayer } from './input.js';
 import { QuickRail } from './quickbar.js';
 import { ChatKeyboard } from './keyboard.js';
 import { Hud } from './hud.js';
+import { initLayout } from './layout.js';
 
 const TOKEN_KEY = 'wowmobile.token';
 const CLIENT_ID = 'wowmobile-pwa/1.0';
@@ -907,6 +908,10 @@ function waitIceGatheringComplete(pc, timeoutMs) {
     pc.addEventListener('icegatheringstatechange', check);
   });
 }
+
+// Pick the chrome layout (bottom deck vs auto-fading overlay bar) before the
+// app shows anything, and keep it current across resizes/orientation changes.
+initLayout();
 
 const app = new App();
 app.boot();

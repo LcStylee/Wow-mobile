@@ -1,5 +1,14 @@
-/* WoW Mobile — dark, fullscreen, touch-first. The video is the page; every
- * other element floats above it and must never trigger native gestures. */
+/* WoW Mobile — dark, fullscreen, touch-first.
+ *
+ * DECK LAYOUT (primary; js/layout.js picks it): the 9:16 video is anchored to
+ * the TOP of the screen below the safe-area inset, full width, height exactly
+ * width·16/9 (--video-h). The leftover bottom strip — dead for a 9:16 stream
+ * on any taller-than-16:9 phone — is the "phone deck" (#hud): quick keys,
+ * Snd/Set/End, and the compact stats line. Nothing overlays the video.
+ *
+ * OVERLAY LAYOUT (fallback; body.layout-overlay, screens ≤ ~16:9 tall): the
+ * classic full-window letterboxed video, with the same chrome as a slim
+ * auto-fading bar along the top edge. */
 
 :root {
   --bg: #0a0a10;
@@ -15,6 +24,19 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
+  /* Full dynamic viewport height; vh fallback for pre-dvh engines. */
+  --vh100: 100vh;
+  /* Deck layout's video height: the 9:16 frame at full width, clamped to the
+   * viewport below the top inset (the clamp only binds on screens where the
+   * overlay fallback takes over anyway). #video, #touch and the deck all
+   * derive from this ONE value, so their boxes can never disagree. */
+  --video-h: min(calc(100vw * 16 / 9), calc(var(--vh100) - var(--safe-top)));
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --vh100: 100dvh;
+  }
 }
 
 /* All show/hide in this app toggles the `hidden` attribute. The UA's
@@ -56,18 +78,31 @@ button {
 
 /* ---- video + gesture layer ---------------------------------------------- */
 
-#video {
+/* Deck layout: top-anchored 9:16 box; the frame fills it edge-to-edge
+ * (object-fit contain still measures the sub-pixel H.264 even-rounding).
+ * input.js maps gestures through the #touch box, so #touch MUST carry the
+ * exact same box rules as #video in every layout. */
+#video,
+#touch {
   position: fixed;
-  inset: 0;
+  top: var(--safe-top);
+  left: 0;
   width: 100%;
-  height: 100%;
+  height: var(--video-h);
+}
+
+body.layout-overlay #video,
+body.layout-overlay #touch {
+  top: 0;
+  height: var(--vh100); /* classic full-window letterboxed video */
+}
+
+#video {
   object-fit: contain; /* letterboxing is measured, not avoided */
   background: var(--bg);
 }
 
 #touch {
-  position: fixed;
-  inset: 0; /* must match #video exactly: input.js maps through its box */
   touch-action: none;
   z-index: 10;
 }
@@ -94,55 +129,84 @@ button {
   will-change: transform;
 }
 
-/* ---- quick rail ---------------------------------------------------------- */
+/* ---- phone deck (#hud) ---------------------------------------------------- */
 
-#rail {
+/* Deck layout: an opaque strip owning the entire dead zone below the video.
+ * Two rows — controls (quick keys + Snd/Set/End) and the compact stats line.
+ * Sized for the tightest real target: a 393x852 iPhone leaves ~94px of deck,
+ * 34px of it home-indicator inset. Every row is flex with shrinkable
+ * children, so nothing can overflow the viewport even at 320px width. */
+#hud {
   position: fixed;
-  right: max(6px, var(--safe-right));
-  top: 50%;
-  transform: translateY(-50%);
+  left: 0;
+  right: 0;
+  top: calc(var(--safe-top) + var(--video-h));
+  bottom: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
+  padding: 5px max(8px, var(--safe-right)) max(5px, var(--safe-bottom))
+    max(8px, var(--safe-left));
+  background: var(--bg);
+  overflow: hidden;
   z-index: 30;
-  transition: transform 0.18s ease;
 }
 
-#rail.collapsed .rail-strip {
+#hud-top {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 32px;
+}
+
+/* Quick keys row: one horizontal strip of equal-width hold-buttons. */
+#rail {
+  display: flex;
+  flex: 5 1 0; /* 5 keys vs 3 visible action buttons: equal per-button share */
+  min-width: 0;
+  gap: 4px;
+}
+
+/* Collapse only exists where the collapse handle does (overlay layout): the
+ * scoping keeps a collapse made there from following the user into deck mode
+ * as an empty gap with no visible way back (the handle is display:none in
+ * the deck, and quickbar.js keeps the collapsed class across mode flips). */
+body.layout-overlay #rail.collapsed .rail-strip {
   display: none;
 }
 
+/* The collapse handle only earns its width when the keys float over the
+ * game (overlay layout); in the deck they cover nothing worth reclaiming. */
 .rail-handle {
-  width: 26px;
-  height: 52px;
-  border-radius: 13px;
+  display: none;
+  width: 22px;
+  border-radius: 8px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   color: var(--text-dim);
-  font-size: 18px;
+  font-size: 15px;
+  flex: none;
 }
 
 .rail-strip {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius);
-  /* iOS Safari < 18 only honors the -webkit- prefixed property. */
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
 }
 
 .rail-key {
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 2px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid var(--panel-border);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .rail-key.held {
@@ -150,38 +214,76 @@ button {
   color: #14120a;
 }
 
-/* ---- HUD ----------------------------------------------------------------- */
-
-#hud {
-  position: fixed;
-  top: max(6px, var(--safe-top));
-  left: max(6px, var(--safe-left));
-  right: max(6px, var(--safe-right));
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  z-index: 40;
-  pointer-events: none; /* the world square lies beneath — only chips catch taps */
-  font-size: 12px;
-}
-
-#hud-stats,
 #hud-actions {
   display: flex;
-  gap: 6px;
-  pointer-events: auto;
+  flex: 3 1 0;
+  min-width: 0;
+  gap: 4px;
 }
 
-#hud-stats span,
 #hud-actions button {
-  padding: 4px 8px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 2px;
   border-radius: 8px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   color: var(--text-dim);
   font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* HUD collapse is an overlay-layout affordance (deck chrome hides nothing). */
+#btn-hud {
+  display: none;
+}
+
+#btn-audio.active {
+  color: var(--accent);
+}
+
+#btn-disconnect {
+  color: var(--danger);
+}
+
+/* Compact stats line: one small dim row, tappable to expand. */
+#hud-stats {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 14px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 14px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Generous invisible hit area for the thin line — but only 2px upward: the
+ * keys/actions row sits just 4px above, and this positioned ::after paints
+ * over the non-positioned buttons, so reaching further would steal taps from
+ * their bottom edge (jump/act turning into the stats toggle). Downward it
+ * spills freely into the deck's bottom padding. */
+#hud-stats::after {
+  content: '';
+  position: absolute;
+  inset: -2px 0 -8px;
+}
+
+#hud-stats span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#hud-stats span + span::before {
+  content: '·';
+  margin: 0 6px;
+  opacity: 0.55;
 }
 
 #st-state[data-state='connected'] {
@@ -193,19 +295,117 @@ button {
   color: var(--accent);
 }
 
-/* Collapsed HUD: hud.js toggles this with the hudVisible setting. Everything
- * but the HUD chip goes away so the world square's top edge underneath stays
- * tappable (the addon's buff/target row sits there on exact 9:16 screens). */
-#hud.collapsed #hud-actions button:not(#btn-hud) {
+/* Expanded stats: hud.js toggles .expanded on a stats-line tap; the readout
+ * becomes a panel floating just above the deck, one stat per line. */
+#hud.expanded #hud-stats {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  /* iOS Safari < 18 only honors the -webkit- prefixed property. */
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+#hud.expanded #hud-stats span + span::before {
+  content: none;
+}
+
+/* The expanded panel escapes the deck's box upward. */
+#hud.expanded {
+  overflow: visible;
+}
+
+/* ---- overlay layout (fallback): same chrome as a top bar ------------------ */
+
+body.layout-overlay #hud {
+  top: max(6px, var(--safe-top));
+  bottom: auto;
+  left: max(6px, var(--safe-left));
+  right: max(6px, var(--safe-right));
+  padding: 0;
+  background: none;
+  overflow: visible;
+  z-index: 40;
+  pointer-events: none; /* the world square lies beneath — only controls catch taps */
+  transition: opacity 0.4s ease;
+}
+
+/* Auto-fade (layout.js arms it): dim, never disable — Spc must stay holdable. */
+body.layout-overlay #hud.faded {
+  opacity: 0.35;
+}
+
+body.layout-overlay #hud button {
+  pointer-events: auto;
+}
+
+body.layout-overlay #hud-top {
+  min-height: 36px;
+}
+
+body.layout-overlay .rail-handle {
+  display: block;
+}
+
+body.layout-overlay .rail-key,
+body.layout-overlay #hud-actions button {
+  height: 36px;
+  /* iOS Safari < 18 only honors the -webkit- prefixed property. */
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* At 320px four action buttons share ~25px each; the 12px/600 "HUD" label
+   clips 1-2px under overflow:hidden — one size down keeps every label whole. */
+body.layout-overlay #hud-actions button {
+  font-size: 11px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+body.layout-overlay .rail-key {
+  background: var(--panel);
+}
+
+body.layout-overlay #btn-hud {
+  display: block;
+}
+
+body.layout-overlay #hud-stats {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+}
+
+body.layout-overlay #hud.expanded #hud-stats {
+  position: absolute;
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: 0;
+  right: auto;
+  min-width: 180px;
+}
+
+/* Collapsed HUD (hudVisible=false, only meaningful while chrome floats over
+ * the game): everything but the HUD chip goes away so the world square's top
+ * edge underneath stays tappable (the addon's buff/target row sits there). */
+body.layout-overlay #hud.collapsed #hud-stats,
+body.layout-overlay #hud.collapsed #rail,
+body.layout-overlay #hud.collapsed #hud-actions button:not(#btn-hud) {
   display: none;
-}
-
-#btn-audio.active {
-  color: var(--accent);
-}
-
-#btn-disconnect {
-  color: var(--danger);
 }
 
 /* ---- settings sheet ------------------------------------------------------ */

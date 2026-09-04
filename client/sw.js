@@ -24,6 +24,7 @@ const SHELL = [
   './js/input.js',
   './js/joystick.js',
   './js/keyboard.js',
+  './js/layout.js',
   './js/net.js',
   './js/protocol.js',
   './js/qrscan.js',

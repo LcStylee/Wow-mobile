@@ -106,18 +106,24 @@ local function ClientPixels()
 	if GetPhysicalScreenSize then
 		local w, h = GetPhysicalScreenSize()
 		if w and h and w > 0 and h > 0 then
-			return math.floor(w + 0.5), math.floor(h + 0.5), false
+			return math.floor(w + 0.5), math.floor(h + 0.5), false, "GetPhysicalScreenSize"
 		end
 	end
 	return math.floor(UIParent:GetWidth() + 0.5),
-		math.floor(UIParent:GetHeight() + 0.5), true
+		math.floor(UIParent:GetHeight() + 0.5), true, "ui"
 end
 
 -- Recompute the published metrics from the live window dimensions. Pure math,
 -- no frame mutation — always safe to run, in combat included.
 function Band.Compute()
-	local pw, ph, approx = ClientPixels()
+	local pw, ph, approx, basis = ClientPixels()
 	local uiW = UIParent:GetWidth()
+	-- Chosen basis published for /wm status: the client size the band math
+	-- ran on, and which source supplied it. GetPhysicalScreenSize is LIVE on
+	-- this client (unlike the vanilla port's gxResolution cvar, which is the
+	-- configured mode and needed the live-aspect cross-check), so the crop
+	-- basis matches the server's live rect by construction.
+	Band.client = { w = pw, h = ph, basis = basis }
 	if pw > ph then
 		-- Landscape client area: centered 9:16 band (the contract above).
 		local bandW = RoundHalfToEven(ph * 9, 16)

@@ -213,6 +213,38 @@ local function PrintStatus()
 				band.px.width, band.px.height, units))
 		end
 	end
+	-- Basis dump — every number the band derivation used (Band.ClientPixels'
+	-- chosen-basis logic) plus the world rect that actually applied, so a
+	-- field report pinpoints any residual addon/server crop mismatch in one
+	-- paste: compare "band rect"/"world rect" px against the server log's
+	-- crop numbers.
+	if band and band.client then
+		local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+		WM.Print(string.format(
+			"basis: gxResolution=\"%s\" | live window %.1fx%.1f UI units (aspect %.4f) | chosen: %s -> client %dx%d px",
+			band.gxRaw or "unreadable", uiW, uiH, uiW / uiH,
+			band.client.basis, band.client.w, band.client.h))
+		WM.Print(string.format(
+			"band rect: x=%d w=%d h=%d px (left=%.1f width=%.1f UI units)",
+			band.px.x, band.px.width, band.px.height,
+			band.left or 0, band.width or 0))
+	end
+	if WM.Viewport and WM.Viewport.GetStatus and band and band.client then
+		local vs = WM.Viewport.GetStatus()
+		if vs.leftFrac then
+			WM.Print(string.format(
+				"world rect: x=%d y=%d w=%d h=%d px at the chosen basis"
+					.. " (window fractions x=%.4f y=%.4f w=%.4f h=%.4f; full-window measure %s)",
+				math.floor(vs.leftFrac * band.client.w + 0.5),
+				math.floor(vs.topFrac * band.client.h + 0.5),
+				math.floor(vs.widthFrac * band.client.w + 0.5),
+				math.floor(vs.heightFrac * band.client.h + 0.5),
+				vs.leftFrac, vs.topFrac, vs.widthFrac, vs.heightFrac,
+				(vs.fullOk and "ok" or "FAILED — scale fallback in use")))
+		else
+			WM.Print("world rect: unavailable (WorldFrame rect not resolved)")
+		end
+	end
 	if vp < lo or vp > hi then
 		-- Saved height is legal for some OTHER window mode (bounds move with
 		-- the band/portrait mode) — Viewport.Apply clamps it for use without

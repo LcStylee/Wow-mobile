@@ -1,6 +1,9 @@
-// Quick rail: floating, collapsible edge strip of always-available keys.
-// Every key is a true hold — KEY-down on touch, KEY-up on release — so Space
-// can be held for a long jump/swim exactly like a physical spacebar.
+// Quick keys (#rail): the always-available key strip. In the deck layout it
+// renders as one horizontal row inside the phone deck (styles.css lays it
+// out; the collapse handle is hidden there); in the overlay fallback it is a
+// collapsible bar floating over the video. Every key is a true hold —
+// KEY-down on touch, KEY-up on release — so Space can be held for a long
+// jump/swim exactly like a physical spacebar.
 
 import { VK } from './vk.js';
 
@@ -92,6 +95,10 @@ export class QuickRail {
     this.#el.hidden = !visible;
   }
 
+  // Collapse is an overlay-layout affordance: styles.css scopes the
+  // .collapsed rule to body.layout-overlay, so the class can safely survive a
+  // flip into deck mode (where the handle is hidden) without leaving an empty
+  // gap, and the choice is remembered when the overlay layout returns.
   #setCollapsed(collapsed) {
     this.#collapsed = collapsed;
     this.#el.classList.toggle('collapsed', collapsed);

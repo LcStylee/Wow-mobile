@@ -1,6 +1,8 @@
-// HUD: the thin stats strip (connection state, RTT, inbound bitrate/fps,
-// server encoder stats), its action buttons, the settings sheet, and toasts.
-// All elements live in index.html; this module only wires and updates them.
+// HUD: the phone deck's stats line (connection state, RTT, inbound
+// bitrate/fps, server encoder stats), its action buttons, the settings sheet,
+// and toasts. All elements live in index.html; this module only wires and
+// updates them. Layout (deck vs overlay chrome) is styles.css + layout.js;
+// here the same controls simply work in both.
 
 import { displayVersion } from './version.js';
 
@@ -46,6 +48,13 @@ export class Hud {
     $('btn-hud').addEventListener('click', () => {
       settings.set('hudVisible', !settings.get('hudVisible'));
     });
+    // Compact stats line ⇄ expanded readout panel. Pure presentation state
+    // (not persisted): the compact line is always the resting default.
+    this.#els.stats.setAttribute('aria-expanded', 'false');
+    this.#els.stats.addEventListener('click', () => {
+      const expanded = this.#els.hud.classList.toggle('expanded');
+      this.#els.stats.setAttribute('aria-expanded', String(expanded));
+    });
     $('btn-disconnect').addEventListener('click', () => actions.onDisconnect());
     this.#els.audio.addEventListener('click', () => actions.onToggleAudio());
 
@@ -87,10 +96,11 @@ export class Hud {
 
     const applyVisibility = () => {
       const visible = settings.get('hudVisible');
-      this.#els.stats.hidden = !visible;
-      // Collapsed: only the HUD chip remains, so the top edge of the world
-      // square (the addon's buff/target tap region, which the strip overlaps
-      // on exact 9:16 screens) stays tappable.
+      // Collapsed: only meaningful in the overlay layout, where CSS then
+      // keeps just the HUD chip so the top edge of the world square (the
+      // addon's buff/target tap region, which the floating bar overlaps)
+      // stays tappable. In the deck layout chrome covers no game pixels, so
+      // the class has no styled effect there and everything stays reachable.
       this.#els.hud.classList.toggle('collapsed', !visible);
     };
     settings.onChange((key) => {
@@ -131,7 +141,14 @@ export class Hud {
 
   /** Client-side inbound video stats from getStats deltas. */
   setStreamStats({ kbps, fps }) {
-    this.#els.bitrate.textContent = kbps == null ? '– kbps' : `${Math.round(kbps)} kbps`;
+    // Mb/s over ~1 Mb/s: the compact deck line has one small row for all
+    // stats, and "6.3 Mb/s" reads faster (and narrower) than "6326 kbps".
+    this.#els.bitrate.textContent =
+      kbps == null
+        ? '– kb/s'
+        : kbps >= 1000
+          ? `${(kbps / 1000).toFixed(1)} Mb/s`
+          : `${Math.round(kbps)} kb/s`;
     this.#els.fps.textContent = fps == null ? '– fps' : `${Math.round(fps)} fps`;
   }
 
@@ -153,8 +170,12 @@ export class Hud {
   }
 
   setAudio(on) {
-    this.#els.audio.textContent = on ? 'Snd on' : 'Snd off';
+    // The label stays "Snd": an on/off suffix (~42px at 12px/600) clips in
+    // the ~35px button share of a 320px-wide deck. State is the accent color
+    // (.active) plus title/aria-pressed for hover text and screen readers.
     this.#els.audio.classList.toggle('active', on);
+    this.#els.audio.title = on ? 'Sound: on' : 'Sound: off';
+    this.#els.audio.setAttribute('aria-pressed', String(on));
   }
 
   toast(message, ms = 3500) {

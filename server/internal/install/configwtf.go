@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -182,6 +183,56 @@ func FreshConfig(want []Setting) []byte {
 		b.WriteString("\r\n")
 	}
 	return []byte(b.String())
+}
+
+// ReadSetting scans Config.wtf content for `SET <name> "<value>"` and returns
+// the value with its surrounding quotes stripped. The LAST occurrence wins —
+// the engine applies lines in order, so a duplicated CVar's final line is the
+// one in effect. found is false when no line sets name.
+func ReadSetting(content []byte, name string) (value string, found bool) {
+	for _, line := range strings.Split(string(content), "\n") {
+		stripped := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		n, ok := settingName(stripped)
+		if !ok || n != name {
+			continue
+		}
+		// settingName guaranteed the shape `SET <name> ...`; peel those two
+		// tokens off and the remainder is the (usually quoted) value.
+		rest := strings.TrimSpace(strings.TrimPrefix(stripped, "SET"))
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, name))
+		value, found = strings.Trim(rest, `"`), true
+	}
+	return value, found
+}
+
+// ReadResolutionSetting reads a "WxH" CVar (gxResolution and friends) from
+// Config.wtf content. Deliberately more lenient than the --resolution flag's
+// parser (no evenness requirement — this reports what the GAME was told, it
+// does not configure an encoder); ok is false for an absent setting or a
+// value that is not two sane pixel dimensions.
+func ReadResolutionSetting(content []byte, name string) (w, h int, ok bool) {
+	v, found := ReadSetting(content, name)
+	if !found {
+		return 0, 0, false
+	}
+	parts := strings.Split(v, "x")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errW != nil || errH != nil || w < 1 || h < 1 || w > 16384 || h > 16384 {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
+// ConfigWTFPath returns the game's WTF\Config.wtf path for a game executable:
+// the same <gameDir>\WTF\Config.wtf derivation the wizard's Config.wtf step
+// uses (every wizard artifact hangs off the exe's directory — KeyGameExe
+// semantics).
+func ConfigWTFPath(gameExe string) string {
+	return filepath.Join(filepath.Dir(gameExe), "WTF", "Config.wtf")
 }
 
 // BackupSuffix is appended to Config.wtf's path for the pre-edit backup.

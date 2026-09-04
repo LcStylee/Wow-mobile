@@ -109,32 +109,67 @@ local function VerifyContract()
 end
 
 -- Physical client-area pixels — the same numbers the server reads from the
--- window rect. 1.12 has no GetPhysicalScreenSize; the gxResolution cvar IS
--- the client area of a windowed 1.12 session (the wizard writes it, and the
--- in-game video options keep it current), parsed here as "WxH". The UIParent
--- fallback preserves the window's proportions exactly (uniform scale) but
--- yields UI units, not physical px — the third return flags that so
--- /wm status can say the crop match is only approximate.
+-- window rect. THE CHOSEN BASIS (documented for the field): 1.12 has no
+-- GetPhysicalScreenSize, so two imperfect sources exist:
+--   * the gxResolution cvar — exact integers, but it is the CONFIGURED video
+--     mode, not the live client area. A maximized window is the desktop
+--     minus the taskbar (3840x2069 on the field 4K box, against the cvar's
+--     3840x2160) — a different ASPECT — and the server crops from the LIVE
+--     client rect, so a band computed from the cvar sat tens of px left of
+--     the server's crop (field evidence v0.4.0: unit frame cut to "bile").
+--   * UIParent's dimensions — LIVE and aspect-exact (UIParent always spans
+--     the client area, uniformly scaled), but in UI units, never physical px
+--     (height x effective scale is the fixed 768-unit UI space, and the
+--     scale chain itself misreports on some vanilla-plus builds — the same
+--     lie Viewport.lua works around). WorldFrame's pre-resize rect is the
+--     render-area ground truth but is likewise in frame units: it confirms
+--     the same live ASPECT, never absolute px.
+-- So: the LIVE aspect decides, the cvar supplies the absolute integers.
+--   basis "gxResolution" — the cvar's aspect matches the live window's
+--     (within 0.4%): use the cvar verbatim; band math is byte-identical to
+--     the server's crop of the same rect.
+--   basis "gx-derived"  — the aspects diverge (maximized minus taskbar, DPI
+--     virtualization, a client that restored its own rect): keep the cvar's
+--     WIDTH, re-derive the height from the live aspect. The resulting band
+--     FRACTIONS of the window then match the server's crop of the live rect
+--     to sub-pixel — which is what aligns the layout with the stream — even
+--     when the absolute px are off because the width changed too.
+--   basis "ui"          — no readable cvar: UI units verbatim (aspect still
+--     exact, so the layout is right; only the printed px are approximate).
+-- Returns pw, ph, basis; Band.px.approx stays true only for "ui".
 local function ClientPixels()
+	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+	local gw, gh
+	-- Cleared before the read so /wm status always reflects the read that
+	-- produced the CHOSEN basis — never a stale value from an earlier call.
+	Band.gxRaw = nil
 	if GetCVar then
 		local ok, res = pcall(GetCVar, "gxResolution")
 		if ok and type(res) == "string" then
+			Band.gxRaw = res -- verbatim cvar text for /wm status
 			local _, _, w, h = string.find(res, "^(%d+)x(%d+)$")
-			w, h = tonumber(w), tonumber(h)
-			if w and h and w > 0 and h > 0 then
-				return w, h, false
-			end
+			gw, gh = tonumber(w), tonumber(h)
 		end
 	end
-	return math.floor(UIParent:GetWidth() + 0.5),
-		math.floor(UIParent:GetHeight() + 0.5), true
+	if gw and gh and gw > 0 and gh > 0 and uiW > 0 and uiH > 0 then
+		local rel = (gw / gh) / (uiW / uiH)
+		if rel > 0.996 and rel < 1.004 then
+			return gw, gh, "gxResolution"
+		end
+		return gw, math.floor(gw * uiH / uiW + 0.5), "gx-derived"
+	end
+	return math.floor(uiW + 0.5), math.floor(uiH + 0.5), "ui"
 end
 
 -- Recompute the published metrics from the live window dimensions. Pure math,
 -- no frame mutation — always safe to run.
 function Band.Compute()
-	local pw, ph, approx = ClientPixels()
+	local pw, ph, basis = ClientPixels()
+	local approx = basis == "ui"
 	local uiW = UIParent:GetWidth()
+	-- Chosen basis published for /wm status: the client size the band math
+	-- ran on, and which source supplied it (see ClientPixels).
+	Band.client = { w = pw, h = ph, basis = basis }
 	if pw > ph then
 		-- Landscape client area: centered 9:16 band (the contract above).
 		local bandW = RoundHalfToEven(ph * 9, 16)

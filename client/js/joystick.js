@@ -30,6 +30,7 @@ const SECTOR_HYST_DEG = 10; // must overshoot the border by this to switch
 export class Joystick {
   #sender;
   #settings;
+  #container;
   #base;
   #knob;
   #active = false;
@@ -42,6 +43,7 @@ export class Joystick {
   constructor({ container, sender, settings }) {
     this.#sender = sender;
     this.#settings = settings;
+    this.#container = container;
     this.#base = document.createElement('div');
     this.#base.className = 'joystick';
     this.#knob = document.createElement('div');
@@ -63,10 +65,14 @@ export class Joystick {
     this.#origin = { x: clientX, y: clientY };
     this.#radius = squareSidePx * BASE_RADIUS_FRAC * this.#settings.get('joystickScale');
     const d = this.#radius * 2;
+    // The base is absolute inside #touch, which no longer sits at the
+    // viewport origin (deck layout anchors it below the safe-area inset) —
+    // convert the viewport clientX/Y into container-local coordinates.
+    const origin = this.#container.getBoundingClientRect();
     this.#base.style.width = `${d}px`;
     this.#base.style.height = `${d}px`;
-    this.#base.style.left = `${clientX - this.#radius}px`;
-    this.#base.style.top = `${clientY - this.#radius}px`;
+    this.#base.style.left = `${clientX - origin.left - this.#radius}px`;
+    this.#base.style.top = `${clientY - origin.top - this.#radius}px`;
     this.#knob.style.transform = 'translate(0px, 0px)';
     this.#base.hidden = false;
   }

@@ -24,7 +24,8 @@ UI rebuilt for portrait touch. Three components, one repo:
                                 │  LAN Wi-Fi (WebRTC: SRTP + SCTP)
 ┌───────────────────────────────┴─────────────────────────────────────────┐
 │  Phone (any modern browser, installable PWA)                            │
-│  client/ — fullscreen portrait video + touch layer                      │
+│  client/ — top-anchored 9:16 video + touch layer; native chrome         │
+│  (quick keys, stats, Set/End) parks in the phone deck BELOW the video   │
 │  (virtual joystick → WASD, camera drag → RMB-drag, tap → click, …)      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -95,6 +96,32 @@ window outside the crop. Classic Era keeps portrait-window mode as its
 server default (its addon ships the same `Band.lua`, inert in a portrait
 window — only the default differs); portrait mode remains fully supported
 and is documented next.
+
+**Crop coordinate spaces** (audited after the v0.4.0 field report): both grab
+paths deliver frames whose origin is the client area's top-left, so the
+client-local band rect applies verbatim with **no window-decoration offset**
+— ffmpeg's gdigrab `title=` input BitBlts from `GetDC(hwnd)`, the CLIENT-AREA
+device context sized by `GetClientRect` (title bar and borders are never in
+the frame), and the ddagrab rect is built from `ClientToScreen` translated to
+output-local coordinates. What CAN mis-frame the addon UI is a **basis
+mismatch**: 1.12 exposes no live physical client size to Lua, so the addon
+picks a **chosen basis** (`Band.lua` `ClientPixels`, printed by `/wm
+status`): `gxResolution` — the CVar verbatim, when its aspect matches the
+live window's (UIParent is aspect-exact) within 0.4%; `gx-derived` — the
+CVar's width with the height re-derived from the live aspect, when they
+diverge (e.g. a desktop-sized CVar with the window maximized above the
+taskbar, the v0.4.0 field failure), which makes the addon's band fractions
+match the server's crop of the live rect by construction; `ui` — UI units
+verbatim when no CVar is readable (aspect-exact, so the layout still lands
+right; only the printed px are approximate). The server mirrors this choice
+before every capture (re)launch (`window.BandBasisCheck`) as a
+**stale-addon/stale-CVar diagnostic**, not a live mis-frame prediction: an
+aspect divergence is logged as an informational stale-`gxResolution` note
+(an up-to-date addon compensates automatically; only an addon predating the
+band layout would sit shifted — re-run the wizard and `/reload`), and the
+dashboard warning row is reserved for the rare genuine mis-placement — a
+same-aspect basis whose fraction-mapped band still lands more than 4 px off
+the live crop (a same-aspect uniform rescale stays quiet).
 
 ### 1b. Portrait-window mode (the Classic Era default) — 1080x1920 with a 1080x1080 world viewport
 
@@ -232,7 +259,7 @@ tap-passthrough so every addon button is pressed by simply tapping it:
 | world square | two-finger pinch | mouse wheel (camera zoom) |
 | control deck (anywhere) | tap | left click at position |
 | control deck | long-press | right click at position |
-| client edge rail (floating, client-rendered) | tap | quick keys: Space (jump), Esc, chat keyboard (Aa), M, B |
+| client phone deck (below the video; a floating overlay bar only on <=16:9 screens — layout.js) | tap | quick keys: Space (jump), Esc, chat keyboard (Aa), M, B |
 
 Consequences for the addon: the control deck owns all critical UI; anything
 the addon places inside the world square (target frame, buffs at the very

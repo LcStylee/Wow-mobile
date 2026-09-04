@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -227,6 +228,85 @@ func TestVideoArgsBandCrop(t *testing.T) {
 	cfg.CropRect = &Rect{X: 1312, Y: 0, W: 1215, H: 2160}
 	if vf := argValue(t, cfg.VideoArgs(), "-vf"); vf != "crop=1215:2160:1312:0,scale=1080:1920:flags=fast_bilinear,format=yuv420p" {
 		t.Errorf("capped band -vf = %q", vf)
+	}
+}
+
+// Decorated/borderless/maximized windows: the band CropRect reaches the
+// gdigrab -vf chain UNMODIFIED — no window-decoration offset is ever added.
+// Both grab paths deliver frames whose (0,0) is the CLIENT AREA's top-left
+// (gdigrab `title=` BitBlts GetDC(hwnd)'s client-area DC sized by
+// GetClientRect; the ddagrab rect is ClientToScreen-translated), so the
+// client-local band rect applies verbatim — audited after the v0.4.0 field
+// report, whose band-edge UI cut traced to the addon-side gxResolution basis
+// mismatch (window.BandBasisCheck), not to a shifted crop. The vector is the
+// field case itself: a 4K window maximized above the taskbar (client area
+// 3840x2069, band 1164x2069 at x=1338, encoded at the 1080x1920 design cap).
+func TestVideoArgsBandCropClientAreaVerbatim(t *testing.T) {
+	cfg := baseConfig(X264)
+	cfg.Width, cfg.Height = 1080, 1920
+	cfg.CropRect = &Rect{X: 1338, Y: 0, W: 1164, H: 2069}
+	if vf := argValue(t, cfg.VideoArgs(), "-vf"); vf != "crop=1164:2069:1338:0,scale=1080:1920:flags=fast_bilinear,format=yuv420p" {
+		t.Errorf("maximized-window band -vf = %q", vf)
+	}
+}
+
+// Window-style invariance: whatever shape the live client area takes — an
+// odd-sized window mid-drag, a borderless-fullscreen desktop, a decorated
+// window (client area already excludes the title bar/borders), decorations
+// scaled by 125% DPI, or a DPI-virtualized client — the band CropRect is
+// CLIENT-LOCAL and reaches the -vf chain verbatim, with no per-style offset
+// term anywhere in the argv (no gdigrab offset_x/offset_y, no crop
+// adjustment). The window styles differ only in the client rects they
+// produce; each row's band/encode values are the band contract's output for
+// that client area (precomputed window.ComputeBandFrame results — the
+// contract itself is pinned in window/band_test.go), so this table pins the
+// pass-through invariant across the styles explicitly.
+func TestVideoArgsBandCropWindowStyles(t *testing.T) {
+	cases := []struct {
+		name       string
+		clientW    int
+		clientH    int // live client area (the only input any style contributes)
+		band       Rect
+		encW, encH int
+	}{
+		// A decorated window resized by hand to an odd size.
+		{"odd-sized", 1367, 769, Rect{X: 467, Y: 0, W: 433, H: 769}, 432, 768},
+		// Borderless fullscreen: client area == the whole 1080p desktop.
+		{"borderless-desktop", 1920, 1080, Rect{X: 656, Y: 0, W: 608, H: 1080}, 608, 1080},
+		// Decorated window on that desktop: the client area is what remains
+		// inside the 100%-DPI title bar and borders.
+		{"decorated", 1904, 1041, Rect{X: 659, Y: 0, W: 586, H: 1041}, 586, 1040},
+		// The same window with decorations scaled by 125% DPI on a 1440p
+		// desktop: thicker chrome, smaller physical client area.
+		{"decorated-125dpi", 2546, 1387, Rect{X: 883, Y: 0, W: 780, H: 1387}, 780, 1386},
+		// A DPI-virtualized client rect (1920x1080 desktop read at 125%
+		// scaling by a DPI-unaware reader): still just a client area.
+		{"dpi-virtualized", 1536, 864, Rect{X: 525, Y: 0, W: 486, H: 864}, 486, 864},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig(X264)
+			cfg.Width, cfg.Height = tc.encW, tc.encH
+			band := tc.band
+			cfg.CropRect = &band
+			args := cfg.VideoArgs()
+			want := fmt.Sprintf("crop=%d:%d:%d:0,scale=%d:%d:flags=fast_bilinear,format=yuv420p",
+				tc.band.W, tc.band.H, tc.band.X, tc.encW, tc.encH)
+			if vf := argValue(t, args, "-vf"); vf != want {
+				t.Errorf("%dx%d client band -vf = %q, want %q", tc.clientW, tc.clientH, vf, want)
+			}
+			// No offset options anywhere: gdigrab grabs the client area whole
+			// (title=, client-DC origin) and the crop above is the only
+			// coordinate arithmetic in the argv.
+			for _, forbidden := range []string{"-offset_x", "-offset_y", "offset_x", "offset_y"} {
+				if slices.Contains(args, forbidden) {
+					t.Errorf("argv must carry no grab offset for a client-area crop: %v", args)
+				}
+			}
+			if argValue(t, args, "-i") != "title=World of Warcraft" {
+				t.Errorf("band crop must ride the full-title gdigrab input: %v", args)
+			}
+		})
 	}
 }
 
