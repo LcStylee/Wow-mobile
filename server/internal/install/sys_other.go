@@ -29,9 +29,9 @@ func (stubSystem) HaveWinget() bool             { return false }
 func (stubSystem) RunWingetInstall(io.Writer) error {
 	return errors.New("winget is Windows-only")
 }
-func (stubSystem) ProbeEncoder(string) (string, bool) { return "", false }
-func (stubSystem) GameWindowPresent(string) bool      { return false }
-func (stubSystem) EnforceGameWindowSize(string, int, int) (string, bool) {
+func (stubSystem) ProbeEncoder(string) (string, bool)    { return "", false }
+func (stubSystem) GameWindowPresent(string, string) bool { return false }
+func (stubSystem) EnforceGameWindowSize(string, string, int, int) (string, bool) {
 	return "", false
 }
 func (stubSystem) LaunchGame(string) error {

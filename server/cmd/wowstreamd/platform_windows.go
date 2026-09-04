@@ -95,7 +95,18 @@ func measureFitResolution() (w, h, workW, workH int, ok bool) {
 func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, error) {
 	makeProcessDPIAware(log) // before any window geometry is read
 
-	tracker, err := window.NewTracker(cfg.WindowTitle)
+	// Bind the tracker to the CHOSEN install: among title-matching windows,
+	// only one whose owning process runs from the configured install's
+	// directory is accepted (capture, input injection, and size enforcement
+	// all flow through this tracker — and singleinstance/geowatch consume it
+	// too). A second, unrelated WoW install may then run alongside without
+	// receiving the stream or the clicks (v0.4.2 field report). With no known
+	// install dir the tracker keeps the classic title-only matching.
+	installDir := targetInstallDir(cfg)
+	if installDir != "" {
+		log.Info("game-window filter bound to the configured install", "dir", installDir)
+	}
+	tracker, err := window.NewTrackerFor(cfg.WindowTitle, installDir)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +163,22 @@ func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, er
 				return title
 			}
 			return cfg.WindowTitle
+		},
+		titleAmbiguity: func() string {
+			// gdigrab's `title=` input resolves via FindWindow — an EXACT
+			// full-title match that cannot be steered to a specific hwnd. Two
+			// visible windows with identical titles (a second WoW instance)
+			// make that lookup a coin toss, so the launch that falls back to
+			// gdigrab while ambiguity exists must say so out loud instead of
+			// possibly streaming the wrong game (input and window tracking
+			// still follow the chosen install's window).
+			title, n, err := tracker.TitleCollisions()
+			if err != nil || n < 2 {
+				return ""
+			}
+			return fmt.Sprintf(
+				"%d visible windows are titled %q and this capture path (gdigrab) picks one by exact title — the stream may show the WRONG WoW instance; close the other instance, or use an encoder with the ddagrab path (NVENC), which pins the capture to the chosen window's screen position",
+				n, title)
 		},
 		bandBasis:         newBandBasisReader(cfg),
 		enforceWindowSize: newWindowSizeEnforcer(tracker, log),

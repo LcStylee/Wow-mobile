@@ -229,3 +229,47 @@ func TestBandBasisReporter(t *testing.T) {
 		}
 	})
 }
+
+// targetInstallDir mirrors locateConfigWTF's source-of-truth ladder (flag,
+// trusted store, bare --wow-dir) but feeds the window tracker; this pins the
+// two against silent divergence (e.g. dropping the store-trust guard would
+// re-bind capture and input to a stale install).
+func TestTargetInstallDir(t *testing.T) {
+	t.Run("game-exe flag wins", func(t *testing.T) {
+		fakeUserConfig(t, filepath.Join(t.TempDir(), "elsewhere", "WoW.exe"))
+		exe := filepath.Join("some", "dir", "WoW.exe")
+		want := window.CanonDir(filepath.Join("some", "dir"))
+		if got := targetInstallDir(&config.Config{GameExe: exe}); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("remembered store exe", func(t *testing.T) {
+		exe := filepath.Join(t.TempDir(), "TurtleWoW", "WoW.exe")
+		fakeUserConfig(t, exe)
+		want := window.CanonDir(filepath.Dir(exe))
+		if got := targetInstallDir(&config.Config{}); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("wow-dir distrusts an unrelated store exe", func(t *testing.T) {
+		fakeUserConfig(t, filepath.Join(t.TempDir(), "other", "WoW.exe"))
+		wowDir := t.TempDir()
+		want := window.CanonDir(wowDir)
+		if got := targetInstallDir(&config.Config{WowDir: wowDir}); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("missing wow-dir yields no binding", func(t *testing.T) {
+		fakeUserConfig(t, "")
+		gone := filepath.Join(t.TempDir(), "never-created")
+		if got := targetInstallDir(&config.Config{WowDir: gone}); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+	t.Run("nothing configured yields no binding", func(t *testing.T) {
+		fakeUserConfig(t, "")
+		if got := targetInstallDir(&config.Config{}); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}

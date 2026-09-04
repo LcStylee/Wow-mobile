@@ -101,17 +101,27 @@ type System interface {
 	// the given ffmpeg build offers.
 	ProbeEncoder(ffmpegPath string) (string, bool)
 	// GameWindowPresent reports whether a visible, non-minimized window with
-	// titleSubstr in its title exists.
-	GameWindowPresent(titleSubstr string) bool
+	// titleSubstr in its title exists AND belongs to the install at
+	// installDir — its owning process executable sits under that directory
+	// (any depth: launchers like VanillaFixes.exe start Wow.exe from the same
+	// tree). The filter binds every game-running decision to the CHOSEN
+	// install, so an unrelated WoW install may run alongside (v0.4.2 field
+	// report). installDir "" disables the filter (title-only); a window whose
+	// process cannot be queried (elevated game) also falls back to
+	// title-only, logged — never a false "not running" for the install being
+	// configured.
+	GameWindowPresent(installDir, titleSubstr string) bool
 	// EnforceGameWindowSize resizes the game window's CLIENT area to w x h
 	// when it is a plain windowed (non-maximized, non-fullscreen) window of a
 	// different size — windowed 1.12 clients ignore gxResolution entirely, so
 	// after launch the window must be sized directly (SetWindowPos) for the
-	// portrait layout to apply on every client. Returns a human-readable
+	// portrait layout to apply on every client. The window is located under
+	// the same installDir filter as GameWindowPresent, so a second WoW
+	// install's window is never the one resized. Returns a human-readable
 	// outcome and acted=false when nothing needed doing (window already
 	// sized, or not found). Never fatal: a revert/skip is reported, and the
 	// capture adapts to the actual window regardless.
-	EnforceGameWindowSize(titleSubstr string, w, h int) (msg string, acted bool)
+	EnforceGameWindowSize(installDir, titleSubstr string, w, h int) (msg string, acted bool)
 	// LaunchGame starts the game executable without waiting for it.
 	LaunchGame(exePath string) error
 	// PrimaryWorkArea returns the primary monitor's work area (the desktop
@@ -937,7 +947,11 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 		return nil
 	}
 
-	if opts.Sys.GameWindowPresent(opts.WindowTitle) {
+	// The check binds to THIS install's window (gameDir): only the game whose
+	// Config.wtf is being edited rewrites it on exit — a different WoW
+	// install running at the same time is unrelated and must not block the
+	// edit (v0.4.2 field report).
+	if opts.Sys.GameWindowPresent(gameDir, opts.WindowTitle) {
 		fmt.Fprintln(opts.Out, "  Config.wtf needs changes, but WoW is running — the game rewrites the file on exit, which would undo the edit.")
 		// Non-interactive sessions default to NOT waiting: nobody is there
 		// to close WoW, so the safe default is to skip the edit rather than
@@ -953,7 +967,7 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 		}
 		fmt.Fprintln(opts.Out, "  Waiting for WoW to close (Ctrl+C to abort)...")
 		opts.Status.SetStep(StepConfig, hoststatus.StateRunning, "waiting for WoW to close")
-		if err := waitForGameWindow(opts, false, "WoW to close"); err != nil {
+		if err := waitForGameWindow(opts, gameDir, false, "WoW to close"); err != nil {
 			return fmt.Errorf("%w; close WoW and restart wowstreamd to apply %s", err, desc)
 		}
 	} else {
@@ -1063,10 +1077,13 @@ func persistFFmpeg(opts *Options, path string) {
 
 // stepGameRunning checks for the game window and offers to launch the
 // recorded game executable, polling until the window (post-login) exists.
+// Every check binds to the CHOSEN install (the recorded exe's directory): an
+// unrelated WoW install's window neither satisfies this step nor blocks it.
 func stepGameRunning(opts *Options, gameExe string) error {
 	const label = "Game running"
-	if opts.Sys.GameWindowPresent(opts.WindowTitle) {
-		step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts))
+	gameDir := filepath.Dir(gameExe)
+	if opts.Sys.GameWindowPresent(gameDir, opts.WindowTitle) {
+		step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts, gameDir))
 		return nil
 	}
 
@@ -1086,10 +1103,10 @@ func stepGameRunning(opts *Options, gameExe string) error {
 	}
 	fmt.Fprintln(opts.Out, "  WoW is starting — log in to your character. Waiting for the game window (Ctrl+C to abort)...")
 	opts.Status.SetStep(StepRunning, hoststatus.StateRunning, "waiting for the game window — log in to your character")
-	if err := waitForGameWindow(opts, true, "the WoW window to appear"); err != nil {
+	if err := waitForGameWindow(opts, gameDir, true, "the WoW window to appear"); err != nil {
 		return fmt.Errorf("%w after launching %s; check that the game started (windowed, not minimized), then restart wowstreamd", err, filepath.Base(gameExe))
 	}
-	step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts))
+	step(opts, 5, StepRunning, label, hoststatus.StateOK, gameWindowDetail(opts, gameDir))
 	return nil
 }
 
@@ -1102,29 +1119,30 @@ func stepGameRunning(opts *Options, gameExe string) error {
 // to the actual window regardless. BAND layout retires enforcement entirely:
 // the window is welcome at any landscape size — the band is computed from
 // whatever exists, so there is nothing to force.
-func gameWindowDetail(opts *Options) string {
+func gameWindowDetail(opts *Options, gameDir string) string {
 	detail := "window found"
 	if opts.Layout == config.LayoutBand {
 		return detail
 	}
-	if msg, acted := opts.Sys.EnforceGameWindowSize(opts.WindowTitle, opts.Width, opts.Height); acted {
+	if msg, acted := opts.Sys.EnforceGameWindowSize(gameDir, opts.WindowTitle, opts.Width, opts.Height); acted {
 		fmt.Fprintln(opts.Out, "  "+msg)
 		detail += " — " + msg
 	}
 	return detail
 }
 
-// waitForGameWindow polls GameWindowPresent until it matches present, with a
-// hard deadline (Options.WaitTimeout, default defaultWaitTimeout) so a
-// scripted or non-interactive run fails with a clear error instead of
-// hanging forever when WoW never reaches the expected state.
-func waitForGameWindow(opts *Options, present bool, what string) error {
+// waitForGameWindow polls GameWindowPresent (bound to the chosen install at
+// gameDir) until it matches present, with a hard deadline
+// (Options.WaitTimeout, default defaultWaitTimeout) so a scripted or
+// non-interactive run fails with a clear error instead of hanging forever
+// when WoW never reaches the expected state.
+func waitForGameWindow(opts *Options, gameDir string, present bool, what string) error {
 	timeout := opts.WaitTimeout
 	if timeout <= 0 {
 		timeout = defaultWaitTimeout
 	}
 	deadline := time.Now().Add(timeout)
-	for opts.Sys.GameWindowPresent(opts.WindowTitle) != present {
+	for opts.Sys.GameWindowPresent(gameDir, opts.WindowTitle) != present {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out after %s waiting for %s", timeout, what)
 		}

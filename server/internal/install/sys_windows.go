@@ -199,13 +199,17 @@ func (winSystem) ProbeEncoder(ffmpegPath string) (string, bool) {
 	return string(enc), true
 }
 
-func (winSystem) GameWindowPresent(titleSubstr string) bool {
-	_, err := window.NewTracker(titleSubstr)
+func (winSystem) GameWindowPresent(installDir, titleSubstr string) bool {
+	// The install-dir filter (window.NewTrackerFor) binds the check to the
+	// CHOSEN install's own window: an unrelated WoW install running alongside
+	// must not count as "the game is running" (v0.4.2 field report — it made
+	// the wizard wait for a game it was not even configuring).
+	_, err := window.NewTrackerFor(titleSubstr, installDir)
 	return err == nil
 }
 
-func (winSystem) EnforceGameWindowSize(titleSubstr string, w, h int) (string, bool) {
-	tracker, err := window.NewTracker(titleSubstr)
+func (winSystem) EnforceGameWindowSize(installDir, titleSubstr string, w, h int) (string, bool) {
+	tracker, err := window.NewTrackerFor(titleSubstr, installDir)
 	if err != nil {
 		return "", false // no window: the game-running step handles that
 	}

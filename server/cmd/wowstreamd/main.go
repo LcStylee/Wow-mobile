@@ -105,6 +105,15 @@ type platform struct {
 	// FindWindow-based `title=` input (the --window-title flag is only a
 	// substring). Also called before every ffmpeg launch.
 	windowTitle func() string
+	// titleAmbiguity (optional; Windows window capture only) returns a
+	// warning message when gdigrab's exact-title window lookup is ambiguous
+	// RIGHT NOW: two or more visible windows carry the tracked game window's
+	// exact full title (two WoW installs running side by side), so `-i
+	// title=...` may resolve to the WRONG instance — an exact title cannot
+	// disambiguate identical titles, only the ddagrab path's screen rect can.
+	// "" when unambiguous. Consulted only for launches that actually use the
+	// gdigrab input; nil on platforms without a real game window.
+	titleAmbiguity func() string
 	// bandBasis (optional; Windows window capture only) returns the physical
 	// client size the ADDON starts its band computation from: the
 	// gxResolution CVar in the game's Config.wtf — the only physical-size
@@ -295,6 +304,11 @@ func run(ui *appUI) error {
 	// reads it so the phone always letterboxes the frame it really receives;
 	// input injection already follows the live rect independently.
 	geom := newLiveGeometry(cfg.Width, cfg.Height)
+	// The dashboard's single warning row has several independent per-launch
+	// sources now (the frame decision — portrait's mismatch check or band's
+	// basis check — and the gdigrab title-ambiguity check below); each owns a
+	// slot so none overwrites another's active warning.
+	warnRow := newWarningRow(status.SetWarning, "frame", "gdigrab")
 	// reportGeometry surfaces a window/resolution mismatch LOUDLY (log line +
 	// dashboard warning row) but only on change, so keyframe/bitrate restarts
 	// do not spam identical lines. Single caller (the supervisor's run
@@ -311,7 +325,7 @@ func run(ui *appUI) error {
 			return
 		}
 		lastWarning = warning
-		status.SetWarning(warning)
+		warnRow.set("frame", warning)
 		if warning != "" {
 			log.Warn(warning)
 		} else {
@@ -340,10 +354,11 @@ func run(ui *appUI) error {
 	}
 	// reportBandBasis surfaces band mode's basis diagnostics (the addon's
 	// gxResolution vs the live client rect the stream crops from) — see
-	// newBandBasisReporter for the semantics. Band mode is the warning row's
+	// newBandBasisReporter for the semantics. Band mode is the "frame" slot's
 	// ONLY writer (reportGeometry owns it in portrait mode), so the two never
-	// fight over status.SetWarning.
-	reportBandBasis := newBandBasisReporter(plat.bandBasis, status.SetWarning,
+	// fight over it — and the gdigrab-ambiguity source lives in its own slot.
+	reportBandBasis := newBandBasisReporter(plat.bandBasis,
+		func(msg string) { warnRow.set("frame", msg) },
 		func(msg string) { log.Warn(msg) },
 		func(msg string) { log.Info(msg) })
 	// enforceSize runs the direct-window-resize path (Windows window capture,
@@ -415,6 +430,9 @@ func run(ui *appUI) error {
 	// the ddagrab screen-rect path, a move) heals within seconds instead of
 	// waiting for the next incidental restart.
 	launchGeom := &launchGeometry{}
+	// lastGdigrabWarn dedupes the ambiguity log line across restarts; same
+	// single-goroutine discipline as lastWarning above.
+	lastGdigrabWarn := "\x00never-reported"
 	videoArgv := func(c capture.Config) []string {
 		enforceSize()
 		rc, rcOK := updateFrame(&c)
@@ -430,6 +448,24 @@ func run(ui *appUI) error {
 			}
 		}
 		c.WindowTitle = plat.windowTitle()
+		// This launch resolves the window by EXACT TITLE (gdigrab) whenever
+		// no ddagrab rect was set. The tracker binds capture geometry and
+		// input to the chosen install's window, but gdigrab itself cannot be
+		// handed an hwnd — so when a second window with the identical title
+		// is visible (another WoW instance), say loudly that the picture may
+		// come from the wrong one. The ddagrab path (NVENC default) is
+		// immune: its crop is the tracked window's own screen rect.
+		gdigrabWarn := ""
+		if c.CaptureRect == nil && !c.TestSource && plat.titleAmbiguity != nil {
+			gdigrabWarn = plat.titleAmbiguity()
+		}
+		warnRow.set("gdigrab", gdigrabWarn)
+		if gdigrabWarn != lastGdigrabWarn {
+			lastGdigrabWarn = gdigrabWarn
+			if gdigrabWarn != "" {
+				log.Warn(gdigrabWarn)
+			}
+		}
 		if rcOK {
 			launchGeom.set(rc, c.CaptureRect != nil)
 		} else {
@@ -742,6 +778,44 @@ func (g *liveGeometry) get() (int, int) {
 	return g.w, g.h
 }
 
+// warningRow merges independent warning sources into the dashboard's single
+// warning row (hoststatus.SetWarning). Each source owns a named slot and
+// sets/clears only that slot ("" clears); the row renders every active slot
+// in the declared order, so — e.g. — a gdigrab title-ambiguity warning can
+// coexist with (rather than overwrite, or be clobbered by) portrait mode's
+// window/resolution mismatch or band mode's basis warning. Mutex-guarded for
+// safety; in practice all writers run on the video supervisor's goroutine
+// (plus the pre-stream check in run()).
+type warningRow struct {
+	mu    sync.Mutex
+	order []string
+	slots map[string]string
+	out   func(string)
+}
+
+func newWarningRow(out func(string), slots ...string) *warningRow {
+	return &warningRow{order: slots, slots: make(map[string]string, len(slots)), out: out}
+}
+
+// set updates one slot and republishes the merged row when it changed.
+func (r *warningRow) set(slot, msg string) {
+	r.mu.Lock()
+	if r.slots[slot] == msg {
+		r.mu.Unlock()
+		return
+	}
+	r.slots[slot] = msg
+	var parts []string
+	for _, s := range r.order {
+		if m := r.slots[s]; m != "" {
+			parts = append(parts, m)
+		}
+	}
+	merged := strings.Join(parts, " — ALSO: ")
+	r.mu.Unlock()
+	r.out(merged)
+}
+
 // trayTooltipLoop keeps the tray hover text honest: "streaming" while a phone
 // is connected, "waiting for phone" otherwise.
 func trayTooltipLoop(ctx context.Context, setTooltip func(string), connected func() bool) {
@@ -941,6 +1015,35 @@ func locateConfigWTF(cfg *config.Config) string {
 		p := filepath.Join(cfg.WowDir, "WTF", "Config.wtf")
 		if _, err := os.Stat(p); err == nil {
 			return p
+		}
+	}
+	return ""
+}
+
+// targetInstallDir resolves the CHOSEN install's directory for the
+// game-window process filter (window.NewTrackerFor): every game-window
+// decision — capture geometry, input injection, window-size enforcement —
+// must bind to the configured install only, so a second, unrelated WoW
+// install may run alongside without the stream or the clicks landing on it
+// (v0.4.2 field report). --game-exe names the install outright; otherwise
+// the wizard's remembered game exe (KeyGameExe — the wizard runs and
+// persists before the platform is built) under the same trust rule
+// locateConfigWTF applies; a bare --wow-dir is itself the install dir. ""
+// when nothing is known — the finder then keeps today's title-only matching
+// (single-install setups, --skip-setup with no flags and no store).
+func targetInstallDir(cfg *config.Config) string {
+	if cfg.GameExe != "" {
+		return window.CanonDir(filepath.Dir(cfg.GameExe))
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
+		if exe := store.Get(install.KeyGameExe); exe != "" && storedClientTypeTrusted(store, "", cfg.WowDir) {
+			return window.CanonDir(filepath.Dir(exe))
+		}
+	}
+	if cfg.WowDir != "" {
+		if st, err := os.Stat(cfg.WowDir); err == nil && st.IsDir() {
+			return window.CanonDir(cfg.WowDir)
 		}
 	}
 	return ""

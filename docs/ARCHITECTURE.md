@@ -230,6 +230,30 @@ phone is a remote display+input device for a game you run yourself — the same
 model as Steam Link / Moonlight. No game memory is read or written, no actions
 are automated; one physical input per one human touch.
 
+**Window find — bound to the chosen install, not just a title.** Every
+game-window lookup (`window.Tracker`: capture geometry, input injection,
+size enforcement — and through it singleinstance/geowatch — plus the wizard's
+`GameWindowPresent` checks) matches the `--window-title` substring first,
+then filters the candidates by the OWNING PROCESS's executable path
+(`GetWindowThreadProcessId` → `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+→ `QueryFullProcessImageNameW`): only a window whose process runs from under
+the configured install's directory qualifies (the DIRECTORY, any depth — a
+launcher like VanillaFixes.exe starts Wow.exe from the same tree, so exe
+names are never compared; `window.PathUnderDir` is the case-insensitive,
+sibling-prefix-safe check). Multi-install machines are the reason (the
+v0.4.2 field report: with two WoWs running, title-only matching blocked the
+wizard on — and could stream and CLICK into — an unrelated instance); an
+unrelated WoW install may run alongside freely. The filter degrades safely:
+with no known install dir (no `--game-exe`/`--wow-dir`, empty store), or for
+a window whose process cannot be queried (an elevated game), matching falls
+back to title-only with a log note — never a "no window found" regression
+for single-install setups. One capture-path caveat: gdigrab's `title=` input
+resolves by EXACT title via `FindWindow` and cannot be handed an hwnd, so
+when 2+ visible windows share the identical full title the gdigrab fallback
+may still grab the wrong instance — the default zero-copy ddagrab path is
+immune (it crops the tracked window's own screen rect), and a gdigrab launch
+under that ambiguity warns loudly on the log and the dashboard warning row.
+
 ### 4. Addon: overhaul in-place, respect the sandbox
 
 The addon restyles and repositions Blizzard's UI rather than reimplementing

@@ -28,8 +28,10 @@ type fakeSys struct {
 	afterWinget   string // WingetFFmpeg result once RunWingetInstall ran
 	encoder       string
 	windowPresent bool
-	resizeMsg     string // EnforceGameWindowSize result; "" = nothing to do
+	presentDirs   []string // install dirs passed to GameWindowPresent, in order
+	resizeMsg     string   // EnforceGameWindowSize result; "" = nothing to do
 	resizeCalls   []string
+	resizeDirs    []string // install dirs passed to EnforceGameWindowSize
 	launched      []string
 	launchShows   bool // LaunchGame makes the window appear
 	workW, workH  int  // PrimaryWorkArea; 0,0 = not measurable (the default)
@@ -66,9 +68,13 @@ func (f *fakeSys) WindowDecorationExtents() (int, int) {
 	}
 	return window.FallbackDecorationW, window.FallbackDecorationH
 }
-func (f *fakeSys) GameWindowPresent(string) bool { return f.windowPresent }
-func (f *fakeSys) EnforceGameWindowSize(_ string, w, h int) (string, bool) {
+func (f *fakeSys) GameWindowPresent(installDir, _ string) bool {
+	f.presentDirs = append(f.presentDirs, installDir)
+	return f.windowPresent
+}
+func (f *fakeSys) EnforceGameWindowSize(installDir, _ string, w, h int) (string, bool) {
 	f.resizeCalls = append(f.resizeCalls, fmt.Sprintf("%dx%d", w, h))
+	f.resizeDirs = append(f.resizeDirs, installDir)
 	return f.resizeMsg, f.resizeMsg != ""
 }
 func (f *fakeSys) LaunchGame(exe string) error {
@@ -224,6 +230,17 @@ func TestRunAllSatisfiedSkipsEveryPrompt(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", wantLine, text)
 		}
 	}
+	// Every game-window check must bind to the CHOSEN install's directory —
+	// an unrelated WoW install running alongside must never satisfy or block
+	// a wizard step (v0.4.2 field report).
+	if len(sys.presentDirs) == 0 {
+		t.Fatal("GameWindowPresent never called")
+	}
+	for _, dir := range sys.presentDirs {
+		if dir != wow {
+			t.Errorf("GameWindowPresent got install dir %q, want the chosen %q", dir, wow)
+		}
+	}
 }
 
 // The game-running step resizes the found window to the decided resolution
@@ -250,6 +267,9 @@ func TestGameRunningStepEnforcesWindowSize(t *testing.T) {
 	}
 	if len(sys.resizeCalls) != 1 || sys.resizeCalls[0] != "1080x1920" {
 		t.Errorf("EnforceGameWindowSize calls = %v, want exactly [1080x1920]", sys.resizeCalls)
+	}
+	if len(sys.resizeDirs) != 1 || sys.resizeDirs[0] != wow {
+		t.Errorf("EnforceGameWindowSize install dirs = %v, want the chosen [%q] — a second install's window must never be the one resized", sys.resizeDirs, wow)
 	}
 	if !strings.Contains(out.String(), "window found — resized WoW window to 1080x1920") {
 		t.Errorf("resize outcome missing from the step line:\n%s", out.String())
@@ -1051,6 +1071,13 @@ func TestConfigWTFRunningGameDeclineLeavesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path + BackupSuffix); !os.IsNotExist(err) {
 		t.Fatal("backup written despite declined edit")
+	}
+	// The "is WoW running" guard must have asked about THIS install's window
+	// only — an unrelated install running must not trigger the wait prompt.
+	for _, dir := range sys.presentDirs {
+		if dir != wow {
+			t.Errorf("Config.wtf guard checked install dir %q, want the chosen %q", dir, wow)
+		}
 	}
 }
 
