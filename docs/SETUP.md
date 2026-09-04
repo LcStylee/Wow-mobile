@@ -73,11 +73,17 @@ checklist; in windowed mode the same checklist appears on the dashboard:
 ```
 portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 work area
 [1/5] World of Warcraft ..... chosen: C:\...\_classic_era_\WowClassic.exe (Classic Era) — from 4 found
-[2/5] WowMobile addon ....... installed (38 files, up to date)
-[3/5] Portrait resolution ... Config.wtf OK (552x984 windowed)
+[2/5] WowMobile addon ....... installed (39 files, up to date)
+[3/5] Window settings ....... Config.wtf OK (552x984 windowed)
 [4/5] FFmpeg ................ found: h264_nvenc available
 [5/5] Game running .......... window found
 ```
+
+On a 1.12 private-server client the layout is **band** instead (see
+[the band contract](#private-servers-112-clients)): the first line reads
+`band layout: the game runs native landscape; the stream is the centered
+9:16 band of the live window`, and step 3 writes the native landscape
+session (`Config.wtf OK (native landscape windowed)`).
 
 1. **Scans for game installs and lets you choose.** A choice you already
    confirmed (remembered in `%APPDATA%\wowstreamd\config.json`) is reused
@@ -115,27 +121,35 @@ portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 wor
    only" install (a client that is neither Classic Era 1.15 nor 1.12 —
    retail, an expansion client), this step is skipped: no addon variant can
    load there, so nothing is copied into its `AddOns` folder.
-3. **Sets the portrait window** in `<game>\WTF\Config.wtf`
-   (`SET gxWindow "1"`, `SET gxMaximize "0"`, and
-   `SET gxWindowedResolution "<WxH>"` — 1.12 clients get `SET gxResolution`
-   **and** `SET gxWindowedResolution`, though windowed 1.12 ignores both: the
-   app resizes the window directly after launch, see
-   [Private servers](#private-servers-112-clients)), after writing a
-   `Config.wtf.bak` backup and preserving every
-   other line. The resolution follows `--resolution`, whose default `fit`
-   measures your primary monitor and picks the **largest 9:16 portrait
-   window that actually fits it, capped at 1080x1920** (a fixed 1080x1920
-   window cannot fit a landscape 1080p monitor — Windows would cut it off
-   and the capture would go black; a 1440p/4K monitor that holds 1080x1920
-   with room to spare gets exactly 1080x1920, the design resolution the
-   phone renders pixel-for-pixel — bigger would only cost encode time). An
-   explicit `--resolution WxH` that cannot fit is called out
-   with the fitted alternative and needs your confirmation to keep. The step
-   also writes `SET checkAddonVersion "0"` (the "Load out of date AddOns"
-   CVar): without it, the first game patch silently disables the addon and
-   the phone shows the stock UI with no explanation. WoW rewrites this file
-   on exit, so if the game is running the wizard offers to wait for it to
-   close first.
+3. **Writes the window settings** in `<game>\WTF\Config.wtf`, after writing a
+   `Config.wtf.bak` backup and preserving every other line. What it writes
+   follows the **layout** (`--layout`, default `auto`):
+   - **Band layout — the default on 1.12-engine clients**: the game keeps a
+     **native landscape** session and is never forced portrait. The wizard
+     writes `SET gxWindow "1"` and `SET gxResolution "<your desktop
+     resolution>"` — a mode every client accepts (never
+     `gxWindowedResolution`: custom builds that honor it would pin a window
+     too large to fit above the taskbar) — and the server streams the
+     **centered 9:16 band** of whatever window actually exists, recomputed
+     live before every capture start. No portrait fit, no window-size
+     enforcement, no fight.
+   - **Portrait layout — the default on Classic Era**: `SET gxWindow "1"`,
+     `SET gxMaximize "0"`, and `SET gxWindowedResolution "<WxH>"`. The
+     resolution follows `--resolution`, whose default `fit` measures your
+     primary monitor and picks the **largest 9:16 portrait window that
+     actually fits it, capped at 1080x1920** (a fixed 1080x1920 window
+     cannot fit a landscape 1080p monitor — Windows would cut it off and
+     the capture would go black; a 1440p/4K monitor that holds 1080x1920
+     with room to spare gets exactly 1080x1920, the design resolution the
+     phone renders pixel-for-pixel — bigger would only cost encode time).
+     An explicit `--resolution WxH` that cannot fit is called out with the
+     fitted alternative and needs your confirmation to keep.
+
+   Either way the step also writes `SET checkAddonVersion "0"` (the "Load
+   out of date AddOns" CVar): without it, the first game patch silently
+   disables the addon and the phone shows the stock UI with no explanation.
+   WoW rewrites this file on exit, so if the game is running the wizard
+   offers to wait for it to close first.
 4. **Finds FFmpeg** — `--ffmpeg` flag, `PATH`, remembered path, or winget's
    package directory. If absent, it offers to run
    `winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements`
@@ -145,11 +159,12 @@ portrait window 552x984 — the largest 9:16 window that fits your 1920x1032 wor
    needed). On completion setup continues automatically.
 5. **Checks the game is running** — if no window matches `--window-title`, it
    offers to launch the recorded game executable and waits while you log in.
-   Once the window exists, a windowed (non-maximized, non-fullscreen) game
-   whose client area differs from the decided resolution is **resized
-   directly** to it (`SetWindowPos`; re-verified, one retry) — CVars alone
-   cannot size a windowed 1.12 client. The outcome is reported on the step
-   line and the dashboard.
+   In **portrait layout**, once the window exists, a windowed (non-maximized,
+   non-fullscreen) game whose client area differs from the decided resolution
+   is **resized directly** to it (`SetWindowPos`; re-verified, one retry) —
+   CVars alone cannot size a windowed 1.12 client; the outcome is reported on
+   the step line and the dashboard. In **band layout** the window is welcome
+   at any landscape size and is never resized — the band adapts to it.
 
 Every prompt has a default; `--yes` accepts all defaults non-interactively,
 and `--skip-setup` skips the wizard entirely (the pre-wizard behavior). When
@@ -176,9 +191,12 @@ status page, served only to the PC itself — other devices on the network get
   button,
 - live status: chosen encoder, the **Pipeline** self-check verdict ("video
   pipeline OK (N frames)" from a ~2 s test-pattern encode at startup, or the
-  ffmpeg error explaining why encoding cannot work on this machine), phone
-  connected (with its address and browser), and stream stats
-  (kbps / fps / encode ms) while a phone is streaming,
+  ffmpeg error explaining why encoding cannot work on this machine), the
+  **Layout** line showing the live stream framing (band layout:
+  `center band 1215x2160 of 3840x2160 (encoded at 1080x1920)`; portrait
+  layout: `portrait window 552x984`), phone connected (with its address and
+  browser), and stream stats (kbps / fps / encode ms) while a phone is
+  streaming,
 - **warning rows** that make a black stream explain itself: a
   window/resolution mismatch, and — whenever a running capture delivers zero
   frames for 5 s — ffmpeg's own last words (its stderr tail),
@@ -233,27 +251,46 @@ WoW Mobile also hosts 1.12-era private-server clients (launched through
   app's own marker, deleting only the files the app ships; anything else in
   `AddOns` is never touched. What happened is reported on the wizard output
   and the dashboard's addon step.
-- **Config.wtf / window size — honest limits:** on a **windowed** 1.12 client
-  `gxResolution` governs **fullscreen mode only**: the window opens at the
-  client's own remembered/default size (800x600 out of the box) and ignores
-  the CVar entirely (field-verified — a clean `SET gxResolution "1080x1920"`
-  still produced an 800x600 window). The wizard writes **both**
-  `SET gxResolution` **and** `SET gxWindowedResolution` (belt and braces —
-  some patched/custom builds honor one or the other, and unknown CVars are
-  harmlessly kept), with the same backup and never-while-running rules — but
-  the mechanism that actually sizes the window is the next one:
-- **The app resizes the window itself after launch:** once the game window is
-  found (wizard step 5, and again before every capture start), a plain
-  windowed (non-maximized, non-fullscreen) WoW whose client area differs from
-  the decided resolution is resized directly (`SetWindowPos`, frame computed
-  for its actual style and DPI, kept on the monitor's work area), then
-  re-verified — with one retry for clients that re-assert their size once.
-  This works on **every** windowed client — 1.12, Era, custom — independent
-  of any CVar. Success is reported as "resized WoW window to WxH" (log +
-  dashboard); if the game keeps reverting, that is reported honestly and the
-  stream simply adapts to the actual window size instead (degraded but
-  correct). Fullscreen/maximized windows are never touched — switch the game
-  to windowed mode (the dashboard warning row says so).
+- **Band layout — the default: the game stays landscape, the stream is the
+  centered 9:16 band.** The whole v0.3.x portrait fight (CVars the windowed
+  1.12 client ignores, `SetWindowPos` enforcement, clients re-asserting
+  their size, the 1.12 engine rejecting portrait render resolutions and
+  stretching) is over on 1.12 clients because **nothing forces the window
+  anymore**: the game runs a normal native landscape session — windowed at
+  whatever size it likes, maximized, whatever — and the server crops the
+  **centered 9:16 portrait band** out of the live window before encoding
+  (`bandHeight = window height, bandWidth ≈ height×9/16, centered` — the
+  exact formula is in
+  [ARCHITECTURE.md](ARCHITECTURE.md#1-the-band-contract--the-primary-design);
+  both addon variants ship their own port of `Band.lua` and compute the
+  identical band to lay out their touch UI inside it — `WowMobile_Vanilla`,
+  the wizard's install for this 1.12 default flow, and the Classic Era
+  `WowMobile` alike).
+  A band taller than 1920 px (4K desktops) is encoded at 1080x1920. Touch
+  input is mapped into the same band, so taps stay pixel-accurate. The
+  dashboard's **Layout** line shows the live decision, e.g.
+  `center band 1215x2160 of 3840x2160 (encoded at 1080x1920)`.
+- **Config.wtf in band layout:** the wizard writes `SET gxWindow "1"` (the
+  capture needs a window, not exclusive fullscreen) and `SET gxResolution
+  "<your desktop resolution>"` — the one render mode every 1.12 client
+  accepts — with the same backup and never-while-running rules. It never
+  writes `gxWindowedResolution` in band layout: the mainline field client
+  ignores it windowed, and the patched/custom builds that honor it would get
+  a desktop-sized window that cannot fit above the taskbar, pushing the
+  band's bottom rows off-screen; those builds keep their remembered windowed
+  size, which the band adapts to. No portrait sizing is written, ever; if the
+  window ends up some other landscape size, the band simply adapts. A window
+  that is somehow **portrait** under band layout streams full-window (the
+  log and dashboard say so).
+- **Portrait layout (`--layout portrait`) is still available** and keeps the
+  classic behavior on any client: the portrait fit is written to Config.wtf
+  and, because a **windowed** 1.12 client ignores `gxResolution` entirely
+  (it governs fullscreen only — field-verified), the app then resizes the
+  window directly after launch (`SetWindowPos`, frame computed for its
+  actual style and DPI, kept on the monitor's work area, re-verified with
+  one retry). Reverts are reported honestly and the stream adapts to the
+  actual window. Fullscreen/maximized windows are never touched in portrait
+  mode — switch the game to windowed (the dashboard warning row says so).
 - **A dedicated 1.12 addon is installed:** the Classic Era addon targets the
   1.15 API (Interface `11507`, `C_GossipInfo`, …) and cannot load on 1.12, so
   the wizard installs `WowMobile_Vanilla` — the 1.12 (Lua 5.0, Interface
@@ -326,7 +363,15 @@ Video starts muted (browser autoplay rules). If you ran with `--audio`, tap
 Everything the wizard does, by hand — useful for development, unusual
 installs, or running with `--skip-setup`.
 
-### 1. Put WoW in a portrait window
+### 1. Configure the WoW window
+
+**Band layout (the 1.12-client default)** needs almost nothing by hand: make
+sure the game runs **windowed** (`SET gxWindow "1"`) in a normal **landscape**
+mode — on a 1.12 client set `SET gxResolution "<your desktop resolution>"` —
+and add `SET checkAddonVersion "0"`. The server crops the centered 9:16 band
+out of the live window and maps touch into it, whatever size the window is.
+The rest of this step is for **portrait layout** (the Classic Era default,
+or `--layout portrait`):
 
 WoW must run **windowed** at exactly the resolution `wowstreamd` captures so
 touch coordinates map 1:1 onto the game. The default `--resolution fit`
@@ -431,7 +476,8 @@ The defaults are right for most setups. All flags:
 |---|---|---|
 | `--addr` | `:8443` | Listen address for the HTTPS signaling server |
 | `--token` | random per run | Pairing token; pass your own to keep it stable across restarts |
-| `--resolution` | `fit` | `fit` sizes the window to the largest 9:16 portrait rect fitting your primary monitor, capped at 1080x1920 (the design size — a 4K monitor gets exactly 1080x1920); an explicit `WxH` should equal the WoW window client size (it is sanity-checked against the monitor, and if the real window ends up a different size the stream adapts to the window and the dashboard warns) |
+| `--layout` | `auto` | Stream framing: `band` streams the centered 9:16 band cropped from a native **landscape** game window (no portrait forcing, no window resizing — the band contract); `portrait` forces the classic fitted portrait window and captures it whole; `auto` picks band for legacy 1.12-engine clients and portrait for Classic Era |
+| `--resolution` | `fit` | Portrait layout: `fit` sizes the window to the largest 9:16 portrait rect fitting your primary monitor, capped at 1080x1920 (the design size — a 4K monitor gets exactly 1080x1920); an explicit `WxH` should equal the WoW window client size (it is sanity-checked against the monitor, and if the real window ends up a different size the stream adapts to the window and the dashboard warns). Band layout ignores the fit — the live band decides the encode; the value is only the fallback frame while no window is measurable |
 | `--fps` | `60` | Capture/encode frame rate (1–240) |
 | `--bitrate-kbps` | `8000` | Video bitrate, CBR (500–100000) |
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
@@ -530,7 +576,7 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 | Launching says **"WoW Mobile is already running"** | Not an error — only one copy runs at a time, and an older copy is still in the tray (typical right after installing an update). Pick **Open dashboard** to use the running copy, **Replace it** to swap in the new launch (it asks the old one to quit and waits up to 5 s), or **Exit**. Console: the same `[O/R/X]` prompt; `--yes` replaces without asking. |
 | `bind: Only one usage of each socket address` / "port 8443 is in use" | Usually another program owns the port — running WoW Mobile copies (current or pre-0.3.3) are recognized and offered Open/Replace/Exit before this can appear, so an error here means either a different program or an old WoW Mobile too wedged to answer its own dashboard (check the tray / Task Manager for `wowstreamd.exe`). Close it, or pass `--addr :8444` (any free port). |
 | Game looks **stretched/squeezed in-game** on the phone, no touch UI | The addon is not loading. At WoW's **character select → AddOns**, check the right variant is listed and enabled: **WoW Mobile** on Classic Era, **WoW Mobile (Vanilla)** on any 1.12-engine client — including vanilla-plus customs (Turtle, OctoWow), whose 1.16+ version stamps older WoW Mobile releases misread as Classic Era, installing the variant that cannot load there. Re-run `wowstreamd`: the wizard corrects that classification and swaps the addon ([Private servers](#private-servers-112-clients)); `--client-type legacy` forces it. Note the **login screen** always looks stretched — addons cannot run there, so judge only in-game/at character select. |
-| Addon loads (deck buttons visible) but the **3D world is stretched over the whole window** and/or the **interface draws oversized, elements overlapping** | The layout was built against window geometry that changed afterwards — typically a `uiScale` cvar the client only applies late (or on the next reload), or a window that isn't the configured portrait 9:16 size. Since v0.3.4 the addon measures the real window at layout time and **verifies the world viewport after applying it**: on any mismatch it records the exact geometry under `/wm errors` and raises a blue **"Finish setup — reload UI"** banner at the bottom of the screen — tap the big button (it runs `ReloadUI()`; everything re-lays out against the now-settled geometry). If the banner returns after reloading, `/wm errors` names the cause: a non-portrait window means `gxWindowedResolution` didn't stick — close WoW fully and re-run the `wowstreamd` wizard so it rewrites `Config.wtf`. Also seeing a Lua error dialog about "too many upvalues"? That was a v0.3.3 addon bug (Mail/AuctionHouse modules failed to compile on the 1.12 client's Lua 5.0); update the addon — the wizard reinstalls it. |
+| Addon loads (deck buttons visible) but the **3D world is stretched over the whole window** and/or the **interface draws oversized, elements overlapping** | The layout was built against window geometry that changed afterwards — typically a `uiScale` cvar the client only applies late (or on the next reload), or a window that isn't the configured portrait 9:16 size. On **1.12-engine clients** (the **WoW Mobile (Vanilla)** variant), since v0.3.4 the addon measures the real window at layout time and **verifies the world viewport after applying it**: on any mismatch it records the exact geometry under `/wm errors` and raises a blue **"Finish setup — reload UI"** banner at the bottom of the screen — tap the big button (it runs `ReloadUI()`; everything re-lays out against the now-settled geometry). The Classic Era variant does not run this geometry self-check yet (its banner appears only on a live landscape/portrait mode switch); with these symptoms on Classic Era, type `/reload` once the window has settled, or close WoW fully and re-run the `wowstreamd` wizard. If the banner returns after reloading, `/wm errors` names the cause. Note that on 1.12 a **landscape window is normal** — band layout (the 1.12 default) crops the centered 9:16 band out of it, and the addon lays the deck out inside that band (`/wm status` shows the live mode and band rect, which must match the server's crop). A shape error there means a **portrait window too short for the deck**, or a portrait-layout session whose window size didn't stick — either way, close WoW fully and re-run the `wowstreamd` wizard so it rewrites `Config.wtf`. Also seeing a Lua error dialog about "too many upvalues"? That was a v0.3.3 addon bug (Mail/AuctionHouse modules failed to compile on the 1.12 client's Lua 5.0); update the addon — the wizard reinstalls it. |
 | Client's version says 1.16/1.17/1.18 — which type is it? | A vanilla-plus custom client on the **1.12 engine** (official Classic Era stamps stop at 1.15). The wizard treats such stamps as inconclusive and defaults to the 1.12 client type; `--client-type era\|legacy` overrides any detection. |
 | Nothing seems to happen after launching / where did it go? | WoW Mobile runs windowed with no terminal: look for the **tray icon** (left-click opens the dashboard) and the dashboard tab at `https://127.0.0.1:8443/host/`. Quit via the tray menu or the dashboard's **Quit** button. `--console` from a terminal gets you the full text log. |
 | Wizard: `[1/5] World of Warcraft ..... not found automatically` | Non-standard install location the scan can't see. Use the **folder picker** that appears (the `World of Warcraft` or `_classic_era_` folder both work, as does any folder with `Wow.exe`/`VanillaFixes.exe`), choose "Pick the game program (.exe)…", or pass `--wow-dir`/`--game-exe` — the choice is remembered in `%APPDATA%\wowstreamd\config.json`. |
@@ -549,7 +595,7 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 | `Pairing token rejected` | The server generates a fresh token each run unless you pass `--token`. Re-scan the current QR code, or pin a token: `.\wowstreamd.exe --token mysecret`. |
 | `Session replaced by another device` | Only one phone at a time; pairing a second device disconnects the first by design. Reconnect from the device you want. |
 | Addon not loading / stock UI shows | The folder must be exactly `Interface\AddOns\WowMobile` with `WowMobile.toc` directly inside (`Interface\AddOns\WowMobile_Vanilla` with `WowMobile_Vanilla.toc` on 1.12; no doubled `WowMobile\WowMobile` nesting) — the wizard's step 2 guarantees this. Enable it at character select; if flagged out-of-date after a game patch, check **Load out of date AddOns**. |
-| UI misaligned, taps land in the wrong place | `gxWindowedResolution` and `--resolution` disagree, or the window got resized. They must match exactly; re-run the wizard (it fixes `Config.wtf` to match `--resolution`) and restart both WoW and the server. |
+| UI misaligned, taps land in the wrong place | **Band layout** (the 1.12 default): the server recomputes the band from the live window per capture start, so a mismatch usually means the addon laid out against a window size that changed afterwards — `/reload` in-game (or the addon's "Finish setup — reload UI" banner). **Portrait layout**: `gxWindowedResolution` and `--resolution` disagree, or the window got resized — they must match exactly; re-run the wizard (it fixes `Config.wtf` to match `--resolution`) and restart both WoW and the server. |
 | Taps near the world/deck boundary move the character or drag the camera | The addon's `/wm viewport` and the phone's **World viewport** setting disagree (both default 1080). Set them to the same number — [step 5](#5-first-run-in-game). |
 | No sound | Audio is opt-in: install screen-capture-recorder, run with `--audio`, and unmute via the HUD **Snd** button. Verify the device exists: `ffmpeg -list_devices true -f dshow -i dummy` should list `virtual-audio-capturer`. |
 | PWA won't install / no fullscreen | Installation requires HTTPS — don't use `--no-tls`. On iOS only Safari can Add to Home Screen; on Android use Chrome. |

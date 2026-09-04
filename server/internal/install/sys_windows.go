@@ -225,6 +225,7 @@ func (winSystem) LaunchGame(exePath string) error {
 var (
 	sysUser32                 = windows.NewLazySystemDLL("user32.dll")
 	procSystemParametersInfoW = sysUser32.NewProc("SystemParametersInfoW")
+	procGetSystemMetrics      = sysUser32.NewProc("GetSystemMetrics")
 	procAdjustWindowRectEx    = sysUser32.NewProc("AdjustWindowRectEx")
 	// DPI-correct decoration measurement (Win10 1607+; Find()-guarded).
 	procAdjustWindowRectExForDpi = sysUser32.NewProc("AdjustWindowRectExForDpi")
@@ -240,6 +241,8 @@ type winRect struct{ left, top, right, bottom int32 }
 
 const (
 	spiGetWorkArea = 0x0030 // SPI_GETWORKAREA
+	smCxScreen     = 0      // SM_CXSCREEN: primary monitor desktop width
+	smCyScreen     = 1      // SM_CYSCREEN: primary monitor desktop height
 	// WS_OVERLAPPEDWINDOW: the caption + thick-frame style a windowed
 	// (gxWindow=1, gxMaximize=0) WoW gets, so AdjustWindowRectEx(ForDpi)
 	// measures the decorations of the actual window being fitted.
@@ -266,6 +269,19 @@ func (winSystem) PrimaryWorkArea() (int, int, bool) {
 		return 0, 0, false
 	}
 	return w, h, true
+}
+
+// PrimaryDesktopResolution measures the primary monitor's full desktop
+// resolution (physical pixels — the process is per-monitor-DPI-aware, so no
+// virtualization skews the metrics): the native landscape mode band layout
+// writes into a legacy client's gxResolution.
+func (winSystem) PrimaryDesktopResolution() (int, int, bool) {
+	w, _, _ := procGetSystemMetrics.Call(smCxScreen)
+	h, _, _ := procGetSystemMetrics.Call(smCyScreen)
+	if int(int32(w)) <= 0 || int(int32(h)) <= 0 {
+		return 0, 0, false
+	}
+	return int(int32(w)), int(int32(h)), true
 }
 
 // WindowDecorationExtents measures how much width/height the window frame

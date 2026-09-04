@@ -4,9 +4,11 @@
 // skips the picker, --choose-game re-opens it), installs or
 // updates the embedded addon variant matching the client (WowMobile for
 // Classic Era, the WowMobile_Vanilla 1.12 port for legacy), fixes Config.wtf
-// for the portrait window, finds (or installs) FFmpeg, and makes sure the
-// game is running — each step idempotent and near-instant when already
-// satisfied, so the wizard runs on every start.
+// for the resolved layout (a native landscape session in band layout — the
+// legacy default under the band contract — or the fitted portrait window in
+// portrait layout), finds (or installs) FFmpeg, and makes sure the game is
+// running — each step idempotent and near-instant when already satisfied, so
+// the wizard runs on every start.
 //
 // The wizard logic in this file is portable and tested everywhere; the
 // Windows-only operations (registry, drive scan, winget, window checks) sit
@@ -54,12 +56,14 @@ const (
 )
 
 // Steps returns the dashboard checklist matching this wizard's steps, in
-// order and all pending — the single source for hoststatus.New.
+// order and all pending — the single source for hoststatus.New. The config
+// step's label is layout-neutral: it writes the portrait window in portrait
+// layout and the native landscape session in band layout.
 func Steps() []hoststatus.Step {
 	return []hoststatus.Step{
 		{ID: StepGame, Label: "World of Warcraft"},
 		{ID: StepAddon, Label: "WowMobile addon"},
-		{ID: StepConfig, Label: "Portrait resolution"},
+		{ID: StepConfig, Label: "Window settings"},
 		{ID: StepFFmpeg, Label: "FFmpeg"},
 		{ID: StepRunning, Label: "Game running"},
 	}
@@ -114,6 +118,12 @@ type System interface {
 	// minus taskbar/appbars, SPI_GETWORKAREA) in physical pixels; ok is false
 	// when it cannot be measured (non-Windows, or the call failed).
 	PrimaryWorkArea() (w, h int, ok bool)
+	// PrimaryDesktopResolution returns the primary monitor's FULL desktop
+	// resolution (SM_CXSCREEN/SM_CYSCREEN, physical pixels — taskbar
+	// included, unlike PrimaryWorkArea): the native landscape mode band
+	// layout writes into a legacy client's gxResolution. ok is false when it
+	// cannot be measured.
+	PrimaryDesktopResolution() (w, h int, ok bool)
 	// WindowDecorationExtents returns the total width/height the window frame
 	// adds around a client area for the overlapped style windowed WoW uses
 	// (borders + title bar, via AdjustWindowRectEx), falling back to a
@@ -168,10 +178,17 @@ type Options struct {
 	// ResolutionFit mirrors config.Config.ResolutionIsFit: size the window to
 	// the largest 9:16 portrait client area fitting the primary monitor.
 	ResolutionFit bool
-	WindowTitle   string // --window-title, for the game-running check
-	WowDirFlag    string // --wow-dir override, "" = auto-detect
-	GameExeFlag   string // --game-exe override: exact game executable, beats everything
-	FFmpegFlag    string // --ffmpeg override, "" = search
+	// Layout carries --layout (config.Layout* value; "" counts as auto).
+	// Auto resolves AFTER the game is located — band for legacy 1.12-engine
+	// clients, portrait for Classic Era — and the resolved concrete value is
+	// returned in Result.Layout. Band layout changes the config step (native
+	// landscape session, no portrait fit) and retires window-size
+	// enforcement.
+	Layout      string
+	WindowTitle string // --window-title, for the game-running check
+	WowDirFlag  string // --wow-dir override, "" = auto-detect
+	GameExeFlag string // --game-exe override: exact game executable, beats everything
+	FFmpegFlag  string // --ffmpeg override, "" = search
 	// ClientTypeFlag carries an explicit --client-type era|legacy override
 	// (already mapped to a ClientType); it beats every detection — version
 	// stamp, heuristics, remembered answer, ask-dialog — and is persisted
@@ -209,10 +226,17 @@ type Result struct {
 	GameDir    string     // its directory — Interface\ and WTF\ live beneath it
 	ClientType ClientType // classicEra or legacy (1.12 private server)
 	FFmpegPath string     // located ffmpeg executable
-	// Width/Height are the decided capture resolution: the monitor-fitted
-	// value under --resolution fit, or the (possibly confirmed-oversized)
-	// explicit flag value. Capture, Config.wtf, and the hello geometry all
-	// use this one number.
+	// Layout is the RESOLVED layout: config.LayoutBand or
+	// config.LayoutPortrait, never auto — Options.Layout auto resolves by
+	// the located client type (band for legacy, portrait for Classic Era).
+	Layout string
+	// Width/Height are the decided capture resolution. Portrait layout: the
+	// monitor-fitted value under --resolution fit, or the (possibly
+	// confirmed-oversized) explicit flag value — capture, Config.wtf, and
+	// the hello geometry all use this one number. Band layout: only the
+	// FALLBACK frame (the 1080x1920 design space unless --resolution named
+	// an explicit WxH) — the real encode geometry is the live band, computed
+	// from the actual window before every capture launch.
 	Width, Height int
 }
 
@@ -247,14 +271,6 @@ func Run(opts Options) (res *Result, err error) {
 		}
 	}()
 
-	// The capture resolution is decided before any step consumes it: the
-	// Config.wtf step writes it, and the caller feeds it to capture and the
-	// hello geometry — one number everywhere.
-	if err = resolveResolution(&opts); err != nil {
-		return nil, err
-	}
-	res.Width, res.Height = opts.Width, opts.Height
-
 	begin(StepGame)
 	var streamOnly bool
 	var staleVariant ClientType // wrongly installed variant to clean up ("" = none)
@@ -263,6 +279,18 @@ func Run(opts Options) (res *Result, err error) {
 	}
 	res.GameDir = filepath.Dir(res.GameExe)
 	opts.Status.SetClientType(string(res.ClientType))
+
+	// The layout resolves only now — auto follows the located client type
+	// (band for legacy 1.12-engine clients, portrait for Classic Era) — and
+	// with it the capture resolution, before any step consumes either: the
+	// Config.wtf step writes them, and the caller feeds them to capture and
+	// the hello geometry.
+	opts.Layout = resolveLayout(opts.Layout, res.ClientType)
+	res.Layout = opts.Layout
+	if err = resolveResolution(&opts); err != nil {
+		return nil, err
+	}
+	res.Width, res.Height = opts.Width, opts.Height
 
 	begin(StepAddon)
 	if err = stepInstallAddon(&opts, res.GameDir, res.ClientType, streamOnly, staleVariant); err != nil {
@@ -301,7 +329,33 @@ func stepLine(out io.Writer, n int, label, result string) {
 	fmt.Fprintf(out, "[%d/%d] %s %s %s\n", n, wizardSteps, label, strings.Repeat(".", dots), result)
 }
 
-// resolveResolution decides the capture resolution before the steps run.
+// resolveLayout turns --layout auto ("" included) into a concrete layout for
+// the located client type: BAND for legacy 1.12-engine clients — the field
+// 1.12 client rejects portrait render resolutions and stretches, while every
+// client happily renders native landscape, so the centered 9:16 band needs no
+// window forcing at all — and PORTRAIT for Classic Era (band is fully
+// supported there via --layout band, its addon ships Band.lua too; only the
+// AUTO default stays portrait for now, since portrait works natively on Era).
+// An explicit band/portrait passes through untouched.
+func resolveLayout(layout string, ct ClientType) string {
+	switch layout {
+	case config.LayoutBand, config.LayoutPortrait:
+		return layout
+	}
+	if ct == ClientTypeLegacy {
+		return config.LayoutBand
+	}
+	return config.LayoutPortrait
+}
+
+// resolveResolution decides the capture resolution after the layout is known.
+//
+// BAND layout first: there is no window size to decide — the encode geometry
+// is the live band, recomputed from the actual client rect before every
+// capture launch — so the portrait fit (and its monitor sanity checks) is
+// skipped entirely. Width/Height become only the FALLBACK frame streamed
+// while no window is measurable: the 1080x1920 design space, or an explicit
+// --resolution WxH verbatim.
 //
 // --resolution fit (the default): measure the primary monitor's work area,
 // subtract the window decoration extents, and take the largest 9:16 portrait
@@ -319,6 +373,15 @@ func stepLine(out io.Writer, n int, label, result string) {
 // alternative and requires confirmation to keep (GUI mode: a message box via
 // the dialog Prompter; --yes keeps the explicit flag value, logged).
 func resolveResolution(opts *Options) error {
+	if opts.Layout == config.LayoutBand {
+		if opts.ResolutionFit {
+			opts.Width, opts.Height = window.DesignW, window.DesignH
+		}
+		fmt.Fprintln(opts.Out, "band layout: the game runs native landscape; the stream is the centered 9:16 band of the live window")
+		opts.Status.SetResolution("native landscape (9:16 band)")
+		return nil
+	}
+
 	workW, workH, workOK := opts.Sys.PrimaryWorkArea()
 	decorW, decorH := opts.Sys.WindowDecorationExtents()
 
@@ -825,19 +888,30 @@ func removeStaleAddon(opts *Options, gameDir string, stale ClientType) string {
 	return "" // nothing was installed there — nothing to report
 }
 
-// stepConfigWTF ensures the portrait-window settings in <gameDir>\WTF\
-// Config.wtf — the CVar names follow the client type (gxWindowedResolution on
-// Classic Era, gxResolution on 1.12) — with a .bak backup and a minimal edit,
-// but never while WoW is running, because the game rewrites the file on exit.
+// stepConfigWTF ensures the window settings in <gameDir>\WTF\Config.wtf —
+// with a .bak backup and a minimal edit, but never while WoW is running,
+// because the game rewrites the file on exit. What it writes follows the
+// layout: PORTRAIT layout writes the portrait window (CVar names follow the
+// client type — gxWindowedResolution on Classic Era, gxResolution on 1.12);
+// BAND layout writes a NATIVE LANDSCAPE session (BandSettingsFor — the
+// legacy client gets gxResolution = the primary monitor's desktop
+// resolution, a mode every client accepts) and never forces portrait at all.
 func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
-	const label = "Portrait resolution"
+	const label = "Window settings"
 	want := PortraitSettingsFor(ct, opts.Width, opts.Height)
-	resolution := fmt.Sprintf("%dx%d", opts.Width, opts.Height)
+	desc := fmt.Sprintf("%dx%d", opts.Width, opts.Height)
+	windowKind := fmt.Sprintf("%s portrait", desc)
+	if opts.Layout == config.LayoutBand {
+		dw, dh, haveDesktop := opts.Sys.PrimaryDesktopResolution()
+		want = BandSettingsFor(ct, dw, dh, haveDesktop)
+		desc = "native landscape"
+		windowKind = "native landscape (band layout)"
+	}
 	path := filepath.Join(gameDir, "WTF", "Config.wtf")
 
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		ok, perr := opts.Prompt.Confirm("WTF\\Config.wtf does not exist yet (fresh install). Create it with the portrait window settings?", true)
+		ok, perr := opts.Prompt.Confirm(fmt.Sprintf("WTF\\Config.wtf does not exist yet (fresh install). Create it with the %s window settings?", windowKind), true)
 		if perr != nil {
 			return perr
 		}
@@ -851,7 +925,7 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 		if err := os.WriteFile(path, FreshConfig(want), 0o644); err != nil {
 			return fmt.Errorf("creating %s: %w", path, err)
 		}
-		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf created (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf created (%s windowed)", desc))
 		return nil
 	}
 	if err != nil {
@@ -859,7 +933,7 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 	}
 
 	if SettingsSatisfied(content, want) {
-		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", desc))
 		return nil
 	}
 
@@ -874,16 +948,16 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 			return perr
 		}
 		if !wait {
-			step(opts, 3, StepConfig, label, hoststatus.StateSkipped, "unchanged — close WoW and restart wowstreamd to apply "+resolution)
+			step(opts, 3, StepConfig, label, hoststatus.StateSkipped, "unchanged — close WoW and restart wowstreamd to apply "+desc)
 			return nil
 		}
 		fmt.Fprintln(opts.Out, "  Waiting for WoW to close (Ctrl+C to abort)...")
 		opts.Status.SetStep(StepConfig, hoststatus.StateRunning, "waiting for WoW to close")
 		if err := waitForGameWindow(opts, false, "WoW to close"); err != nil {
-			return fmt.Errorf("%w; close WoW and restart wowstreamd to apply %s", err, resolution)
+			return fmt.Errorf("%w; close WoW and restart wowstreamd to apply %s", err, desc)
 		}
 	} else {
-		ok, perr := opts.Prompt.Confirm(fmt.Sprintf("Update Config.wtf for a %s portrait window? (a Config.wtf%s backup is written first)", resolution, BackupSuffix), true)
+		ok, perr := opts.Prompt.Confirm(fmt.Sprintf("Update Config.wtf for a %s window? (a Config.wtf%s backup is written first)", windowKind, BackupSuffix), true)
 		if perr != nil {
 			return perr
 		}
@@ -898,9 +972,9 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 		return fmt.Errorf("updating %s: %w", path, err)
 	}
 	if changed {
-		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf updated (%s windowed, backup: Config.wtf%s)", resolution, BackupSuffix))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf updated (%s windowed, backup: Config.wtf%s)", desc, BackupSuffix))
 	} else {
-		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", resolution))
+		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", desc))
 	}
 	return nil
 }
@@ -1020,14 +1094,19 @@ func stepGameRunning(opts *Options, gameExe string) error {
 }
 
 // gameWindowDetail builds the game-running step's result line: "window found"
-// plus the direct-resize outcome when one was needed. Windowed 1.12 clients
-// ignore the gxResolution CVar (it governs fullscreen only), so the wizard
-// resizes the found window to the decided resolution via SetWindowPos — the
-// only mechanism that works on every windowed client. Failures/reverts are
-// reported in the same line, never fatal: capture adapts to the actual
-// window regardless.
+// plus, in PORTRAIT layout, the direct-resize outcome when one was needed —
+// windowed 1.12 clients ignore the gxResolution CVar (it governs fullscreen
+// only), so the wizard resizes the found window to the decided resolution via
+// SetWindowPos, the only mechanism that works on every windowed client.
+// Failures/reverts are reported in the same line, never fatal: capture adapts
+// to the actual window regardless. BAND layout retires enforcement entirely:
+// the window is welcome at any landscape size — the band is computed from
+// whatever exists, so there is nothing to force.
 func gameWindowDetail(opts *Options) string {
 	detail := "window found"
+	if opts.Layout == config.LayoutBand {
+		return detail
+	}
 	if msg, acted := opts.Sys.EnforceGameWindowSize(opts.WindowTitle, opts.Width, opts.Height); acted {
 		fmt.Fprintln(opts.Out, "  "+msg)
 		detail += " — " + msg

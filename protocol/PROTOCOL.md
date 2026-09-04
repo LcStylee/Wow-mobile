@@ -39,14 +39,18 @@ offset 0  u8   type
 offset 1  ...  type-specific body
 ```
 
-Coordinates are **normalized to the captured window's client area** as
+Coordinates are **normalized to the captured region** as
 `u16` in `0..65535`: the sender expresses a position as a continuous fraction
-of the client area (0 = left/top edge, 1 = right/bottom edge) and encodes it
-as `x = round(frac * 65535)`. The server maps wire values back to screen
-pixels for `SendInput` using the pixel-index convention
-`px = round(x / 65535 * (clientWidth - 1))`; the difference between the two
-conventions is below one capture pixel at every position, so senders may
-compute the fraction either way. Normalized coordinates make the client
+of the region the video stream shows (0 = left/top edge, 1 = right/bottom
+edge) and encodes it as `x = round(frac * 65535)`. The captured region is the
+window's client area in portrait layout, or the centered 9:16 band of a
+landscape window in band layout (the band contract, docs/ARCHITECTURE.md) —
+the client never needs to know which: it always normalizes against the video
+it receives. The server maps wire values back to screen pixels for
+`SendInput` using the pixel-index convention
+`px = regionX + round(x / 65535 * (regionWidth - 1))`; the difference between
+the two conventions is below one capture pixel at every position, so senders
+may compute the fraction either way. Normalized coordinates make the client
 independent of capture resolution.
 
 ### 0x01 POINTER_DOWN — 8 bytes
@@ -116,8 +120,10 @@ client → server:
 server → client:
 
 - `{"t":"hello","proto":[1,0],"server":"wowstreamd/1.0",
-   "video":{"w":1080,"h":1920,"fps":60}}` — reply to hello; capture geometry
-   (clients may use it for aspect fitting; input stays normalized).
+   "video":{"w":1080,"h":1920,"fps":60}}` — reply to hello; the ENCODED
+   stream geometry — the captured region after any crop/scale (band layout:
+   the cropped, design-capped band) — so clients may use it for aspect
+   fitting; input stays normalized against the same region.
 - `{"t":"latencyProbe","id":123,"tSent":<ms>}` — echoed unchanged.
 - `{"t":"stats","encodeMs":4.2,"captureFps":60,"kbps":7800}` — 1 Hz.
 - `{"t":"error","code":"...","msg":"..."}` — fatal; connection closes after.

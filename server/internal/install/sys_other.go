@@ -37,7 +37,8 @@ func (stubSystem) EnforceGameWindowSize(string, int, int) (string, bool) {
 func (stubSystem) LaunchGame(string) error {
 	return errors.New("launching WoW is Windows-only")
 }
-func (stubSystem) PrimaryWorkArea() (int, int, bool) { return 0, 0, false }
+func (stubSystem) PrimaryWorkArea() (int, int, bool)          { return 0, 0, false }
+func (stubSystem) PrimaryDesktopResolution() (int, int, bool) { return 0, 0, false }
 func (stubSystem) WindowDecorationExtents() (int, int) {
 	return window.FallbackDecorationW, window.FallbackDecorationH
 }

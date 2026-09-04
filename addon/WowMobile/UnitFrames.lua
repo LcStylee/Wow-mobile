@@ -229,14 +229,96 @@ WM.OnInit(function()
 	--   * Legacy UIDropDownMenu: shared DropDownList1..N frames, re-scaled on
 	--     every toggle because all dropdown users recycle them.
 	-- SetScale touches no UIDropDownMenu/Menu globals or menu internals, so
-	-- neither hook can taint the menu code paths.
+	-- neither hook can taint the menu code paths (SetClampedToScreen /
+	-- SetClampRectInsets are plain widget methods, same reasoning). The band
+	-- clamp (WM.Band.Clamp) re-runs on every open — unlike the scale it
+	-- depends on the live band metrics AND the menu's effective scale, so it
+	-- can't be set-once; it keeps a menu opened from a tap near the band edge
+	-- inside the streamed crop instead of merely inside the window.
+	local function ClampMenu(menu)
+		if WM.Band then WM.Band.Clamp(menu) end
+	end
 	local manager = Menu and Menu.GetManager and Menu.GetManager()
 	if manager then
-		local function ScaleOpenMenu(mgr)
-			local menu = mgr.GetOpenMenu and mgr:GetOpenMenu()
-			if menu and menu:GetScale() ~= 1.6 then
+		-- One treatment per menu WINDOW, root and submenu alike. Submenu
+		-- windows are NOT children of the root menu frame: Blizzard_Menu
+		-- acquires every level as a separate pooled frame parented to the
+		-- same top-level parent (WorldFrame/UIParent) at THAT parent's scale,
+		-- so neither the root's SetScale nor its clamp-rect insets reach
+		-- them — untreated, a submenu (e.g. Raid Target Icon off the target
+		-- menu) renders at mouse size and flips only at the real screen
+		-- edge, opening into the cropped rail where the phone can neither
+		-- see nor tap it.
+		local function TreatMenuWindow(menu)
+			if menu:GetScale() ~= 1.6 then
 				menu:SetScale(1.6)
 			end
+			ClampMenu(menu)
+		end
+		-- Submenus open through the manager's INTERNAL hover path (a private
+		-- mouse-event timer), which the addon-facing manager proxy does not
+		-- expose — there is no submenu method to hooksecurefunc. Instead a
+		-- watcher ticks while any menu is open and treats new menu windows
+		-- as they appear. Identification is by construction, read-only:
+		-- every menu window is a sibling of the root (same top-level
+		-- parent), carries the ScrollBox child MenuTemplateBase installs in
+		-- OnLoad, and the ID (1000) the manager stamps on acquisition. If a
+		-- future build drops those markers the scan simply finds nothing and
+		-- behavior degrades to today's root-only treatment — never worse.
+		-- Blizzard opens submenus only after its own 0.33 s hover timer, so
+		-- the 0.1 s scan period treats each window before a finger can reach
+		-- it. The watcher runs ONLY while a menu is open, and uses the same
+		-- plain widget reads/writes as above, so the taint reasoning holds
+		-- for it too; forbidden siblings (nameplate frames also live under
+		-- WorldFrame on some builds) are skipped before any other access.
+		local watcher = CreateFrame("Frame")
+		watcher:Hide()
+		local treated = {}
+		local sinceScan = 0
+		watcher:SetScript("OnUpdate", function(self, elapsed)
+			sinceScan = sinceScan + elapsed
+			if sinceScan < 0.1 then return end
+			sinceScan = 0
+			local root = manager.GetOpenMenu and manager:GetOpenMenu()
+			if not root then
+				for k in next, treated do treated[k] = nil end
+				self:Hide()
+				return
+			end
+			local host = root:GetParent()
+			if not host then return end
+			-- Menu windows are pooled: a submenu released back to the pool can
+			-- be re-acquired for a DIFFERENT submenu within the same open root
+			-- (hover a second submenu item) — and whether the pool resets its
+			-- state or not, a hidden frame's treatment is stale. Evicting
+			-- non-shown entries makes both pool behaviors safe: the recycled
+			-- window is re-treated on its next appearance (TreatMenuWindow is
+			-- idempotent — GetScale guard + recomputed clamp — so cheap).
+			for k in next, treated do
+				if not k:IsShown() then treated[k] = nil end
+			end
+			for _, child in next, { host:GetChildren() } do
+				if not treated[child]
+					and not (child.IsForbidden and child:IsForbidden())
+					and child ~= root
+					and child:IsShown()
+					and child.ScrollBox
+					and child:GetID() == 1000 then
+					treated[child] = true
+					TreatMenuWindow(child)
+				end
+			end
+		end)
+		local function ScaleOpenMenu(mgr)
+			local menu = mgr.GetOpenMenu and mgr:GetOpenMenu()
+			if not menu then return end
+			TreatMenuWindow(menu)
+			-- Menu windows are pooled and recycled with default state, so a
+			-- fresh open must forget what the last one treated; scan on the
+			-- very next tick in case submenus were force-opened at open time.
+			for k in next, treated do treated[k] = nil end
+			sinceScan = 0.1
+			watcher:Show()
 		end
 		for _, method in next, { "OpenMenu", "OpenContextMenu" } do
 			if type(manager[method]) == "function" then
@@ -248,8 +330,11 @@ WM.OnInit(function()
 		hooksecurefunc("ToggleDropDownMenu", function()
 			for i = 1, UIDROPDOWNMENU_MAXLEVELS or 3 do
 				local list = _G["DropDownList" .. i]
-				if list and list:GetScale() ~= 1.6 then
-					list:SetScale(1.6)
+				if list then
+					if list:GetScale() ~= 1.6 then
+						list:SetScale(1.6)
+					end
+					ClampMenu(list)
 				end
 			end
 		end)

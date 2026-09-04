@@ -45,6 +45,29 @@ const (
 	ClientTypeLegacy = "legacy" // 1.12-engine client (private servers, vanilla-plus customs)
 )
 
+// Layout values accepted by --layout: how the stream is framed relative to
+// the game window (the BAND CONTRACT, docs/ARCHITECTURE.md).
+//
+//   - LayoutBand: the game window runs native LANDSCAPE (no portrait forcing,
+//     no window-size enforcement) and the stream is the centered 9:16 portrait
+//     band cropped out of the live client area — bandHeight = clientHeight,
+//     bandWidth = round-half-to-even(clientHeight*9/16), horizontally
+//     centered. The addon computes the identical band from the same window
+//     dimensions; the phone client needs nothing (the hello reports the
+//     encoded band). A portrait window in band mode streams full-window.
+//   - LayoutPortrait: the classic mode — the window itself is forced to the
+//     fitted 9:16 portrait resolution and captured whole.
+//   - LayoutAuto (default): band for legacy (1.12-engine) clients — the
+//     1.12 field client rejects portrait render resolutions outright — and
+//     portrait for Classic Era (band is fully supported there via --layout
+//     band; only this auto default stays portrait, which works natively on
+//     Era).
+const (
+	LayoutAuto     = "auto"
+	LayoutBand     = "band"
+	LayoutPortrait = "portrait"
+)
+
 // ResolutionFit is the --resolution value (and default) that sizes the
 // window to the largest 9:16 portrait client area fitting the primary
 // monitor's work area. A 1080x1920 design window cannot physically fit a
@@ -70,24 +93,28 @@ type Config struct {
 	ResolutionIsFit bool
 	FPS             int
 	BitrateKbps     int
-	Encoder         string // one of the Encoder* constants
-	Capture         string // CaptureWindow (production) or CaptureTest (synthetic test pattern)
-	PortFile        string // --port-file: write the bound TCP port here after listen (test harnesses)
-	WindowTitle     string
-	ClientDir       string // as given on the command line; resolved by the signal server
-	NoTLS           bool
-	FFmpegPath      string // empty = look up "ffmpeg" in PATH
-	Audio           bool
-	Setup           bool   // --setup: print WoW configuration help and exit
-	WowDir          string // --wow-dir: WoW game directory (skips wizard auto-detection)
-	GameExe         string // --game-exe: exact game executable (private servers); beats --wow-dir
-	ClientType      string // --client-type: "era"|"legacy" override ("" = detect); beats every wizard detection
-	Yes             bool   // --yes: first-run wizard accepts every default without prompting
-	ChooseGame      bool   // --choose-game: always show the game-install picker, even over a remembered choice
-	SkipSetup       bool   // --skip-setup: skip the first-run wizard entirely
-	Version         bool   // --version: print the version and exit
-	ForceConsole    bool   // --console: force console mode (Windows GUI builds)
-	ForceGUI        bool   // --gui: force GUI mode even from a terminal (Windows)
+	// Layout is one of the Layout* constants: how the stream is framed —
+	// the centered 9:16 band cropped from a native landscape window (band),
+	// the whole forced-portrait window (portrait), or by client type (auto).
+	Layout       string
+	Encoder      string // one of the Encoder* constants
+	Capture      string // CaptureWindow (production) or CaptureTest (synthetic test pattern)
+	PortFile     string // --port-file: write the bound TCP port here after listen (test harnesses)
+	WindowTitle  string
+	ClientDir    string // as given on the command line; resolved by the signal server
+	NoTLS        bool
+	FFmpegPath   string // empty = look up "ffmpeg" in PATH
+	Audio        bool
+	Setup        bool   // --setup: print WoW configuration help and exit
+	WowDir       string // --wow-dir: WoW game directory (skips wizard auto-detection)
+	GameExe      string // --game-exe: exact game executable (private servers); beats --wow-dir
+	ClientType   string // --client-type: "era"|"legacy" override ("" = detect); beats every wizard detection
+	Yes          bool   // --yes: first-run wizard accepts every default without prompting
+	ChooseGame   bool   // --choose-game: always show the game-install picker, even over a remembered choice
+	SkipSetup    bool   // --skip-setup: skip the first-run wizard entirely
+	Version      bool   // --version: print the version and exit
+	ForceConsole bool   // --console: force console mode (Windows GUI builds)
+	ForceGUI     bool   // --gui: force GUI mode even from a terminal (Windows)
 }
 
 // Parse parses argv (without the program name). Usage/errors go to errOut.
@@ -101,6 +128,7 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.StringVar(&cfg.Token, "token", "", "pairing token (default: randomly generated and printed at startup)")
 	fs.StringVar(&resolution, "resolution", ResolutionFit, "capture resolution: \"fit\" (default) sizes the WoW window to the largest 9:16 portrait rect that fits the primary monitor, capped at the 1080x1920 design size; an explicit WIDTHxHEIGHT must match the WoW window client size")
 	fs.IntVar(&cfg.FPS, "fps", 60, "capture/encode frame rate")
+	fs.StringVar(&cfg.Layout, "layout", LayoutAuto, "stream framing: \"band\" streams the centered 9:16 portrait band cropped from a native LANDSCAPE game window (no portrait window forcing); \"portrait\" forces the classic fitted portrait window and captures it whole; \"auto\" (default) picks band for legacy 1.12-engine clients and portrait for Classic Era")
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")
 	fs.StringVar(&cfg.Capture, "capture", CaptureWindow, "capture source: \"window\" streams the game window (production); \"test\" streams ffmpeg's testsrc2 synthetic pattern through the identical encode/parse/WebRTC path — works on any OS, needs no game (the setup wizard is skipped), for verifying the video pipeline end to end")
@@ -161,6 +189,11 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	case CaptureWindow, CaptureTest:
 	default:
 		return nil, fmt.Errorf("--capture %q: must be window|test", cfg.Capture)
+	}
+	switch cfg.Layout {
+	case LayoutAuto, LayoutBand, LayoutPortrait:
+	default:
+		return nil, fmt.Errorf("--layout %q: must be auto|band|portrait", cfg.Layout)
 	}
 	switch cfg.ClientType {
 	case ClientTypeAuto, ClientTypeEra, ClientTypeLegacy:

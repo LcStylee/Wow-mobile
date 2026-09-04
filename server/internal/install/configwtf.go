@@ -63,6 +63,42 @@ func PortraitSettingsFor(ct ClientType, width, height int) []Setting {
 	return PortraitSettings(width, height)
 }
 
+// BandSettingsFor returns the Config.wtf lines for BAND layout (the band
+// contract, docs/ARCHITECTURE.md): the game runs a NATIVE LANDSCAPE windowed
+// session — no portrait forcing of any kind — and the server crops the
+// centered 9:16 band out of whatever window actually exists.
+//
+// Legacy (1.12-engine) clients get gxResolution = the primary monitor's
+// desktop resolution: the one render mode every 1.12 client accepts (the
+// field client rejects portrait render resolutions outright and stretches —
+// the whole v0.3.x fight band mode ends). gxWindowedResolution is
+// deliberately NOT written here (unlike PortraitSettingsFor): the mainline
+// field client ignores it windowed, and on the patched/custom builds that DO
+// honor it a desktop-sized client area plus decorations cannot fit the work
+// area — pushing the band's bottom rows off-screen, the capture-risk class
+// ARCHITECTURE.md 1b warns about. Those builds keep their remembered
+// windowed size instead, which band mode adapts to on every launch.
+// Classic Era gets a maximized window (gxMaximize "1"): guaranteed landscape
+// at native size on any monitor, with no CVar that could overshoot it.
+// gxWindow "1" stays in both cases — exclusive fullscreen cannot be captured.
+// haveDesktop=false (unmeasurable monitor) omits the resolution CVars: the
+// client then keeps its own remembered landscape mode, which band mode
+// adapts to anyway.
+func BandSettingsFor(ct ClientType, desktopW, desktopH int, haveDesktop bool) []Setting {
+	s := []Setting{{Name: "gxWindow", Value: "1"}}
+	if ct == ClientTypeLegacy {
+		if haveDesktop {
+			s = append(s, Setting{
+				Name:  "gxResolution",
+				Value: fmt.Sprintf("%dx%d", desktopW, desktopH),
+			})
+		}
+	} else {
+		s = append(s, Setting{Name: "gxMaximize", Value: "1"})
+	}
+	return append(s, checkAddonVersionOff)
+}
+
 // SettingLine renders a Setting in WoW's canonical form.
 func SettingLine(s Setting) string {
 	return fmt.Sprintf("SET %s %q", s.Name, s.Value)

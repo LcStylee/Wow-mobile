@@ -96,6 +96,22 @@ func (s *Supervisor) SetBitrate(kbps int) {
 	s.log.Info("bitrate change requested", "kbps", kbps)
 }
 
+// Restart requests a relaunch of the current ffmpeg process so the per-launch
+// argv callback re-resolves live state — the geometry watchdog calls this when
+// the game window's rect changed under a running capture, leaving the encode
+// with a stale crop. Same mechanism as SetBitrate: the run loop notices the
+// generation bump and restarts without backoff. No-op when not running — the
+// next Start resolves fresh argv anyway.
+func (s *Supervisor) Restart(reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel == nil {
+		return
+	}
+	s.gen++ // run loop notices and restarts the process
+	s.log.Info("restart requested", "reason", reason)
+}
+
 // keyframeRestartMinUptime exempts freshly spawned processes from
 // ForceKeyframe: their opening IDR is at most this old (or still in flight),
 // so restarting again would only widen the stream gap. A request that lands

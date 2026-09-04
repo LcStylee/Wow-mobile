@@ -206,11 +206,13 @@ WM.OnInit(function()
 	WM.OutOfCombat(function() ReflowParty(WM.Viewport.HeightPx()) end)
 
 	-- The client edge rail's Esc opens GameMenuFrame (Logout/Quit are
-	-- protected flows we must not rebuild). Scale it to thumb size and center
-	-- it in the world square; ToggleGameMenu only Show()s the frame, so a
-	-- one-time anchor sticks.
+	-- protected flows we must not rebuild). Scale it to thumb size — capped
+	-- to the square (= band) width like every boosted frame, so it can never
+	-- overhang the streamed crop — and center it in the world square;
+	-- ToggleGameMenu only Show()s the frame, so a one-time anchor sticks.
 	WM.OutOfCombat(function()
-		GameMenuFrame:SetScale(1.8)
+		GameMenuFrame:SetScale(math.min(1.8,
+			WM.WorldSquare:GetWidth() / GameMenuFrame:GetWidth()))
 		GameMenuFrame:ClearAllPoints()
 		GameMenuFrame:SetPoint("CENTER", WM.WorldSquare, "CENTER", 0, 0)
 	end)
@@ -253,6 +255,18 @@ WM.OnInit(function()
 	--   * WorldStateScoreFrame — the BG scoreboard is read-only rows; nothing
 	--     on it needs a touch target beyond its close button, and rebuilding a
 	--     40-row stat table adds no play value on a phone.
+	--   * BattlefieldFrame — battlemaster BG queueing: a zone list plus
+	--     Join/Group Join/Cancel buttons (hit-rect padded below). Without the
+	--     fit this UIPanel opens ShowUIPanel-anchored at UIParent's LEFT edge —
+	--     in landscape band mode that is the left rail, fully OUTSIDE the
+	--     streamed crop, so the flow would look dead on the phone with a panel
+	--     left open. The square fit centers it inside the band in both modes.
+	--   * GuildRegistrarFrame — the guild-charter purchase panel (guild
+	--     master's gossip option): a name edit box plus Purchase/Cancel/
+	--     Goodbye buttons (hit-rect padded below), used once per guild ever.
+	--     Same hazard as BattlefieldFrame: a default-anchored UIPanel that
+	--     would otherwise open at the window's LEFT edge, outside the
+	--     landscape band crop.
 	--   * SettingsPanel (macro/keybinding panels below likewise) — options,
 	--     macros and keybindings are desk-at-the-PC configuration surfaces,
 	--     not phone-play flows; the square fit keeps them fully on-screen (the
@@ -264,6 +278,8 @@ WM.OnInit(function()
 	FitPanelToSquare(_G["PetitionFrame"])
 	FitPanelToSquare(_G["TabardFrame"])
 	FitPanelToSquare(_G["WorldStateScoreFrame"])
+	FitPanelToSquare(_G["BattlefieldFrame"])
+	FitPanelToSquare(_G["GuildRegistrarFrame"])
 	FitPanelToSquare(_G["SettingsPanel"])
 
 	-- Trivially padded hit rects on the boosted-only frames (the TaxiButton
@@ -273,6 +289,10 @@ WM.OnInit(function()
 		"PetitionFrameSignButton", "PetitionFrameRequestButton",
 		"PetitionFrameRenameButton", "PetitionFrameCancelButton",
 		"TabardFrameAcceptButton", "TabardFrameCancelButton",
+		"BattlefieldFrameJoinButton", "BattlefieldFrameGroupJoinButton",
+		"BattlefieldFrameCancelButton",
+		"GuildRegistrarFramePurchaseButton", "GuildRegistrarFrameCancelButton",
+		"GuildRegistrarFrameGoodbyeButton",
 	} do
 		local b = _G[name]
 		if b then b:SetHitRectInsets(-12, -12, -12, -12) end

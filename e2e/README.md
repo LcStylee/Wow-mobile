@@ -13,6 +13,14 @@ a real Chromium against it over real WebRTC. Honest assertions:
    (`input: pointer button` in the server log);
 6. the served `sw.js` / `js/version.js` are version-stamped (cache busting).
 
+A second scenario (`band.spec.js`) gates **band layout** (the band contract,
+docs/ARCHITECTURE.md): the server runs `--layout band` with a landscape
+1280x720 test "window", and the suite asserts the browser decodes exactly the
+centered 9:16 band (`videoWidth x videoHeight == 404x720`, the crop/scale
+chain for real), that the band shows live pixels, and that taps are logged at
+**band-offset window coordinates** — a phone-center tap lands on the window's
+center column (`winX≈640`), a left-edge tap at `bandX≈438`.
+
 The server runs with `--encoder auto` on purpose: the functional encoder
 probe must land on an encoder that actually works on the machine (the
 original field black-screen was `auto` picking compiled-in-but-unrunnable

@@ -203,6 +203,49 @@ func TestCompiledEncoders(t *testing.T) {
 	}
 }
 
+// Band mode: the crop runs FIRST (window client pixels — the band contract's
+// coordinate space), then the scale to the encode geometry, then the pixel
+// format — on every software-frame encoder.
+func TestVideoArgsBandCrop(t *testing.T) {
+	for enc, pixfmt := range map[Encoder]string{NVENC: "nv12", AMF: "nv12", QSV: "nv12", X264: "yuv420p"} {
+		cfg := baseConfig(enc)
+		cfg.Width, cfg.Height = 404, 720
+		cfg.CropRect = &Rect{X: 438, Y: 0, W: 405, H: 720}
+		args := cfg.VideoArgs()
+		vf := argValue(t, args, "-vf")
+		want := "crop=405:720:438:0,scale=404:720:flags=fast_bilinear,format=" + pixfmt
+		if vf != want {
+			t.Errorf("%s band -vf = %q, want %q", enc, vf, want)
+		}
+		if slices.Contains(args, "-filter_complex") {
+			t.Errorf("%s band crop must ride the gdigrab path: %v", enc, args)
+		}
+	}
+	// The design-cap case: a 4K desktop's 1215x2160 band encoded at 1080x1920.
+	cfg := baseConfig(X264)
+	cfg.Width, cfg.Height = 1080, 1920
+	cfg.CropRect = &Rect{X: 1312, Y: 0, W: 1215, H: 2160}
+	if vf := argValue(t, cfg.VideoArgs(), "-vf"); vf != "crop=1215:2160:1312:0,scale=1080:1920:flags=fast_bilinear,format=yuv420p" {
+		t.Errorf("capped band -vf = %q", vf)
+	}
+}
+
+// Band mode with --capture test: testsrc2 must generate the full simulated
+// WINDOW (SourceW x SourceH), not the encode size, so the crop/scale chain is
+// exercised for real — the e2e band scenario depends on this.
+func TestVideoArgsTestSourceBand(t *testing.T) {
+	cfg := baseConfig(X264)
+	cfg.TestSource = true
+	cfg.Width, cfg.Height = 404, 720
+	cfg.SourceW, cfg.SourceH = 1280, 720
+	cfg.CropRect = &Rect{X: 438, Y: 0, W: 405, H: 720}
+	args := cfg.VideoArgs()
+	requireAll(t, args, "testsrc2=size=1280x720:rate=60")
+	if vf := argValue(t, args, "-vf"); vf != "crop=405:720:438:0,scale=404:720:flags=fast_bilinear,format=yuv420p" {
+		t.Errorf("band test-source -vf = %q", vf)
+	}
+}
+
 func TestVideoArgsTestSource(t *testing.T) {
 	cfg := baseConfig(X264)
 	cfg.TestSource = true

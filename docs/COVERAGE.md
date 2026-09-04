@@ -90,8 +90,9 @@ one input.
 | Stable master (hunter) | Rebuilt | Rebuilt | `Stable.lua` — current pet + stable slots as big cells; **tap-tap** swap (`PickupStablePet` + `ClickStablePet`), buy-slot behind a confirm; stranded pet cursors cleared defensively. |
 | Readable objects, books, plaques, letters | Rebuilt | Rebuilt | `Reader.lua` — deck sheet with 34 px text and big Prev/Next page buttons over the ItemText API. Era renders HTML book markup through a themed `SimpleHTML` widget; Vanilla renders the plain 1.12 page text. |
 | Guild/arena petition signing | Boosted | Boosted | `Blizzard.lua` — PetitionFrame fitted to the square, buttons hit-rect padded (Era). |
+| Guild registrar (charter purchase) | Boosted | Boosted | `Blizzard.lua` — `GuildRegistrarFrame` fitted to the square with Purchase/Cancel/Goodbye hit-rect padded in both ports; another default-anchored UIPanel that would otherwise open at the window's LEFT edge, outside the landscape band crop. |
 | Tabard designer | Boosted | Boosted | `Blizzard.lua` — fitted; the tiny arrow cyclers get padded hit rects (Vanilla also *shrinks* them vertically so overlapping rows hit-test deterministically). |
-| Battlemaster / BG queueing | Default | Default | Deliberately untouched — the only NPC flow left at mouse scale. The BG **scoreboard** (`WorldStateScoreFrame`) is Boosted in both. |
+| Battlemaster / BG queueing | Boosted | Default | Era: `BattlefieldFrame` fitted to the square with Join/Group Join/Cancel hit-rect padded (`Blizzard.lua`) — as a default-anchored UIPanel it would open at the window's LEFT edge, outside the landscape band crop, i.e. invisible on the phone. Vanilla: deliberately untouched, the only NPC flow left at mouse scale. The BG **scoreboard** (`WorldStateScoreFrame`) is Boosted in both. |
 
 ## Character panels
 
@@ -174,12 +175,14 @@ one input.
 | Static popups (release, resurrect, summon, duel, bind, delete-item…) | Boosted | Boosted | `Blizzard.lua` — scaled and re-homed; logic untouched. |
 | Tooltips | Boosted | Boosted | Default tooltips parked just above the deck; addon-owned surfaces anchor tooltips above the touched element. |
 | Battleground scoreboard | Boosted | Boosted | `WorldStateScoreFrame` fitted to the square (read-only rows). |
-| Battleground queueing | Default | Default | See NPC interactions — the acknowledged gap. |
+| Battleground queueing | Boosted | Default | See NPC interactions — Era fits `BattlefieldFrame` to the square; Vanilla is the acknowledged gap. |
 
 ## Known honest gaps and platform limits
 
-- **BG queueing** frames are untouched default UI in both ports (the scoreboard is
-  boosted). Everything else interactive is rebuilt or boosted.
+- **BG queueing** frames are untouched default UI on Vanilla (the scoreboard is
+  boosted; Era boosts the `BattlefieldFrame` queue panel too, since a
+  default-anchored panel would open outside the landscape band crop).
+  Everything else interactive is rebuilt or boosted.
 - **Rolls in flight across `/reload`** cannot be re-rendered (no roll-ID
   enumerator on classic clients) — same limitation as the default UI.
 - **Vanilla (1.12) API ceilings**, all noted in module headers and, where

@@ -118,21 +118,28 @@ var extendedVKs = map[uint16]bool{
 	0xA5: true, // VK_RMENU
 }
 
-// Injector maps normalized protocol coordinates to the tracked WoW window and
+// Injector maps normalized protocol coordinates to the tracked WoW window —
+// under band layout, to the centered 9:16 band inside it (TargetRect; the
+// exact rect the capture crops, read from the same live client rect) — and
 // injects via SendInput. It enforces PROTOCOL.md safety rule 1: events that
 // create state (downs, moves, wheel) require the game window to be
 // foreground — otherwise it requests focus and reports the event dropped.
 // Releases always inject so nothing can stay stuck.
 type Injector struct {
-	win *window.Tracker
-	log *slog.Logger
+	win  *window.Tracker
+	band bool // band layout: map into the centered 9:16 band of a landscape window
+	log  *slog.Logger
 
 	mu          sync.Mutex
 	lastDropLog time.Time // throttles the not-foreground log line
 }
 
-func New(win *window.Tracker, log *slog.Logger) *Injector {
-	return &Injector{win: win, log: log}
+// New creates the injector. band selects the band-contract mapping: phone
+// coordinates land inside the centered 9:16 band of a landscape client area,
+// computed per event from the live rect — the same formula the capture crop
+// used, so touch stays aligned with the stream across window resizes.
+func New(win *window.Tracker, band bool, log *slog.Logger) *Injector {
+	return &Injector{win: win, band: band, log: log}
 }
 
 // requireForeground implements the focus-or-drop rule for state-entering
@@ -255,22 +262,22 @@ func (inj *Injector) Key(vk uint16, down bool) error {
 	return callSendInput(1, unsafe.Pointer(&in))
 }
 
-// absoluteCoords converts normalized client-area coordinates (0..65535 per
+// absoluteCoords converts normalized stream coordinates (0..65535 per
 // PROTOCOL.md) to MOUSEEVENTF_ABSOLUTE|VIRTUALDESK coordinates (0..65535
 // across the whole virtual desktop, which may span monitors and have a
-// negative origin).
+// negative origin). The mapping target is the live client rect — or, under
+// band layout, the centered 9:16 band inside it (TargetRect), the exact
+// region the capture is cropping.
 func (inj *Injector) absoluteCoords(nx, ny uint16) (int32, int32, error) {
 	rc, err := inj.win.ClientRect()
 	if err != nil {
 		return 0, 0, err
 	}
-	if rc.W < 2 || rc.H < 2 {
-		return 0, 0, fmt.Errorf("wininput: degenerate client rect %+v", rc)
+	target := TargetRect(rc, inj.band)
+	if target.W < 2 || target.H < 2 {
+		return 0, 0, fmt.Errorf("wininput: degenerate mapping target %+v", target)
 	}
-	// Pixel-index convention per PROTOCOL.md: px = round(x/65535*(W-1)).
-	// The client sends continuous fractions; the difference is sub-pixel.
-	px := rc.X + int(uint32(nx)*uint32(rc.W-1)+32767)/65535
-	py := rc.Y + int(uint32(ny)*uint32(rc.H-1)+32767)/65535
+	px, py := MapNormalized(nx, ny, target)
 
 	vx := getSystemMetrics(smXVirtualScreen)
 	vy := getSystemMetrics(smYVirtualScreen)

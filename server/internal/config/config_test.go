@@ -110,3 +110,20 @@ func TestParseRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestLayoutFlag(t *testing.T) {
+	// Default is auto (resolved later by client type).
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.Layout != LayoutAuto {
+		t.Fatalf("default layout = %q err=%v, want auto", cfg.Layout, err)
+	}
+	for _, v := range []string{LayoutBand, LayoutPortrait, LayoutAuto} {
+		cfg, err := Parse([]string{"--layout", v}, io.Discard)
+		if err != nil || cfg.Layout != v {
+			t.Fatalf("--layout %s: got %q err=%v", v, cfg.Layout, err)
+		}
+	}
+	if _, err := Parse([]string{"--layout", "sideways"}, io.Discard); err == nil {
+		t.Fatal("--layout sideways must be rejected")
+	}
+}

@@ -116,7 +116,6 @@ Section "WoW Mobile (required)" SecMain
   ; above): no extra plugins, and no console windows flashing.
   ; /SD IDOK makes silent (/S) installs close-and-continue, matching the
   ; unattended-upgrade expectation.
-checkRunning:
   nsExec::ExecToStack '"$SYSDIR\cmd.exe" /c tasklist /NH /FI "IMAGENAME eq wowstreamd.exe" | "$SYSDIR\find.exe" /i "wowstreamd.exe"'
   Pop $0 ; find.exe exit code: 0 = a wowstreamd.exe process exists
   Pop $1 ; matched line (unused)

@@ -89,8 +89,10 @@ func measureFitResolution() (w, h, workW, workH int, ok bool) {
 }
 
 // newPlatform locates the WoW window up front (failing fast with guidance if
-// the game is not running) and wires the Win32 injector.
-func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
+// the game is not running) and wires the Win32 injector. band selects the
+// band-contract input mapping (phone coordinates land in the centered 9:16
+// band of a landscape client area — the exact rect the capture crops).
+func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, error) {
 	makeProcessDPIAware(log) // before any window geometry is read
 
 	tracker, err := window.NewTracker(cfg.WindowTitle)
@@ -103,33 +105,33 @@ func newPlatform(cfg *config.Config, log *slog.Logger) (*platform, error) {
 	}
 	log.Info("found game window", "client_rect", fmt.Sprintf("%dx%d at (%d,%d)", rc.W, rc.H, rc.X, rc.Y))
 	// A client-size/--resolution mismatch is NOT warned about here: main's
-	// per-launch geometry check (capture.EncodeSize via plat.clientSize) owns
+	// per-launch geometry check (capture.EncodeSize via plat.clientRect) owns
 	// that — it adapts the encode to the actual window, updates the hello
 	// geometry, and surfaces the mismatch once on the log and the dashboard
 	// warning row, staying accurate across mid-run resizes.
 
 	// The ddagrab decision is re-evaluated before every ffmpeg launch (crash
-	// recovery, bitrate/keyframe restarts), so a moved or resized window is
-	// re-cropped on the next restart; only a move during one process's
-	// lifetime shifts the crop until then — a non-issue for the intended
-	// borderless fixed-position window. lastReason makes the closure log only
+	// recovery, bitrate/keyframe restarts — and the geometry watchdog's
+	// relaunch, which notices a moved or resized window within seconds and
+	// forces exactly such a restart, so a ddagrab crop never keeps framing
+	// stale desktop pixels for long). lastReason makes the closure log only
 	// when the decision changes, not on every routine restart; it needs no
 	// lock because the closure's sole caller is the video supervisor's run
 	// goroutine (keyframe restarts would otherwise spam identical lines).
 	lastReason := "\x00never-logged" // sentinel unequal to any real reason
 	return &platform{
 		newInjector: func() (input.Injector, error) {
-			return wininput.New(tracker, log), nil
+			return wininput.New(tracker, band, log), nil
 		},
-		clientSize: func() (int, int, bool) {
+		clientRect: func() (window.Rect, bool) {
 			rc, err := tracker.ClientRect()
 			if err != nil {
-				return 0, 0, false
+				return window.Rect{}, false
 			}
-			return rc.W, rc.H, true
+			return rc, true
 		},
-		captureRect: func(encW, encH int) (*capture.Rect, int) {
-			crop, idx, reason := ddagrabTarget(tracker, encW, encH)
+		captureRect: func(encW, encH int, subRect *capture.Rect) (*capture.Rect, int) {
+			crop, idx, reason := ddagrabTarget(tracker, encW, encH, subRect)
 			if reason != lastReason {
 				lastReason = reason
 				if reason == "" {
@@ -197,35 +199,49 @@ func newWindowSizeEnforcer(tracker *window.Tracker, log *slog.Logger) func(int, 
 // ddagrabTarget decides whether NVENC's zero-copy ddagrab path is usable for
 // the window's current geometry against the encW x encH frame the encoder
 // will produce (already adapted to the live client rect by capture.EncodeSize
-// in main's argv callback, so a mismatched-but-even window still gets the
-// zero-copy path at its own size). On success it returns the crop rect in the
-// containing DXGI output's local coordinate space plus that output's ddagrab
-// output_idx and an empty reason; otherwise a human-readable reason for
-// taking the gdigrab fallback (crop is then nil).
-func ddagrabTarget(tracker *window.Tracker, encW, encH int) (crop *capture.Rect, outputIdx int, reason string) {
+// — or the band crop, delivered here as subRect — in main's argv callback, so
+// a mismatched-but-even window still gets the zero-copy path at its own
+// size). subRect, when non-nil, is a CLIENT-LOCAL sub-rectangle (band mode's
+// centered 9:16 band): ddagrab crops at grab time, so a band matching the
+// encode size exactly rides the zero-copy path too — a scaled or odd-width
+// band falls back to gdigrab's crop+scale chain. On success it returns the
+// crop rect in the containing DXGI output's local coordinate space plus that
+// output's ddagrab output_idx and an empty reason; otherwise a human-readable
+// reason for taking the gdigrab fallback (crop is then nil).
+func ddagrabTarget(tracker *window.Tracker, encW, encH int, subRect *capture.Rect) (crop *capture.Rect, outputIdx int, reason string) {
 	rc, err := tracker.ClientRect()
 	if err != nil {
 		return nil, 0, "window geometry unavailable: " + err.Error()
 	}
-	// The ddagrab filter graph has no scaler — the crop IS the encoded frame
-	// (capture.Config.CaptureRect invariant) — so a client area that differs
-	// from the encode size (an odd-sized window even-floored by EncodeSize,
-	// or a resize since the argv snapshot) must go through gdigrab, whose
-	// scale filter resizes to the advertised geometry. Cropping encW x encH
-	// here instead would frame desktop pixels around a smaller window, cut a
-	// larger one, or run past the monitor edge and fail outright — the
-	// black-frames-with-working-clicks failure.
-	if rc.W != encW || rc.H != encH {
-		return nil, 0, fmt.Sprintf("window client area %dx%d differs from the %dx%d encode size",
-			rc.W, rc.H, encW, encH)
+	eff := rc
+	if subRect != nil {
+		// Guard against a stale band (the window changed between main's frame
+		// decision and this launch): the crop must lie inside the client area.
+		if subRect.X < 0 || subRect.Y < 0 || subRect.X+subRect.W > rc.W || subRect.Y+subRect.H > rc.H {
+			return nil, 0, fmt.Sprintf("band crop %dx%d at (%d,%d) no longer fits the %dx%d client area",
+				subRect.W, subRect.H, subRect.X, subRect.Y, rc.W, rc.H)
+		}
+		eff = window.Rect{X: rc.X + subRect.X, Y: rc.Y + subRect.Y, W: subRect.W, H: subRect.H}
 	}
-	// Resolve the monitor output actually containing the window — on any
+	// The ddagrab filter graph has no scaler — the crop IS the encoded frame
+	// (capture.Config.CaptureRect invariant) — so a capture rect that differs
+	// from the encode size (an odd-sized window or band even-floored, a
+	// design-capped band, or a resize since the argv snapshot) must go
+	// through gdigrab, whose crop/scale filters produce the advertised
+	// geometry. Cropping encW x encH here instead would frame desktop pixels
+	// around a smaller window, cut a larger one, or run past the monitor edge
+	// and fail outright — the black-frames-with-working-clicks failure.
+	if eff.W != encW || eff.H != encH {
+		return nil, 0, fmt.Sprintf("capture rect %dx%d differs from the %dx%d encode size",
+			eff.W, eff.H, encW, encH)
+	}
+	// Resolve the monitor output actually containing the rect — on any
 	// monitor of the default adapter, primary or not — and translate to its
 	// local space: ddagrab's offset_x/offset_y are relative to the captured
 	// output's top-left corner, not to the virtual desktop.
-	idx, desktop, err := window.LocateOutput(rc)
+	idx, desktop, err := window.LocateOutput(eff)
 	if err != nil {
 		return nil, 0, err.Error()
 	}
-	return &capture.Rect{X: rc.X - desktop.X, Y: rc.Y - desktop.Y, W: rc.W, H: rc.H}, idx, ""
+	return &capture.Rect{X: eff.X - desktop.X, Y: eff.Y - desktop.Y, W: eff.W, H: eff.H}, idx, ""
 }

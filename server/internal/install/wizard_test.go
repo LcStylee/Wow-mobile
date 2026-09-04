@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LcStylee/Wow-mobile/server/internal/config"
 	"github.com/LcStylee/Wow-mobile/server/internal/window"
 )
 
@@ -34,6 +35,7 @@ type fakeSys struct {
 	workW, workH  int  // PrimaryWorkArea; 0,0 = not measurable (the default)
 	decorW        int  // WindowDecorationExtents; 0 = the conservative fallback
 	decorH        int
+	deskW, deskH  int // PrimaryDesktopResolution; 0,0 = not measurable (the default)
 }
 
 func (f *fakeSys) RegistryWowPath() (string, bool) { return f.registry, f.registry != "" }
@@ -54,6 +56,9 @@ func (f *fakeSys) RunWingetInstall(io.Writer) error {
 func (f *fakeSys) ProbeEncoder(string) (string, bool) { return f.encoder, f.encoder != "" }
 func (f *fakeSys) PrimaryWorkArea() (int, int, bool) {
 	return f.workW, f.workH, f.workW > 0 && f.workH > 0
+}
+func (f *fakeSys) PrimaryDesktopResolution() (int, int, bool) {
+	return f.deskW, f.deskH, f.deskW > 0 && f.deskH > 0
 }
 func (f *fakeSys) WindowDecorationExtents() (int, int) {
 	if f.decorW > 0 || f.decorH > 0 {
@@ -211,7 +216,7 @@ func TestRunAllSatisfiedSkipsEveryPrompt(t *testing.T) {
 	for _, wantLine := range []string{
 		"[1/5] World of Warcraft ..... found: " + wantExe + " (Classic Era)",
 		"[2/5] WowMobile addon ....... installed (3 files, up to date)",
-		"[3/5] Portrait resolution ... Config.wtf OK (1080x1920 windowed)",
+		"[3/5] Window settings ....... Config.wtf OK (1080x1920 windowed)",
 		"[4/5] FFmpeg ................ found: h264_nvenc available",
 		"[5/5] Game running .......... window found",
 	} {
@@ -471,12 +476,13 @@ func TestLocateWowAcceptsPastedExeAndAsksClientType(t *testing.T) {
 }
 
 // A 1.12 private-server dir (Wow.exe): the WowMobile_Vanilla port is
-// installed (never the Classic Era addon), Config.wtf gets the old
-// gxResolution CVar (and NOT gxWindowedResolution), and the launch step
-// starts the recorded exe.
+// installed (never the Classic Era addon), --layout auto resolves to BAND —
+// Config.wtf gets the native landscape session (gxResolution = the desktop
+// resolution; never a portrait fit), the window is NEVER resized, and the
+// launch step starts the recorded exe.
 func TestLegacyClientFlow(t *testing.T) {
 	dir := makeGameDir(t, "Wow.exe", false)
-	sys := &fakeSys{pathFFmpeg: "ff", launchShows: true}
+	sys := &fakeSys{pathFFmpeg: "ff", launchShows: true, deskW: 1920, deskH: 1080}
 	p := &scriptPrompter{t: t, confirms: []bool{true, true}} // create Config.wtf, launch
 	opts := baseOpts(t, dir, sys, p)
 
@@ -486,6 +492,9 @@ func TestLegacyClientFlow(t *testing.T) {
 	}
 	if res.ClientType != ClientTypeLegacy {
 		t.Fatalf("Wow.exe not detected as legacy: %+v", res)
+	}
+	if res.Layout != config.LayoutBand {
+		t.Fatalf("auto layout for a legacy client must resolve to band, got %q", res.Layout)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile")); !os.IsNotExist(err) {
 		t.Fatal("Classic Era addon must not be installed for a 1.12 client")
@@ -498,15 +507,24 @@ func TestLegacyClientFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !SettingsSatisfied(cfg, PortraitSettingsFor(ClientTypeLegacy, 1080, 1920)) {
-		t.Fatalf("legacy Config.wtf wrong: %q", cfg)
+	if !SettingsSatisfied(cfg, BandSettingsFor(ClientTypeLegacy, 1920, 1080, true)) {
+		t.Fatalf("legacy band Config.wtf wrong: %q", cfg)
 	}
-	// Belt and braces on legacy: BOTH resolution CVar spellings are written
-	// (windowed 1.12 ignores gxResolution — fullscreen-only there — and some
-	// custom builds honor either name; unknown CVars are harmlessly kept).
-	if !bytes.Contains(cfg, []byte(`SET gxResolution "1080x1920"`)) ||
-		!bytes.Contains(cfg, []byte(`SET gxWindowedResolution "1080x1920"`)) {
-		t.Fatalf("legacy Config.wtf must carry both resolution CVars: %q", cfg)
+	// Band contract: the NATIVE landscape desktop resolution lands in
+	// gxResolution ONLY — never gxWindowedResolution (custom builds that honor
+	// it would get a window guaranteed not to fit the work area, pushing the
+	// band's bottom rows off-screen); no portrait size anywhere, and no
+	// gxMaximize forcing.
+	if !bytes.Contains(cfg, []byte(`SET gxResolution "1920x1080"`)) {
+		t.Fatalf("legacy band Config.wtf must carry the desktop resolution in gxResolution: %q", cfg)
+	}
+	if bytes.Contains(cfg, []byte("1080x1920")) || bytes.Contains(cfg, []byte("gxMaximize")) ||
+		bytes.Contains(cfg, []byte("gxWindowedResolution")) {
+		t.Fatalf("band layout must not force a portrait size, gxMaximize, or a windowed resolution: %q", cfg)
+	}
+	// Band layout retires window-size enforcement entirely.
+	if len(sys.resizeCalls) != 0 {
+		t.Fatalf("band layout must never resize the window, got %v", sys.resizeCalls)
 	}
 	if len(sys.launched) != 1 || sys.launched[0] != filepath.Join(dir, "Wow.exe") {
 		t.Fatalf("launch wrong: %v", sys.launched)
@@ -517,6 +535,101 @@ func TestLegacyClientFlow(t *testing.T) {
 	}
 	if !strings.Contains(text, LegacyAddonNote) {
 		t.Fatalf("legacy addon note missing:\n%s", text)
+	}
+	if !strings.Contains(text, "band layout") {
+		t.Fatalf("band layout line missing from the wizard output:\n%s", text)
+	}
+}
+
+// --layout portrait on a legacy client keeps the classic behavior: the
+// portrait fit is written to Config.wtf (both CVar spellings) and the window
+// is resized after launch.
+func TestLegacyClientExplicitPortraitLayout(t *testing.T) {
+	dir := makeGameDir(t, "Wow.exe", false)
+	sys := &fakeSys{pathFFmpeg: "ff", launchShows: true, resizeMsg: "resized WoW window to 1080x1920"}
+	p := &scriptPrompter{t: t, confirms: []bool{true, true}} // create Config.wtf, launch
+	opts := baseOpts(t, dir, sys, p)
+	opts.Layout = config.LayoutPortrait
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Layout != config.LayoutPortrait {
+		t.Fatalf("explicit portrait layout must stand, got %q", res.Layout)
+	}
+	cfg, err := os.ReadFile(filepath.Join(dir, "WTF", "Config.wtf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !SettingsSatisfied(cfg, PortraitSettingsFor(ClientTypeLegacy, 1080, 1920)) {
+		t.Fatalf("legacy portrait Config.wtf wrong: %q", cfg)
+	}
+	if !bytes.Contains(cfg, []byte(`SET gxResolution "1080x1920"`)) ||
+		!bytes.Contains(cfg, []byte(`SET gxWindowedResolution "1080x1920"`)) {
+		t.Fatalf("legacy portrait Config.wtf must carry both resolution CVars: %q", cfg)
+	}
+	if len(sys.resizeCalls) != 1 || sys.resizeCalls[0] != "1080x1920" {
+		t.Fatalf("portrait layout must enforce the window size, got %v", sys.resizeCalls)
+	}
+}
+
+// --layout band on a Classic Era client (band is only the default for
+// legacy): Config.wtf gets a maximized landscape window and no portrait fit,
+// with no resize enforcement.
+func TestEraExplicitBandLayout(t *testing.T) {
+	wow := makeWowDir(t, false)
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true, deskW: 2560, deskH: 1440}
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
+	opts := baseOpts(t, wow, sys, p)
+	opts.Layout = config.LayoutBand
+
+	res, err := Run(opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Layout != config.LayoutBand || res.ClientType != ClientTypeClassicEra {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	// Band mode leaves Width/Height as the design fallback frame only.
+	if res.Width != window.DesignW || res.Height != window.DesignH {
+		t.Fatalf("band fallback frame = %dx%d, want the design space", res.Width, res.Height)
+	}
+	cfg, err := os.ReadFile(filepath.Join(wow, "WTF", "Config.wtf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !SettingsSatisfied(cfg, BandSettingsFor(ClientTypeClassicEra, 2560, 1440, true)) {
+		t.Fatalf("era band Config.wtf wrong: %q", cfg)
+	}
+	if !bytes.Contains(cfg, []byte(`SET gxMaximize "1"`)) || bytes.Contains(cfg, []byte("gxWindowedResolution")) {
+		t.Fatalf("era band must maximize and not pin a windowed resolution: %q", cfg)
+	}
+	if len(sys.resizeCalls) != 0 {
+		t.Fatalf("band layout must never resize the window, got %v", sys.resizeCalls)
+	}
+}
+
+// Band layout with an unmeasurable desktop omits the resolution CVars — the
+// client keeps its own remembered landscape mode, which the band adapts to.
+func TestLegacyBandUnmeasurableDesktop(t *testing.T) {
+	dir := makeGameDir(t, "Wow.exe", false)
+	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
+	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
+	opts := baseOpts(t, dir, sys, p)
+
+	if _, err := Run(opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	cfg, err := os.ReadFile(filepath.Join(dir, "WTF", "Config.wtf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(cfg, []byte("gxResolution")) || bytes.Contains(cfg, []byte("gxWindowedResolution")) {
+		t.Fatalf("unmeasurable desktop must omit resolution CVars: %q", cfg)
+	}
+	if !bytes.Contains(cfg, []byte(`SET gxWindow "1"`)) || !bytes.Contains(cfg, []byte(`SET checkAddonVersion "0"`)) {
+		t.Fatalf("band Config.wtf must still keep windowed mode and out-of-date addons: %q", cfg)
 	}
 }
 

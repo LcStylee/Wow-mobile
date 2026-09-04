@@ -17,9 +17,13 @@
 
 local _, WM = ...
 
+-- Bottom-right pins to the BAND (Band.lua), not the window: in landscape
+-- mode the deck must end at the band's right edge — everything outside the
+-- crop is invisible on the phone but would still eat taps. In portrait mode
+-- the band frame covers the window, so this is the pre-band layout verbatim.
 local deck = CreateFrame("Frame", "WowMobileDeck", UIParent)
 deck:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
-deck:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+deck:SetPoint("BOTTOMRIGHT", WM.BandFrame or UIParent, "BOTTOMRIGHT", 0, 0)
 deck:SetFrameStrata("LOW")
 deck:EnableMouse(false)
 WM.Deck = deck

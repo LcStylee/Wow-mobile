@@ -3,23 +3,33 @@
 Play **your own World of Warcraft Classic Era** on your phone — streamed live from
 your Windows gaming PC, with the entire UI rebuilt for portrait touch.
 
-Your PC runs the game in a portrait 9:16 window sized to fit your monitor
-(the UI is designed in 1080x1920 and scales down). The `WowMobile` addon
-reshapes the interface into a phone layout: the 3D world in a square viewport up
-top, and a "control deck" of thumb-sized action bars, unit frames, bags, and
-panels below. `wowstreamd` captures that window with FFmpeg, streams it over
-WebRTC on your LAN, and injects your touches back into the game as ordinary
-mouse and keyboard input. The phone side is a zero-install web app you add to
-your home screen.
+The `WowMobile` addon reshapes the interface into a phone layout (designed in
+1080x1920 and scaled to fit): the 3D world in a square viewport up top, and a
+"control deck" of thumb-sized action bars, unit frames, bags, and panels below.
+`wowstreamd` captures the game with FFmpeg, streams it over WebRTC on your LAN,
+and injects your touches back into the game as ordinary mouse and keyboard
+input. The phone side is a zero-install web app you add to your home screen.
+
+There are two window layouts, picked automatically by client type:
+
+- **Band** (the default for 1.12-engine private-server clients): the game keeps
+  its normal **landscape** window — resize or maximize it freely — the addon
+  confines the whole phone UI to a centered 9:16 band, and the server crops and
+  streams just that band. 1.12 clients reject portrait render resolutions, so
+  the band is how they get a portrait phone experience anyway.
+- **Portrait** (the default for Classic Era): the game runs in a portrait 9:16
+  window sized to fit your monitor and is captured whole.
 
 ```
-PC:    WoW Classic (portrait window) + WowMobile addon
-       └─ wowstreamd: FFmpeg capture → H.264 → WebRTC ⇄ touch input → SendInput
+PC:    WoW Classic + WowMobile addon
+        band:     [ ██ | 9:16 phone UI | ██ ]  landscape window, center band streamed
+        portrait: [ 9:16 phone UI ]            portrait window, captured whole
+       └─ wowstreamd: FFmpeg capture/crop → H.264 → WebRTC ⇄ touch input → SendInput
 Phone: browser PWA — fullscreen video + gesture layer (joystick, camera drag, taps)
 ```
 
-The full picture — component boundaries, the portrait/square rationale, the
-encoder pipeline, and the touch-mapping table — is in
+The full picture — component boundaries, the band contract and portrait/square
+rationale, the encoder pipeline, and the touch-mapping table — is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The client⇄server wire format is
 specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
@@ -94,8 +104,8 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
    from source ([docs/SETUP.md](docs/SETUP.md#manual-setup-advanced)).
 2. **Launch WoW Mobile from the Start Menu.** No terminal window — it walks
    you through everything in normal Windows dialogs (finds your WoW install or
-   shows a folder picker, installs the bundled WowMobile addon, sets the
-   portrait window, installs FFmpeg if needed, offers to launch the game), then
+   shows a folder picker, installs the bundled WowMobile addon, configures the
+   window layout, installs FFmpeg if needed, offers to launch the game), then
    opens a status page in your browser with a **big QR code** and drops an icon
    into the system tray.
 3. **Scan the QR code** with your phone (same Wi-Fi), accept the self-signed
@@ -167,8 +177,10 @@ about how any third party treats your account.
 Yes — streaming, touch input, the dashboard, and the phone client all work
 identically. The wizard's folder picker accepts any folder containing
 `Wow.exe`/`VanillaFixes.exe`, or you can pick **any** game `.exe` yourself
-(`--game-exe` from the command line). It even writes the right `Config.wtf`
-CVars for 1.12 (`gxResolution` instead of `gxWindowedResolution`). The touch
+(`--game-exe` from the command line). 1.12 clients get the **band layout** by
+default — the game keeps a native landscape window (1.12 rejects portrait
+render resolutions) and the server streams the centered 9:16 band — with the
+right `Config.wtf` CVars written automatically. The touch
 UI comes along too: the Classic Era addon (Interface `11507`) cannot load on
 1.12, so the wizard installs **`WowMobile_Vanilla`** — a dedicated 1.12
 (Lua 5.0) port of the addon — instead; enable **WoW Mobile (Vanilla)** once at

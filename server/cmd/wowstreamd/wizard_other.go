@@ -10,7 +10,8 @@ import (
 )
 
 // runFirstRunWizard is a no-op off Windows: the installer wizard configures a
-// Windows gaming PC, and newPlatform refuses to stream elsewhere anyway.
-func runFirstRunWizard(_ *config.Config, _ *appUI, _ *hoststatus.Status, _ *slog.Logger) error {
-	return nil
+// Windows gaming PC, and newPlatform refuses to stream elsewhere anyway. The
+// empty layout tells main to resolve --layout auto itself (fallbackLayout).
+func runFirstRunWizard(_ *config.Config, _ *appUI, _ *hoststatus.Status, _ *slog.Logger) (string, error) {
+	return "", nil
 }

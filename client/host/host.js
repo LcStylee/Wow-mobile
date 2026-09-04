@@ -85,6 +85,9 @@
 
     $("encoder").textContent = st.encoder || "probing…";
     $("resolution").textContent = st.resolution || "–";
+    // Live stream framing (band contract): e.g. "layout: center band
+    // 1215x2160 of 3840x2160 (encoded at 1080x1920)".
+    $("layout").textContent = st.layout || "–";
     $("client-type").textContent = CLIENT_TYPE_LABELS[st.clientType] || "–";
     // The change-game affordance only makes sense once a game was chosen.
     $("game-hint").hidden = !st.clientType;

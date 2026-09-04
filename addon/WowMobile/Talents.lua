@@ -29,7 +29,10 @@ local function Reflow()
 		WM.WorldSquare:GetHeight() / f:GetHeight())
 	f:SetScale(scale)
 	f:ClearAllPoints()
-	f:SetPoint("TOP", UIParent, "TOP", 0, 0)
+	-- Top-center of the SQUARE (== band top-center), not UIParent: in
+	-- landscape band mode the window's top-center coincides with the band's,
+	-- but anchoring to the square keeps the confinement explicit.
+	f:SetPoint("TOP", WM.WorldSquare, "TOP", 0, 0)
 	-- The close button lives inside the scaled frame: compensate so it stays
 	-- ~100 physical px.
 	closeButton:SetSize(WM.Px(100) / scale, WM.Px(88) / scale)

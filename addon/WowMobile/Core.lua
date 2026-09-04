@@ -34,11 +34,15 @@ WM.Colors = {
 --------------------------------------------------------------------------------
 -- Design-space conversion
 -- All layout constants in this addon are written in *physical pixels* of the
--- 1080-wide streamed window. UIParent:GetWidth() is that same 1080 px expressed
--- in UI units (uiScale-dependent), so one factor converts design px -> UI units
--- and keeps physical touch-target sizes constant regardless of the uiScale
--- cvar. Recomputed on scale/resolution changes; frames built with the old
--- factor keep their size until /reload (Config prints a hint when scale moves).
+-- 1080-wide streamed design space. That space is the BAND — the full window
+-- in portrait mode, the centered 9:16 band in landscape mode (Band.lua) — so
+-- the factor converts design px against the band's width in UI units and
+-- keeps physical touch-target sizes constant regardless of the uiScale cvar.
+-- Band.lua loads right after this file and immediately corrects the initial
+-- full-window factor below, before any other module calls WM.Px. Recomputed
+-- on scale/resolution/mode changes; frames built with the old factor keep
+-- their size until /reload (Config prints a hint on scale changes; a live
+-- MODE flip raises the persistent setup banner below via Band.Update).
 --------------------------------------------------------------------------------
 
 local pxFactor = UIParent:GetWidth() / 1080
@@ -48,7 +52,8 @@ function WM.Px(px)
 end
 
 function WM.UpdatePxFactor()
-	pxFactor = UIParent:GetWidth() / 1080
+	local band = WM.Band
+	pxFactor = ((band and band.width) or UIParent:GetWidth()) / 1080
 end
 
 --------------------------------------------------------------------------------
@@ -91,14 +96,18 @@ local function ShowErrorBanner(file, msg)
 		errorBanner.text:SetWordWrap(true)
 	end
 	-- Top of the deck = bottom of the world square; before Viewport has run
-	-- (or if Viewport itself failed) fall back to the top of the screen.
+	-- (or if Viewport itself failed) fall back to the top of the band — the
+	-- banner must stay inside the streamed crop to be visible on the phone —
+	-- and to the screen top only if Band itself is what failed.
 	errorBanner:ClearAllPoints()
-	if WM.WorldSquare then
-		errorBanner:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
-		errorBanner:SetPoint("TOPRIGHT", WM.WorldSquare, "BOTTOMRIGHT", 0, 0)
+	local host = WM.WorldSquare
+	if host then
+		errorBanner:SetPoint("TOPLEFT", host, "BOTTOMLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", host, "BOTTOMRIGHT", 0, 0)
 	else
-		errorBanner:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-		errorBanner:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+		host = WM.BandFrame or UIParent
+		errorBanner:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", host, "TOPRIGHT", 0, 0)
 	end
 	errorBanner.text:SetText(string.format(
 		"WoW Mobile hit an error in %s: %s — /wm errors for details, /wm reload to retry",
@@ -125,6 +134,79 @@ end
 -- /wm status. The tables are live; callers must not mutate them.
 function WM.GetErrors()
 	return moduleErrorOrder, moduleErrors
+end
+
+--------------------------------------------------------------------------------
+-- Setup banner ("Finish setup — reload UI")
+-- The Vanilla port's pattern: a persistent tap-to-reload strip for conditions
+-- a chat line cannot surface on a phone — today that is a live landscape<->
+-- portrait mode flip (Band.lua), after which every widget sized with the old
+-- WM.Px factor is stale until /reload (overlapping tap targets in the band).
+-- Sized with a FRESH measurement of the band width on every Show — WM.Px's
+-- cached factor is exactly what a raiser may distrust — and anchored to the
+-- bottom of the band so it is always inside the streamed crop. Mouse-enabled:
+-- it deliberately swallows taps on the mis-laid-out deck beneath it.
+--------------------------------------------------------------------------------
+
+local setupBanner
+
+-- reason tags who raised the banner (e.g. "band-mode"), so WM.HideSetupBanner
+-- can auto-clear ONLY its caller's own banner (a mode that flaps back leaves
+-- any other raiser's banner standing).
+function WM.ShowSetupBanner(msg, reason)
+	local w = (WM.Band and WM.Band.width) or UIParent:GetWidth()
+	local function px(v) return v * w / 1080 end
+	if not setupBanner then
+		setupBanner = CreateFrame("Frame", "WowMobileSetupBanner", UIParent)
+		setupBanner:SetFrameStrata("FULLSCREEN_DIALOG")
+		setupBanner:EnableMouse(true) -- swallow taps on the stale UI beneath
+		local bg = setupBanner:CreateTexture(nil, "BACKGROUND")
+		bg:SetAllPoints()
+		bg:SetColorTexture(0.10, 0.10, 0.35, 0.97)
+		setupBanner.text = setupBanner:CreateFontString(nil, "OVERLAY")
+		setupBanner.text:SetTextColor(0.95, 0.95, 1)
+		setupBanner.text:SetJustifyH("CENTER")
+		setupBanner.text:SetWordWrap(true)
+		setupBanner.button = CreateFrame("Button", "WowMobileSetupReload", setupBanner)
+		local bbg = setupBanner.button:CreateTexture(nil, "BACKGROUND")
+		bbg:SetAllPoints()
+		bbg:SetColorTexture(1.00, 0.82, 0.00, 1)
+		local bhl = setupBanner.button:CreateTexture(nil, "HIGHLIGHT")
+		bhl:SetAllPoints()
+		bhl:SetColorTexture(1, 1, 1, 0.15)
+		setupBanner.button.label = setupBanner.button:CreateFontString(nil, "OVERLAY")
+		setupBanner.button.label:SetTextColor(0.1, 0.1, 0.1)
+		setupBanner.button.label:SetPoint("CENTER")
+		setupBanner.button:SetScript("OnClick", function() ReloadUI() end)
+	end
+	-- (Re)anchor + (re)size with the live measurement each time it is raised:
+	-- the band frame tracks mode flips, so the strip stays inside the crop.
+	local host = WM.BandFrame or UIParent
+	setupBanner:ClearAllPoints()
+	setupBanner:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, 0)
+	setupBanner:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
+	setupBanner:SetHeight(px(260))
+	setupBanner.text:SetFont(STANDARD_TEXT_FONT, px(30), "")
+	setupBanner.text:ClearAllPoints()
+	setupBanner.text:SetPoint("TOPLEFT", setupBanner, "TOPLEFT", px(20), -px(16))
+	setupBanner.text:SetPoint("TOPRIGHT", setupBanner, "TOPRIGHT", -px(20), -px(16))
+	setupBanner.text:SetText((msg or "WoW Mobile needs a UI reload to finish setting up.")
+		.. " Reloading applies the correct sizes.")
+	setupBanner.button:ClearAllPoints()
+	setupBanner.button:SetPoint("BOTTOM", setupBanner, "BOTTOM", 0, px(16))
+	setupBanner.button:SetSize(px(720), px(140))
+	setupBanner.button.label:SetFont(STANDARD_TEXT_FONT, px(40), "")
+	setupBanner.button.label:SetText("Finish setup — reload UI")
+	setupBanner.reason = reason
+	setupBanner:Show()
+end
+
+-- Hide the setup banner only if it is shown AND was raised for `reason` —
+-- see WM.ShowSetupBanner. No-op in every other case.
+function WM.HideSetupBanner(reason)
+	if setupBanner and setupBanner:IsShown() and setupBanner.reason == reason then
+		setupBanner:Hide()
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -382,7 +464,13 @@ function WM.AnchorTooltip(owner)
 	GameTooltip:SetOwner(owner, "ANCHOR_NONE")
 	GameTooltip:ClearAllPoints()
 	GameTooltip:SetPoint("BOTTOM", owner, "TOP", 0, WM.Px(18))
-	GameTooltip:SetClampedToScreen(true)
+	-- Clamp into the band, not just the window: a tooltip for an owner near
+	-- the band edge must not spill into the side region the stream crops off.
+	if WM.Band then
+		WM.Band.Clamp(GameTooltip)
+	else
+		GameTooltip:SetClampedToScreen(true)
+	end
 end
 
 function WM.AttachTooltip(frame, setter)
@@ -397,11 +485,16 @@ function WM.AttachTooltip(frame, setter)
 end
 
 -- World-object / default tooltips: park them just above the deck, inside the
--- world square, where no finger ever rests.
+-- world square, where no finger ever rests. Band-clamped like the owner
+-- tooltips above (a very wide tooltip centered on a narrow band would
+-- otherwise overhang into the cropped side regions).
 hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tt)
 	tt:ClearAllPoints()
-	local anchor = WM.WorldSquare or UIParent
+	local anchor = WM.WorldSquare or WM.BandFrame or UIParent
 	tt:SetPoint("BOTTOM", anchor, "BOTTOM", 0, WM.Px(12))
+	if WM.Band then
+		WM.Band.Clamp(tt)
+	end
 end)
 
 --------------------------------------------------------------------------------

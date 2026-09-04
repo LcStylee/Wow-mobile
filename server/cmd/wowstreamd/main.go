@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -78,22 +79,28 @@ type appUI struct {
 type platform struct {
 	// newInjector creates the SendInput-backed injector for a session.
 	newInjector func() (input.Injector, error)
-	// clientSize returns the game window's CURRENT client area, ok=false
-	// when it cannot be read (window vanished). Called before every ffmpeg
-	// launch: the encode adapts to the real window when WoW ignored the
-	// configured resolution (capture.EncodeSize), instead of producing the
-	// black-frames-with-working-clicks failure a fixed assumed size gives.
-	clientSize func() (w, h int, ok bool)
-	// captureRect returns the game window's client rect translated into the
-	// local coordinates of the DXGI output (monitor) fully containing it,
-	// plus that output's ddagrab output_idx, when the window is usable for
-	// the zero-copy ddagrab path: client area exactly the encW x encH the
-	// encoder will produce (the ddagrab graph has no scaler), entirely on
-	// one unrotated monitor of the default adapter. Returns nil to fall back
-	// to gdigrab-by-title. Called before every ffmpeg launch so restarts
+	// clientRect returns the game window's CURRENT client rect (screen
+	// position + size), ok=false when it cannot be read (window vanished).
+	// Called before every ffmpeg launch — the encode adapts to the real
+	// window when WoW ignored the configured resolution (capture.EncodeSize),
+	// instead of producing the black-frames-with-working-clicks failure a
+	// fixed assumed size gives — and polled by the geometry watchdog
+	// (geowatch.go), which relaunches the pipeline when the rect drifts from
+	// the running launch's record (position matters only on the ddagrab path,
+	// whose crop is a fixed screen rect).
+	clientRect func() (window.Rect, bool)
+	// captureRect returns the game window's client rect — or, when crop is
+	// non-nil, that CLIENT-LOCAL sub-rectangle of it (band mode's centered
+	// 9:16 band) — translated into the local coordinates of the DXGI output
+	// (monitor) fully containing it, plus that output's ddagrab output_idx,
+	// when the rect is usable for the zero-copy ddagrab path: exactly the
+	// encW x encH the encoder will produce (the ddagrab graph has no
+	// scaler), entirely on one unrotated monitor of the default adapter.
+	// Returns nil to fall back to gdigrab-by-title (with the crop expressed
+	// as a filter instead). Called before every ffmpeg launch so restarts
 	// pick up the window's current position, and only for NVENC — the sole
 	// ddagrab consumer.
-	captureRect func(encW, encH int) (*capture.Rect, int)
+	captureRect func(encW, encH int, crop *capture.Rect) (*capture.Rect, int)
 	// windowTitle returns the game window's exact full title for gdigrab's
 	// FindWindow-based `title=` input (the --window-title flag is only a
 	// substring). Also called before every ffmpeg launch.
@@ -155,8 +162,14 @@ func run(ui *appUI) error {
 		return nil
 	}
 	if cfg.Setup {
-		resolveFitResolution(cfg, nil) // fill Width/Height for the printout
-		window.PrintSetup(os.Stdout, cfg.Width, cfg.Height)
+		// Resolve --layout auto the same way a real run without a wizard
+		// would (explicit flag, --client-type, remembered client type), so
+		// `--setup` on a band-mode setup prints the band instructions — the
+		// portrait steps (a forced 1080x1920-ish window) are exactly what
+		// band mode exists to avoid on a 1.12 client.
+		setupBand := fallbackLayout(cfg, nil) == config.LayoutBand
+		resolveFitResolution(cfg, setupBand, nil) // fill Width/Height for the printout
+		window.PrintSetup(os.Stdout, cfg.Width, cfg.Height, setupBand)
 		return nil
 	}
 
@@ -194,25 +207,40 @@ func run(ui *appUI) error {
 	// needs no game at all (synthetic source), so the wizard is skipped
 	// there too — otherwise the "portable diagnostic mode" would stall on
 	// the locate-game/game-running steps on Windows.
+	layout := ""
 	if cfg.Capture != config.CaptureTest {
-		if err := runFirstRunWizard(cfg, ui, status, log); err != nil {
+		if layout, err = runFirstRunWizard(cfg, ui, status, log); err != nil {
 			return err
 		}
 	}
+	// The wizard resolves --layout auto by the located client type (band for
+	// legacy 1.12-engine clients, portrait for Classic Era); runs without a
+	// wizard (--skip-setup, --capture test, non-Windows dev) resolve it from
+	// the flags and the remembered client type instead.
+	if layout == "" {
+		layout = fallbackLayout(cfg, log)
+	}
+	bandMode := layout == config.LayoutBand
 	// --resolution fit is normally resolved inside the wizard; --skip-setup
 	// (and non-Windows dev runs) still need concrete numbers for capture and
-	// the hello geometry, so measure here as the fallback.
-	resolveFitResolution(cfg, log)
-	status.SetResolution(fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
+	// the hello geometry, so measure here as the fallback. In band mode the
+	// numbers are only the no-window fallback frame — the live band decides
+	// the real encode geometry.
+	resolveFitResolution(cfg, bandMode, log)
+	if bandMode {
+		status.SetResolution("native landscape (9:16 band)")
+	} else {
+		status.SetResolution(fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
+	}
 
 	// --capture test replaces the Windows window platform with the portable
 	// test-pattern stand-in: same encoder/parser/WebRTC path, synthetic input.
 	var plat *platform
 	if cfg.Capture == config.CaptureTest {
 		log.Info("capture source: testsrc2 synthetic pattern (--capture test)")
-		plat = newTestPlatform(cfg, log)
+		plat = newTestPlatform(cfg, bandMode, log)
 	} else {
-		plat, err = newPlatform(cfg, log)
+		plat, err = newPlatform(cfg, bandMode, log)
 		if err != nil {
 			return err
 		}
@@ -260,6 +288,8 @@ func run(ui *appUI) error {
 	// goroutine, plus one pre-stream check below before it starts): no lock.
 	lastWarning := "\x00never-reported" // sentinel unequal to any real state
 	reportGeometry := func(actualW, actualH, encW, encH int, mismatch bool) {
+		// The dashboard's layout line stays truthful in portrait mode too.
+		status.SetLayout(fmt.Sprintf("portrait window %dx%d", encW, encH))
 		warning := ""
 		if mismatch {
 			warning = capture.MismatchWarning(actualW, actualH, cfg.Width, cfg.Height, encW, encH)
@@ -276,14 +306,35 @@ func run(ui *appUI) error {
 				"resolution", fmt.Sprintf("%dx%d", encW, encH))
 		}
 	}
-	// enforceSize runs the direct-window-resize path (Windows window capture
-	// only): a windowed game at the wrong size is resized to the configured
-	// resolution BEFORE the geometry self-heal reads it — CVars cannot size a
-	// windowed 1.12 client, SetWindowPos can. Outcomes surface on the log and
-	// the dashboard's "Game running" step detail; the implementation
-	// self-limits re-attempts, so calling it per launch cannot become a fight.
+	// reportBand is band mode's counterpart: no size to enforce, nothing to
+	// warn about — the live layout line ("center band 1215x2160 of
+	// 3840x2160") goes to the log and the dashboard, and a portrait window
+	// under band layout is called out as the full-window fallback it is.
+	lastBandDesc := "\x00never-reported"
+	reportBand := func(aw, ah int, f window.BandFrame) {
+		desc := window.BandLayoutDescription(aw, ah, f)
+		if desc == lastBandDesc {
+			return
+		}
+		lastBandDesc = desc
+		status.SetLayout(desc)
+		if f.Banded {
+			log.Info("stream layout", "layout", desc)
+		} else {
+			log.Warn("band layout: the game window is portrait — streaming the full window (the band contract only applies to landscape windows)",
+				"window", fmt.Sprintf("%dx%d", aw, ah))
+		}
+	}
+	// enforceSize runs the direct-window-resize path (Windows window capture,
+	// PORTRAIT layout only): a windowed game at the wrong size is resized to
+	// the configured resolution BEFORE the geometry self-heal reads it —
+	// CVars cannot size a windowed 1.12 client, SetWindowPos can. Outcomes
+	// surface on the log and the dashboard's "Game running" step detail; the
+	// implementation self-limits re-attempts, so calling it per launch cannot
+	// become a fight. Band mode retires enforcement outright: any landscape
+	// window is welcome, the band adapts to it.
 	enforceSize := func() {
-		if plat.enforceWindowSize == nil {
+		if bandMode || plat.enforceWindowSize == nil {
 			return
 		}
 		if msg, outcome, acted := plat.enforceWindowSize(cfg.Width, cfg.Height); acted {
@@ -291,34 +342,81 @@ func run(ui *appUI) error {
 			status.SetStep(install.StepRunning, enforceStepState(outcome), msg)
 		}
 	}
-	videoArgv := func(c capture.Config) []string {
-		// Re-read the live client rect at every launch: the encode must frame
-		// the ACTUAL window — a fixed crop of the assumed size grabs desktop
-		// (or off-screen, i.e. black) pixels. Degraded-but-visible beats black.
-		enforceSize()
-		if aw, ah, ok := plat.clientSize(); ok {
-			encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
-			c.Width, c.Height = encW, encH
-			geom.set(encW, encH)
-			reportGeometry(aw, ah, encW, encH, mismatch)
+	// updateFrame re-reads the live client rect and decides the frame for one
+	// ffmpeg launch: the encode must frame the ACTUAL window — a fixed crop
+	// of the assumed size grabs desktop (or off-screen, i.e. black) pixels;
+	// degraded-but-visible beats black. Portrait layout self-heals the whole
+	// frame to the real client area (capture.EncodeSize); band layout
+	// recomputes the centered 9:16 band per the band contract
+	// (window.ComputeBandFrame) and crops it before encoding, scaling down to
+	// the 1080x1920 design cap when the band exceeds it. Either way the hello
+	// geometry (geom) follows the encoder's real output. Returns the observed
+	// client rect (ok=false when the window was unreadable) so the argv
+	// callback can record what this launch was built from.
+	updateFrame := func(c *capture.Config) (window.Rect, bool) {
+		rc, ok := plat.clientRect()
+		if !ok {
+			return window.Rect{}, false // no window to measure: keep the configured fallback frame
 		}
+		aw, ah := rc.W, rc.H
+		if bandMode {
+			f, fok := window.ComputeBandFrame(aw, ah)
+			if !fok {
+				return rc, true // degenerate rect (mid-resize): keep the fallback frame
+			}
+			c.Width, c.Height = f.EncW, f.EncH
+			c.CropRect, c.SourceW, c.SourceH = nil, 0, 0
+			if f.Banded {
+				c.CropRect = &capture.Rect{X: f.Band.X, Y: f.Band.Y, W: f.Band.W, H: f.Band.H}
+				c.SourceW, c.SourceH = aw, ah
+			}
+			geom.set(f.EncW, f.EncH)
+			reportBand(aw, ah, f)
+			return rc, true
+		}
+		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
+		c.Width, c.Height = encW, encH
+		geom.set(encW, encH)
+		reportGeometry(aw, ah, encW, encH, mismatch)
+		return rc, true
+	}
+	// launchGeom records the client rect each ffmpeg launch was built from —
+	// the geometry watchdog (started below) compares the live rect against it
+	// and relaunches the pipeline on drift, so a mid-session resize (or, on
+	// the ddagrab screen-rect path, a move) heals within seconds instead of
+	// waiting for the next incidental restart.
+	launchGeom := &launchGeometry{}
+	videoArgv := func(c capture.Config) []string {
+		enforceSize()
+		rc, rcOK := updateFrame(&c)
 		if c.Encoder == capture.NVENC {
 			// Only NVENC consumes the ddagrab target; skipping the DXGI
-			// probe elsewhere keeps the other encoders' launches quiet.
-			c.CaptureRect, c.CaptureOutput = plat.captureRect(c.Width, c.Height)
+			// probe elsewhere keeps the other encoders' launches quiet. The
+			// band crop is folded into the ddagrab rect when usable (ddagrab
+			// crops at grab time and has no filter stage), so a matching
+			// band takes the zero-copy path too.
+			c.CaptureRect, c.CaptureOutput = plat.captureRect(c.Width, c.Height, c.CropRect)
+			if c.CaptureRect != nil {
+				c.CropRect, c.SourceW, c.SourceH = nil, 0, 0
+			}
 		}
 		c.WindowTitle = plat.windowTitle()
+		if rcOK {
+			launchGeom.set(rc, c.CaptureRect != nil)
+		} else {
+			launchGeom.invalidate() // vanished window: the supervisor's retry loop owns it
+		}
 		return c.VideoArgs()
 	}
 	// Check once before any phone connects, too: the dashboard must show the
-	// mismatch warning while the user is still staring at the QR code, not
-	// only after the first capture launch — and the window is sized right
-	// away, not only when the first session starts capture.
+	// layout line (or the mismatch warning) while the user is still staring
+	// at the QR code, not only after the first capture launch — and in
+	// portrait mode the window is sized right away, not only when the first
+	// session starts capture.
 	enforceSize()
-	if aw, ah, ok := plat.clientSize(); ok {
-		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
-		geom.set(encW, encH)
-		reportGeometry(aw, ah, encW, encH, mismatch)
+	{
+		scratch := capCfg
+		updateFrame(&scratch)
 	}
 
 	meter := capture.NewMeter(cfg.FPS)
@@ -411,6 +509,20 @@ func run(ui *appUI) error {
 		stderr: videoSup.StderrTail,
 		warn:   status.SetCaptureWarning,
 		log:    log,
+	})
+
+	// Geometry watchdog: while capture is active, poll the live client rect
+	// and relaunch the video pipeline when the window settled on a different
+	// rect than the running ffmpeg was launched with (band mode deliberately
+	// un-pins the window, so mid-session resizes/moves are expected; input
+	// injection follows the live window per event, and the stream must not be
+	// left cropping stale pixels until a phone reconnect).
+	go geometryWatchdog(runCtx, geometryWatch{
+		active:     captureActive.Load,
+		clientRect: plat.clientRect,
+		launched:   launchGeom.get,
+		restart:    videoSup.Restart,
+		log:        log,
 	})
 
 	// The phone client PWA ships inside the binary; --client-dir overrides it
@@ -578,9 +690,10 @@ func writePortFile(path string, port int) error {
 
 // liveGeometry is the concurrency-safe holder for the geometry the encoder is
 // currently producing: written by the capture argv callback at every ffmpeg
-// launch (self-healing to the actual window client area), read by the rtc
-// hello reply. Seeded with the configured resolution so a hello racing the
-// very first capture launch still advertises a sane frame.
+// launch (self-healing to the actual window client area — in band layout, to
+// the encoded band cropped from it), read by the rtc hello reply. Seeded with
+// the configured resolution so a hello racing the very first capture launch
+// still advertises a sane frame.
 type liveGeometry struct {
 	mu   sync.Mutex
 	w, h int
@@ -627,13 +740,91 @@ func trayTooltipLoop(ctx context.Context, setTooltip func(string), connected fun
 	}
 }
 
+// fallbackLayout resolves --layout auto for runs the wizard did not settle
+// (--setup, --skip-setup, --capture test, non-Windows dev): an explicit flag
+// wins; otherwise the client type — the --client-type flag, or on Windows the
+// remembered choice in the config store — picks band for legacy 1.12-engine
+// clients; with no known client type the classic portrait mode stands. log
+// may be nil (the --setup printout path).
+func fallbackLayout(cfg *config.Config, log *slog.Logger) string {
+	if cfg.Layout != config.LayoutAuto {
+		return cfg.Layout
+	}
+	ct := cfg.ClientType
+	if ct == config.ClientTypeAuto && runtime.GOOS == "windows" && cfg.Capture != config.CaptureTest {
+		// Same store the wizard writes; read-only here. KeyClientType
+		// describes the game recorded in KeyGameExe (Store semantics), so
+		// when --game-exe/--wow-dir select an install explicitly, the
+		// remembered type is honored only if it describes that same install
+		// — otherwise a stale legacy record would silently pick band layout
+		// for an unrelated Era client (and vice versa).
+		if dir, err := os.UserConfigDir(); err == nil {
+			store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
+			if storedClientTypeTrusted(store, cfg.GameExe, cfg.WowDir) &&
+				install.ClientType(store.Get(install.KeyClientType)) == install.ClientTypeLegacy {
+				ct = config.ClientTypeLegacy
+			}
+		}
+	}
+	layout := config.LayoutPortrait
+	if ct == config.ClientTypeLegacy {
+		layout = config.LayoutBand
+	}
+	if log != nil {
+		log.Info("layout resolved", "layout", layout, "reason", "--layout auto without a wizard run")
+	}
+	return layout
+}
+
+// storedClientTypeTrusted reports whether the store's remembered
+// KeyClientType may stand in for THIS run's client type: with no explicit
+// install flags the run targets the remembered game itself, so yes; with
+// --game-exe the remembered type only applies when it was recorded for that
+// exact executable; with --wow-dir, when the recorded executable lives under
+// that directory. Anything else is an unknown client type — the soft portrait
+// default (and the --layout/--client-type flags) covers it.
+func storedClientTypeTrusted(store *install.Store, gameExe, wowDir string) bool {
+	if gameExe == "" && wowDir == "" {
+		return true
+	}
+	stored := store.Get(install.KeyGameExe)
+	if stored == "" {
+		return false
+	}
+	if gameExe != "" {
+		return normPath(stored) == normPath(gameExe)
+	}
+	dir := normPath(wowDir)
+	return strings.HasPrefix(normPath(stored), dir+string(filepath.Separator))
+}
+
+// normPath canonicalizes a path for identity comparison: cleaned, and
+// case-folded on Windows (the only OS whose store this code reads), whose
+// filesystems are case-insensitive.
+func normPath(p string) string {
+	p = filepath.Clean(p)
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
+}
+
 // resolveFitResolution fills cfg.Width/Height when --resolution fit was not
 // resolved by the wizard (--skip-setup, --setup, or a non-Windows dev run):
 // the same monitor-fit math the wizard uses, or the 1080x1920 design
-// resolution where nothing can be measured. No-op once the numbers are set.
-// log may be nil (the --setup printout path).
-func resolveFitResolution(cfg *config.Config, log *slog.Logger) {
+// resolution where nothing can be measured. Band mode skips the monitor fit
+// outright — the live band decides the encode; the design resolution is only
+// the no-window fallback frame. No-op once the numbers are set. log may be
+// nil (the --setup printout path).
+func resolveFitResolution(cfg *config.Config, band bool, log *slog.Logger) {
 	if cfg.Width != 0 || !cfg.ResolutionIsFit {
+		return
+	}
+	if band {
+		cfg.Width, cfg.Height = window.DesignW, window.DesignH
+		if log != nil {
+			log.Info("band layout: no portrait fit; the 1080x1920 design space is only the no-window fallback frame")
+		}
 		return
 	}
 	if w, h, workW, workH, ok := measureFitResolution(); ok {

@@ -6,14 +6,18 @@ UI rebuilt for portrait touch. Three components, one repo:
 ```
 ┌─────────────────────────── Windows Gaming PC ───────────────────────────┐
 │                                                                         │
-│  WoW Classic (windowed portrait, largest 9:16 rect fitting the monitor; │
-│  │            1080x1920 design space)                                   │
-│  └─ addon/WowMobile  → portrait touch UI, 1080x1080 world viewport      │
+│  WoW Classic — native LANDSCAPE window; the stream is the CENTERED      │
+│  │  9:16 BAND cropped out of it (band layout, the default for 1.12     │
+│  │  clients), or a forced portrait window captured whole (portrait      │
+│  │  layout, the Classic Era default). 1080x1920 design space either way.│
+│  └─ addon/WowMobile  → portrait touch UI in the band, 1080x1080 world  │
 │                                                                         │
 │  server/ (wowstreamd.exe, Go)                                           │
-│  ├─ capture:  FFmpeg subprocess (ddagrab → h264_nvenc, zero-latency)    │
+│  ├─ capture:  FFmpeg subprocess (ddagrab → h264_nvenc, zero-latency;    │
+│  │            band layout adds crop→scale before encode)                │
 │  ├─ webrtc:   pion/webrtc — H.264 video track + input data channels     │
 │  ├─ input:    SendInput injection (mouse/keyboard) into the WoW window  │
+│  │            (band layout maps touches into the band)                  │
 │  └─ signal:   HTTPS server — WHEP signaling + embedded client PWA       │
 │                                                                         │
 └───────────────────────────────┬─────────────────────────────────────────┘
@@ -27,7 +31,72 @@ UI rebuilt for portrait touch. Three components, one repo:
 
 ## Design decisions
 
-### 1. Portrait 1080x1920 with a 1080x1080 world viewport
+### 1. THE BAND CONTRACT — the primary design
+
+The touch experience is a 9:16 portrait surface. The game window does **not**
+have to be: when the game's client area is **LANDSCAPE** (`width > height`),
+the stream is the **centered 9:16 portrait band** cropped out of it — the
+window itself is never forced portrait. The addon and the server compute the
+band **independently from the same window dimensions**, so this formula is
+normative, deterministic, and integer-exact on both sides:
+
+```
+bandHeight = clientHeight
+bandWidth  = roundHalfToEven(clientHeight * 9 / 16)
+bandX      = roundHalfToEven((clientWidth - bandWidth) / 2)
+bandY      = 0
+```
+
+`roundHalfToEven` is banker's rounding: nearest integer, exact `.5` to the
+even neighbor (server: `window.ComputeBandFrame`; both addon variants
+duplicate it in Lua — `Band.lua` in `addon/WowMobile`, and its Lua 5.0 port
+in `addon/WowMobile_Vanilla`, which reads the physical client size from the
+`gxResolution` cvar since 1.12 has no `GetPhysicalScreenSize`; each asserts
+the shared contract vectors at load, so drift is caught deterministically).
+Examples: a 1280x720 window gives a 405x720 band at x=438; a 3840x2160
+desktop gives a 1215x2160 band at x=1312. Inside the band, the existing
+**1080x1920 design space maps as fractions of the band** — the band IS the
+design space, scaled. When the window is **PORTRAIT** (`height >= width`),
+behavior is exactly the classic full-window mode; a portrait window under
+band layout streams full-window (and says so on the log and dashboard).
+
+The **encode** is the band even-floored for H.264 4:2:0 (405x720 band →
+404x720 frame), and **capped at 1080x1920**: a band taller than the design
+space (that 1215x2160 4K band) is scaled down to exactly 1080x1920 — more
+pixels would only cost bitrate the phone downscales away. The pipeline in
+band layout is therefore `grab window → crop band → scale to ≤1080x1920 →
+encode` (NVENC's zero-copy ddagrab crops the band at grab time when it
+matches the encode size exactly). The **hello reports the encoded band
+dimensions** through the same liveGeometry path portrait mode uses, so the
+**phone client is completely unchanged** — it sees a 9:16 stream and its
+world-square math works as-is. Input injection maps normalized phone
+coordinates **into the band** (`px = bandX + n/65535*(bandWidth-1)`), from
+the same live client rect the capture used, so a tap at the phone's center
+lands on the window's center column.
+
+Why band mode exists — and why it is the **default for legacy (1.12-engine)
+clients** (`--layout auto`; `--layout band|portrait` overrides): every WoW
+client happily renders native landscape, but the 1.12-engine field client
+**rejects portrait render resolutions and stretches** — the whole v0.3.x
+fight of CVars, `SetWindowPos` enforcement, and re-assert battles. A centered
+band in a landscape window needs **no window forcing at all**: the wizard
+writes a native landscape session (legacy: `gxResolution` = the primary
+monitor's desktop resolution — a mode every client accepts), window-size
+enforcement is retired, and the band is recomputed from the **live** client
+rect before every capture (re)launch — with a geometry watchdog that polls
+the client rect (~1 s) while streaming and relaunches the encoder once the
+window settles on a new size (or, on the zero-copy ddagrab path, a new
+position, since its crop is a fixed screen rect), so resizes, moves,
+maximization, and odd sizes all just work within seconds, at the cost of the
+same brief IDR-restart gap a bitrate change takes. The vanilla addon (`addon/WowMobile_Vanilla`) carries the
+band module for exactly this default: `WM.Px` sizes against the band width,
+the world square/deck hang off the band frame, and side rails black out the
+window outside the crop. Classic Era keeps portrait-window mode as its
+server default (its addon ships the same `Band.lua`, inert in a portrait
+window — only the default differs); portrait mode remains fully supported
+and is documented next.
+
+### 1b. Portrait-window mode (the Classic Era default) — 1080x1920 with a 1080x1080 world viewport
 
 **1080x1920 is the DESIGN space, not necessarily the real window.** A
 1080x1920 window physically cannot fit a landscape 1920x1080 monitor: Windows

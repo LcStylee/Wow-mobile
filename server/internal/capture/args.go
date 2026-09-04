@@ -62,6 +62,20 @@ type Config struct {
 	// bare `-init_hw_device d3d11va` opens. Meaningless when CaptureRect is
 	// nil.
 	CaptureOutput int
+	// CropRect, when non-nil, crops the grabbed (or synthetic) source frame to
+	// this rect — SOURCE-LOCAL pixels, i.e. client-area coordinates for window
+	// capture — before the scale to Width x Height. Band mode (the band
+	// contract, docs/ARCHITECTURE.md) sets it to the centered 9:16 band of a
+	// landscape window. Ignored on the zero-copy ddagrab path: there the
+	// caller folds the crop into CaptureRect instead (ddagrab crops at grab
+	// time and has no filter stage).
+	CropRect *Rect
+	// SourceW/SourceH describe the full source frame CropRect cuts from.
+	// Only the synthetic test source consumes them (testsrc2 must generate
+	// the whole "window" so the crop/scale chain is exercised for real); the
+	// window grabbers deliver the actual window regardless. Zero means
+	// Width x Height (no crop, source == encode).
+	SourceW, SourceH int
 	// TestSource replaces the window grabber with ffmpeg's synthetic testsrc2
 	// pattern (--capture test): a portable, colorful, always-moving input that
 	// exercises the IDENTICAL encoder flags, Annex-B parser, and WebRTC sample
@@ -117,10 +131,16 @@ func (c Config) inputArgs() []string {
 		// nominal frame rate. testsrc2 (not testsrc) because its content is
 		// colorful and moving everywhere — a decode-side pixel-variance check
 		// can prove the picture is alive. The encoder half is untouched: the
-		// -vf scale/format chain and every codec flag are exactly production's.
+		// -vf crop/scale/format chain and every codec flag are exactly
+		// production's. The pattern is generated at the SOURCE size (the
+		// simulated window) so band mode's crop/scale chain runs for real.
+		srcW, srcH := c.Width, c.Height
+		if c.SourceW > 0 && c.SourceH > 0 {
+			srcW, srcH = c.SourceW, c.SourceH
+		}
 		args := []string{
 			"-f", "lavfi", "-re",
-			"-i", fmt.Sprintf("testsrc2=size=%dx%d:rate=%d", c.Width, c.Height, c.FPS),
+			"-i", fmt.Sprintf("testsrc2=size=%dx%d:rate=%d", srcW, srcH, c.FPS),
 		}
 		if c.TestFrames > 0 {
 			args = append(args, "-frames:v", strconv.Itoa(c.TestFrames))
@@ -190,12 +210,12 @@ func (c Config) encoderArgs() []string {
 			// gdigrab fallback and the lavfi test source deliver system-memory
 			// frames (BGRA / yuv420p); give NVENC NV12. Only the ddagrab path
 			// hands it D3D11 textures directly.
-			args = append(args, "-vf", scaleTo(c.Width, c.Height, "nv12"))
+			args = append(args, "-vf", c.filterChain("nv12"))
 		}
 		return args
 	case AMF:
 		return []string{
-			"-vf", scaleTo(c.Width, c.Height, "nv12"),
+			"-vf", c.filterChain("nv12"),
 			"-c:v", "h264_amf",
 			"-usage", "ultralowlatency",
 			"-rc", "cbr", "-b:v", kbps, "-maxrate", kbps, "-bufsize", buf,
@@ -204,7 +224,7 @@ func (c Config) encoderArgs() []string {
 		}
 	case QSV:
 		return []string{
-			"-vf", scaleTo(c.Width, c.Height, "nv12"),
+			"-vf", c.filterChain("nv12"),
 			"-c:v", "h264_qsv",
 			"-preset", "veryfast",
 			"-async_depth", "1", // no frame pipelining inside the encoder
@@ -214,7 +234,7 @@ func (c Config) encoderArgs() []string {
 		}
 	case X264:
 		return []string{
-			"-vf", scaleTo(c.Width, c.Height, "yuv420p"),
+			"-vf", c.filterChain("yuv420p"),
 			"-c:v", "libx264",
 			"-preset", "ultrafast", "-tune", "zerolatency",
 			"-b:v", kbps, "-maxrate", kbps, "-bufsize", buf,
@@ -228,11 +248,19 @@ func (c Config) encoderArgs() []string {
 	}
 }
 
-// scaleTo normalizes whatever the grabber delivered (window may be a few px
-// off, gdigrab emits BGRA) to the exact advertised geometry and pixel format,
-// so the `hello` video geometry is always truthful.
-func scaleTo(w, h int, pixfmt string) string {
-	return fmt.Sprintf("scale=%d:%d:flags=fast_bilinear,format=%s", w, h, pixfmt)
+// filterChain builds the -vf value: an optional band crop (source-local
+// pixels), then a scale normalizing whatever the grabber delivered (window
+// may be a few px off, gdigrab emits BGRA) to the exact advertised geometry
+// and pixel format, so the `hello` video geometry is always truthful. The
+// crop runs FIRST, on the raw source frame — the band contract is expressed
+// in window client pixels, and cropping after a scale would compound
+// rounding.
+func (c Config) filterChain(pixfmt string) string {
+	crop := ""
+	if c.CropRect != nil {
+		crop = fmt.Sprintf("crop=%d:%d:%d:%d,", c.CropRect.W, c.CropRect.H, c.CropRect.X, c.CropRect.Y)
+	}
+	return crop + fmt.Sprintf("scale=%d:%d:flags=fast_bilinear,format=%s", c.Width, c.Height, pixfmt)
 }
 
 // AudioArgs builds the argv for the separate audio pipeline: DirectShow

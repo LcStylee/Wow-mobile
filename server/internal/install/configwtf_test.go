@@ -129,3 +129,50 @@ func TestApplyConfigWTFWritesBackupOnlyWhenChanging(t *testing.T) {
 		t.Fatal("no-op run touched the backup")
 	}
 }
+
+// Band layout settings (the band contract): legacy clients get the native
+// desktop resolution in gxResolution ONLY — never gxWindowedResolution (on
+// patched builds that honor it, a desktop-sized client area plus decorations
+// cannot fit the work area and the band's bottom rows land off-screen) and
+// never a maximize toggle; era clients get a maximized landscape window; an
+// unmeasurable desktop omits the resolution CVars entirely. All variants stay
+// windowed (gxWindow "1" — exclusive fullscreen cannot be captured) and keep
+// out-of-date addons loadable.
+func TestBandSettingsFor(t *testing.T) {
+	legacy := BandSettingsFor(ClientTypeLegacy, 3840, 2160, true)
+	wantLegacy := []Setting{
+		{Name: "gxWindow", Value: "1"},
+		{Name: "gxResolution", Value: "3840x2160"},
+		{Name: "checkAddonVersion", Value: "0"},
+	}
+	if len(legacy) != len(wantLegacy) {
+		t.Fatalf("legacy band settings = %+v, want %+v", legacy, wantLegacy)
+	}
+	for i, w := range wantLegacy {
+		if legacy[i] != w {
+			t.Errorf("legacy[%d] = %+v, want %+v", i, legacy[i], w)
+		}
+	}
+
+	era := BandSettingsFor(ClientTypeClassicEra, 3840, 2160, true)
+	wantEra := []Setting{
+		{Name: "gxWindow", Value: "1"},
+		{Name: "gxMaximize", Value: "1"},
+		{Name: "checkAddonVersion", Value: "0"},
+	}
+	if len(era) != len(wantEra) {
+		t.Fatalf("era band settings = %+v, want %+v", era, wantEra)
+	}
+	for i, w := range wantEra {
+		if era[i] != w {
+			t.Errorf("era[%d] = %+v, want %+v", i, era[i], w)
+		}
+	}
+
+	blind := BandSettingsFor(ClientTypeLegacy, 0, 0, false)
+	for _, s := range blind {
+		if s.Name == "gxResolution" || s.Name == "gxWindowedResolution" {
+			t.Errorf("unmeasurable desktop must not write %s", s.Name)
+		}
+	}
+}

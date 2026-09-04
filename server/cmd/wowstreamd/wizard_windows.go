@@ -19,25 +19,27 @@ import (
 
 // runFirstRunWizard runs the five-step installer wizard before streaming.
 // It fills cfg.FFmpegPath with the located ffmpeg when the flag was not set,
-// so the rest of startup needs no PATH lookup of its own. In console mode the
-// wizard is the classic text flow on stdin/stdout; in GUI mode the same
-// wizard logic speaks through native dialogs (guiPrompter) and never touches
-// stdin.
-func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status, _ *slog.Logger) error {
+// so the rest of startup needs no PATH lookup of its own, and returns the
+// RESOLVED layout (config.LayoutBand/LayoutPortrait — the wizard settles
+// --layout auto by the located client type; "" when the wizard was skipped
+// and main must fall back). In console mode the wizard is the classic text
+// flow on stdin/stdout; in GUI mode the same wizard logic speaks through
+// native dialogs (guiPrompter) and never touches stdin.
+func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status, _ *slog.Logger) (string, error) {
 	if cfg.SkipSetup {
-		return nil
+		return "", nil
 	}
 	addonFS, err := fs.Sub(embedded.AddonFS, "addon/WowMobile")
 	if err != nil {
-		return fmt.Errorf("embedded addon missing: %w", err)
+		return "", fmt.Errorf("embedded addon missing: %w", err)
 	}
 	vanillaAddonFS, err := fs.Sub(embedded.VanillaAddonFS, "addon/WowMobile_Vanilla")
 	if err != nil {
-		return fmt.Errorf("embedded 1.12 addon missing: %w", err)
+		return "", fmt.Errorf("embedded 1.12 addon missing: %w", err)
 	}
 	configDir, err := os.UserConfigDir() // %APPDATA%
 	if err != nil {
-		return fmt.Errorf("resolving %%APPDATA%%: %w", err)
+		return "", fmt.Errorf("resolving %%APPDATA%%: %w", err)
 	}
 
 	var prompt install.Prompter
@@ -72,6 +74,7 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		Width:          cfg.Width,
 		Height:         cfg.Height,
 		ResolutionFit:  cfg.ResolutionIsFit,
+		Layout:         cfg.Layout,
 		WindowTitle:    cfg.WindowTitle,
 		WowDirFlag:     cfg.WowDir,
 		GameExeFlag:    cfg.GameExe,
@@ -83,17 +86,17 @@ func runFirstRunWizard(cfg *config.Config, ui *appUI, status *hoststatus.Status,
 		Status:         status,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if cfg.FFmpegPath == "" {
 		cfg.FFmpegPath = res.FFmpegPath
 	}
 	// The wizard decided the capture resolution (monitor-fitted under
-	// --resolution fit, possibly the confirmed explicit value otherwise);
-	// adopt it so capture, injection mapping, and the hello geometry all use
-	// the same number Config.wtf was written with.
+	// --resolution fit in portrait layout; the band-mode fallback frame
+	// otherwise); adopt it so capture, injection mapping, and the hello
+	// geometry all use the same number Config.wtf was written with.
 	cfg.Width, cfg.Height = res.Width, res.Height
-	return nil
+	return res.Layout, nil
 }
 
 // guiPrompter implements install.Prompter with native dialogs (winui) —

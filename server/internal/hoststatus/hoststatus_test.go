@@ -105,3 +105,26 @@ func TestNilReceiverSafe(t *testing.T) {
 		t.Fatalf("nil JSON: %s", s.JSON())
 	}
 }
+
+// The layout line (band contract) round-trips into the status JSON.
+func TestLayoutLine(t *testing.T) {
+	s := New("v")
+	const line = "center band 1215x2160 of 3840x2160 (encoded at 1080x1920)"
+	s.SetLayout(line)
+	var snap struct {
+		Layout string `json:"layout"`
+	}
+	if err := json.Unmarshal(s.JSON(), &snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.Layout != line {
+		t.Fatalf("layout = %q, want %q", snap.Layout, line)
+	}
+	s.SetLayout("")
+	if err := json.Unmarshal(s.JSON(), &snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.Layout != "" {
+		t.Fatalf("cleared layout = %q, want empty", snap.Layout)
+	}
+}

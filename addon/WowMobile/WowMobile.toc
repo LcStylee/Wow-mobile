@@ -8,8 +8,11 @@
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/queue,
-# Compat the API shims, Config the saved variables, Viewport the world square
-# and deck rect, Deck the panel/scroller/menu infrastructure. Bar and HUD
+# Band the landscape-band mode decision + the anchor frame the whole layout
+# hangs off (it must precede every WM.Px consumer, since the px factor is
+# computed against the band width), Compat the API shims, Config the saved
+# variables, Viewport the world square and deck rect, Deck the
+# panel/scroller/menu infrastructure. Bar and HUD
 # modules then stack bottom-up inside the deck (each anchors to the frame the
 # previous module published in WM.Layout; Pet also anchors its status strip
 # to the unit row UnitFrames publishes), and the panel modules only depend on
@@ -31,6 +34,7 @@
 # Core/Deck/Viewport (they replace default frames banished in Blizzard.lua).
 # Settings loads last because its panel drives Config + Viewport.
 Core.lua
+Band.lua
 Compat.lua
 Config.lua
 Blizzard.lua

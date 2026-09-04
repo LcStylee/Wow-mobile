@@ -62,6 +62,10 @@ type Status struct {
 	steps      []Step
 	encoder    string
 	resolution string // decided capture resolution "WxH" (monitor-fitted or explicit)
+	// layout is the live stream-framing line, e.g. "center band 1215x2160 of
+	// 3840x2160 (encoded at 1080x1920)" in band mode or "portrait window
+	// 552x984" in portrait mode; "" until the first frame decision.
+	layout     string
 	clientType string
 	addonNote  string
 	warning    string // loud misconfiguration banner (e.g. window/resolution mismatch); "" = none
@@ -132,6 +136,18 @@ func (s *Status) SetResolution(res string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resolution = res
+}
+
+// SetLayout records the live stream-framing line (band contract: "center
+// band WxH of AxB", or "portrait window WxH"), recomputed with the live
+// window before every capture launch; "" clears it.
+func (s *Status) SetLayout(layout string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.layout = layout
 }
 
 // SetClientType records "classicEra"/"legacy" for the dashboard.
@@ -262,6 +278,9 @@ type snapshot struct {
 	Steps      []Step `json:"steps"`
 	Encoder    string `json:"encoder"`
 	Resolution string `json:"resolution"`
+	// Layout is the live stream-framing line (band contract), e.g.
+	// "center band 1215x2160 of 3840x2160 (encoded at 1080x1920)".
+	Layout     string `json:"layout"`
 	ClientType string `json:"clientType"`
 	AddonNote  string `json:"addonNote"`
 	Warning    string `json:"warning"`
@@ -290,6 +309,7 @@ func (s *Status) JSON() []byte {
 		Steps:          append([]Step(nil), s.steps...),
 		Encoder:        s.encoder,
 		Resolution:     s.resolution,
+		Layout:         s.layout,
 		ClientType:     s.clientType,
 		AddonNote:      s.addonNote,
 		Warning:        s.warning,
