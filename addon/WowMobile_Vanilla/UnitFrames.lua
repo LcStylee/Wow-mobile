@@ -60,8 +60,24 @@ function ToggleDropDownMenu(level, value, dropDownFrame, anchorName, xOffset, yO
 		if list and list:IsVisible() then
 			local x, y = GetCursorPosition()
 			local s = list:GetEffectiveScale()
+			local lx = x / s
+			-- Keep the list inside the BAND (Band.lua): 1.12 has no
+			-- SetClampRectInsets, so the anchor point is clamped manually —
+			-- a list poking into the black side rails would be invisible on
+			-- the phone. Band.left/right are UI units of UIParent; convert
+			-- into the list's own coordinate space (the SetPoint offset
+			-- space) via the effective scales. Full-window mode clamps to
+			-- the window edges, which is a strict improvement either way.
+			if WM.Band and WM.Band.left and WM.Band.right then
+				local toList = UIParent:GetEffectiveScale() / s
+				local bandL = WM.Band.left * toList
+				local bandR = WM.Band.right * toList
+				local w = list:GetWidth()
+				if lx + w > bandR then lx = bandR - w end
+				if lx < bandL then lx = bandL end
+			end
 			list:ClearAllPoints()
-			list:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s, y / s)
+			list:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", lx, y / s)
 		end
 	end
 end

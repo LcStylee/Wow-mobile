@@ -263,15 +263,33 @@ WM.OnInit(function()
 	--     via UIParent's MacroFrame_LoadUI / KeyBindingFrame_LoadUI from the
 	--     game menu), so their globals are nil here — the fit hooks are
 	--     attached from the shared ADDON_LOADED handler below instead.
+	--   * GuildRegistrarFrame — the guild-charter purchase panel (guild
+	--     master's gossip option): a name edit box plus Purchase/Cancel/
+	--     Goodbye buttons (hit-rect padded below), used once per guild ever.
+	--     A default-anchored UIPanel that would otherwise open at the
+	--     window's LEFT edge, outside the landscape band crop.
 	--   * OptionsFrame / SoundOptionsFrame / UIOptionsFrame — the GameMenu
 	--     options screens; visited rarely, and their checkbox rows work at
 	--     the boosted scale.
 	FitPanelToSquare(PetitionFrame)
 	FitPanelToSquare(TabardFrame)
 	FitPanelToSquare(WorldStateScoreFrame)
+	FitPanelToSquare(GuildRegistrarFrame)
 	FitPanelToSquare(OptionsFrame)
 	FitPanelToSquare(SoundOptionsFrame)
 	FitPanelToSquare(UIOptionsFrame)
+
+	-- Thumb-safe pads on the guild registrar's three flow buttons (the
+	-- TaxiButton technique; static frame on 1.12, so a one-time pad sticks).
+	for _, name in next, {
+		"GuildRegistrarFramePurchaseButton", "GuildRegistrarFrameCancelButton",
+		"GuildRegistrarFrameGoodbyeButton",
+	} do
+		local b = getglobal(name)
+		if b and b.SetHitRectInsets then
+			b:SetHitRectInsets(-12, -12, -12, -12)
+		end
+	end
 
 	-- The tabard designer's arrow steppers are 32x32 UI units, which the
 	-- boosted fit already lifts past the touch floor (32 x ~2.5 px/unit x

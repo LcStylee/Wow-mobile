@@ -34,7 +34,12 @@ local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band
 Config.DECK_FIXED_PX = DECK_FIXED_PX -- Viewport clamps the square against it
 
 local function RatioMax()
-	local aspect = UIParent:GetHeight() / UIParent:GetWidth()
+	-- BAND aspect in design px: height over width of the region the layout
+	-- actually lives in — the full window in portrait mode, the centered 9:16
+	-- band in landscape mode (Band.lua; band height is the window height, so
+	-- only the width reference changes). Uniform scale, so UI units suffice.
+	local bandWidth = (WM.Band and WM.Band.width) or UIParent:GetWidth()
+	local aspect = UIParent:GetHeight() / bandWidth
 	local maxRatio = aspect - DECK_FIXED_PX / DESIGN_WIDTH
 	if maxRatio > 1.20 then maxRatio = 1.20 end
 	if maxRatio < RATIO_MIN then maxRatio = RATIO_MIN end
@@ -179,11 +184,46 @@ local function PrintErrors()
 	end
 end
 
--- /wm status: one-glance health — viewport geometry, deck presence, errors.
+-- /wm status: one-glance health — band mode, viewport geometry, deck
+-- presence, errors.
 local function PrintStatus()
 	local lo, hi = Config.HeightBounds()
 	local vp = (WM.db and WM.db.viewport and WM.db.viewport.height) or 1080
-	WM.Print(string.format("viewport: %d px (bounds %d..%d) — mirror this in the phone's World viewport setting", vp, lo, hi))
+	local band = WM.Band
+	if not band or not band.px then
+		WM.Print("mode: UNKNOWN (Band failed) — full-window fallback")
+	else
+		-- Band.px normally holds physical px (the server's crop numbers
+		-- verbatim, read from the gxResolution cvar on 1.12), but when the
+		-- cvar was unreadable the ClientPixels fallback measured UI units
+		-- instead (Band.px.approx) — label honestly, since the crop-match
+		-- claim is only approximate then.
+		local units
+		if band.px.approx then
+			units = "UI units (physical size unavailable — crop match approximate)"
+		else
+			units = "physical px; the server's crop must match"
+		end
+		if band.mode == "band" then
+			WM.Print(string.format(
+				"mode: landscape band — 9:16 band %dx%d at x=%d (%s)",
+				band.px.width, band.px.height, band.px.x, units))
+		else
+			WM.Print(string.format("mode: portrait full-window — %dx%d (%s)",
+				band.px.width, band.px.height, units))
+		end
+	end
+	if vp < lo or vp > hi then
+		-- Saved height is legal for some OTHER window mode (bounds move with
+		-- the band/portrait mode) — Viewport.Apply clamps it for use without
+		-- rewriting the saved value, so flag the mismatch instead of printing
+		-- a number the layout is not actually using.
+		WM.Print(string.format(
+			"viewport: %d px saved — OUT OF BOUNDS for this mode (%d..%d), applied as %d; mirror the applied value in the phone's World viewport setting, or /wm viewport to re-save",
+			vp, lo, hi, Clamp(vp, lo, hi)))
+	else
+		WM.Print(string.format("viewport: %d px (bounds %d..%d) — mirror this in the phone's World viewport setting", vp, lo, hi))
+	end
 	WM.Print("world square: " .. (WM.WorldSquare and "ok" or "MISSING (Viewport failed)"))
 	WM.Print("deck: " .. (WM.Deck and "ok" or "MISSING (Deck failed)"))
 	local order = WM.GetErrors()

@@ -17,9 +17,14 @@
 
 local WM = WowMobile
 
+-- Bottom-right pins to the BAND (Band.lua), not the window: in landscape
+-- mode the deck must live inside the centered 9:16 band (the streamed crop);
+-- in portrait mode the band frame covers the whole window and this is
+-- identical to the pre-band layout. The top-left comes from the world
+-- square, which already hangs off the band frame (Viewport.lua).
 local deck = CreateFrame("Frame", "WowMobileDeck", UIParent)
 deck:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
-deck:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+deck:SetPoint("BOTTOMRIGHT", WM.BandFrame or UIParent, "BOTTOMRIGHT", 0, 0)
 deck:SetFrameStrata("LOW")
 deck:EnableMouse(false)
 WM.Deck = deck

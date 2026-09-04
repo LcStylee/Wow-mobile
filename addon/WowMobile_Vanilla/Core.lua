@@ -44,16 +44,19 @@ WM.FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 --------------------------------------------------------------------------------
 -- Design-space conversion
 -- All layout constants are written in design px of the 1080x1920 DESIGN
--- space. WM.Px(x) resolves x as a FRACTION of the MEASURED window:
--- x/1080 of UIParent's actual width in UI units — never an assumed physical
--- resolution or a uiScale value that may not have taken effect. That makes
--- every size correct at every real resolution and every effective scale
--- (UIParent:GetWidth() already folds the live scale in). Vertical sizes use
--- the same width fraction deliberately: the streamed window is the largest
+-- space. That space is the BAND — the full window in portrait mode, the
+-- centered 9:16 band of a landscape window (Band.lua; band layout is the
+-- server default for 1.12 clients) — so WM.Px(x) resolves x as a FRACTION
+-- of the MEASURED band width: x/1080 of the band's width in UI units —
+-- never an assumed physical resolution or a uiScale value that may not have
+-- taken effect. That makes every size correct at every real resolution and
+-- every effective scale (the band width already folds the live scale in).
+-- Band.lua loads right after this file and immediately corrects the initial
+-- full-window factor below, before any other module calls WM.Px. Vertical
+-- sizes use the same width fraction deliberately: the streamed crop is a
 -- 9:16 rect (ARCHITECTURE.md §1), so uniform scaling keeps squares square;
--- a window that is NOT that shape cannot host the design at all and is
--- detected below (WM.CheckLayoutFresh / Viewport.Verify) rather than guessed
--- around.
+-- a window that is NOT a shape the deck can live in is detected below
+-- (WM.CheckLayoutFresh / Viewport.Verify) rather than guessed around.
 --
 -- The factor is (re)measured at PLAYER_LOGIN immediately before the module
 -- inits size their frames (WM.RebaseLayout), and the geometry it was based
@@ -72,7 +75,11 @@ function WM.Px(px)
 end
 
 function WM.UpdatePxFactor()
-	pxFactor = UIParent:GetWidth() / 1080
+	-- Band-aware: design px map to the band width (see the section comment);
+	-- the full-window fallback only runs before Band.lua loads or if it
+	-- failed (then the crash guard has already bannered the failure).
+	local band = WM.Band
+	pxFactor = ((band and band.width) or UIParent:GetWidth()) / 1080
 end
 
 -- Re-measure the window and adopt it as the layout baseline. Called right
@@ -80,6 +87,12 @@ end
 -- cvar (so when the cvar applies synchronously, the whole deck lays out
 -- against the post-scale geometry with no reload needed).
 function WM.RebaseLayout()
+	-- The band metrics feed the px factor, so refresh them from the live
+	-- window first (pure math + unprotected re-anchor — always legal on
+	-- 1.12; pcall keeps a Band failure from killing the layout pass).
+	if WM.Band then
+		pcall(WM.Band.Refresh)
+	end
 	WM.UpdatePxFactor()
 	layoutBasisW, layoutBasisH = UIParent:GetWidth(), UIParent:GetHeight()
 end
@@ -95,14 +108,44 @@ function WM.CheckLayoutFresh()
 			"Core.lua: window geometry changed after layout (%.0fx%.0f -> %.0fx%.0f UI units)"
 				.. " — a uiScale/resolution change applied late; on-screen sizes are stale until reload",
 			layoutBasisW, layoutBasisH, w, h))
-		-- The world square's math is pure measurement — re-apply so at least
-		-- the 3D viewport is right while the deck awaits its reload.
+		-- The world square's math is pure measurement — refresh the band rect
+		-- first (the drift may have moved/resized it), then re-apply so at
+		-- least the 3D viewport is right while the deck awaits its reload.
+		if WM.Band then
+			pcall(WM.Band.Refresh)
+		end
 		if WM.Viewport then
 			pcall(WM.Viewport.Apply)
 		end
-		WM.ShowSetupBanner("Display scale changed after WoW Mobile laid out — the interface is mis-sized.")
+		WM.ShowSetupBanner("Display scale changed after WoW Mobile laid out — the interface is mis-sized.", "drift")
 		return false
 	end
+	-- Geometry matches the layout basis again (e.g. the streamer's window-size
+	-- enforcement restored a resized window between loading screens): frames
+	-- sized via WM.Px are correct after all, so a banner THIS drift check
+	-- raised must stop covering the deck's bottom row. Banners raised for
+	-- other reasons (Viewport.Verify, shape clamp, Band mode flip) are left
+	-- alone — but a "drift" tag is not proof the world square is healthy:
+	-- ShowSetupBanner overwrites the single banner's reason, so a drift that
+	-- struck while a "verify"/"shape" banner stood re-tagged it, and the
+	-- drift-time Apply sized WorldFrame with the drift-era effective scales.
+	-- So before hiding, re-apply the viewport (cheap, idempotent — band rect
+	-- refreshed first so the square math sees the restored geometry): Apply
+	-- queues Viewport.Verify, which re-raises the banner under its own
+	-- "verify" reason within 0.5s if the on-screen square is still wrong. A
+	-- stretched world must never pass silently. A CLAMPED-but-consistent
+	-- square passes Verify's geometry check, so Verify's pass path also
+	-- re-raises the "shape" banner when the last Apply clamped and no banner
+	-- stands — a drift flap cannot permanently swallow the shape notice.
+	if WM.SetupBannerReason() == "drift" then
+		if WM.Band then
+			pcall(WM.Band.Refresh)
+		end
+		if WM.Viewport then
+			pcall(WM.Viewport.Apply)
+		end
+	end
+	WM.HideSetupBanner("drift")
 	return true
 end
 
@@ -146,14 +189,18 @@ local function ShowErrorBanner(file, msg)
 		errorBanner.text:SetJustifyH("CENTER")
 	end
 	-- Top of the deck = bottom of the world square; before Viewport has run
-	-- (or if Viewport itself failed) fall back to the top of the screen.
+	-- (or if Viewport itself failed) fall back to the top of the band — the
+	-- banner must stay inside the streamed crop to be visible on the phone —
+	-- and to the screen top only if Band itself is what failed.
 	errorBanner:ClearAllPoints()
-	if WM.WorldSquare then
-		errorBanner:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
-		errorBanner:SetPoint("TOPRIGHT", WM.WorldSquare, "BOTTOMRIGHT", 0, 0)
+	local host = WM.WorldSquare
+	if host then
+		errorBanner:SetPoint("TOPLEFT", host, "BOTTOMLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", host, "BOTTOMRIGHT", 0, 0)
 	else
-		errorBanner:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-		errorBanner:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+		host = WM.BandFrame or UIParent
+		errorBanner:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+		errorBanner:SetPoint("TOPRIGHT", host, "TOPRIGHT", 0, 0)
 	end
 	errorBanner.text:SetText(string.format(
 		"WoW Mobile hit an error in %s: %s — /wm errors for details, /wm reload to retry",
@@ -185,18 +232,23 @@ end
 --------------------------------------------------------------------------------
 -- Setup banner ("Finish setup — reload UI")
 -- Raised when the layout provably no longer matches the live window
--- (WM.CheckLayoutFresh) or the world square failed verification
--- (Viewport.Verify): conditions a chat line cannot surface on a phone. A
--- fullscreen-dialog strip at the very bottom of the SCREEN (a place that
--- exists at every resolution, however broken the deck is) with one huge
--- ReloadUI button. Sized from a FRESHLY measured UIParent width on every
--- Show — WM.Px may be exactly what went stale.
+-- (WM.CheckLayoutFresh), the world square failed verification
+-- (Viewport.Verify) or the band mode flipped live (Band.Update): conditions
+-- a chat line cannot surface on a phone. A fullscreen-dialog strip at the
+-- very bottom of the BAND (always inside the streamed crop, however broken
+-- the deck is) with one huge ReloadUI button. Sized from a FRESHLY measured
+-- band width on every Show — WM.Px may be exactly what went stale.
 --------------------------------------------------------------------------------
 
 local setupBanner
 
-function WM.ShowSetupBanner(msg)
-	local w = UIParent:GetWidth()
+-- reason tags who raised the banner ("drift" | "shape" | "verify" |
+-- "band-mode"), so WM.HideSetupBanner can clear ONLY its caller's own
+-- banner: the drift check auto-clears a drift banner when geometry flaps
+-- back to the layout basis, without ever dismissing a Viewport.Verify/shape/
+-- band failure it did not raise.
+function WM.ShowSetupBanner(msg, reason)
+	local w = (WM.Band and WM.Band.width) or UIParent:GetWidth()
 	local function px(v) return v * w / 1080 end
 	if not setupBanner then
 		setupBanner = CreateFrame("Frame", "WowMobileSetupBanner", UIParent)
@@ -220,10 +272,12 @@ function WM.ShowSetupBanner(msg)
 		setupBanner.button.label:SetPoint("CENTER", setupBanner.button, "CENTER", 0, 0)
 		setupBanner.button:SetScript("OnClick", function() ReloadUI() end)
 	end
-	-- (Re)size with the live measurement each time it is raised.
+	-- (Re)anchor + (re)size with the live measurement each time it is raised:
+	-- the band frame tracks mode flips, so the strip stays inside the crop.
+	local host = WM.BandFrame or UIParent
 	setupBanner:ClearAllPoints()
-	setupBanner:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-	setupBanner:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+	setupBanner:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, 0)
+	setupBanner:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
 	setupBanner:SetHeight(px(260))
 	setupBanner.text:SetFont(WM.FONT, px(30), "")
 	setupBanner.text:SetPoint("TOPLEFT", setupBanner, "TOPLEFT", px(20), -px(16))
@@ -236,7 +290,26 @@ function WM.ShowSetupBanner(msg)
 	setupBanner.button:SetHeight(px(140))
 	setupBanner.button.label:SetFont(WM.FONT, px(40), "")
 	setupBanner.button.label:SetText("Finish setup — reload UI")
+	setupBanner.reason = reason
 	setupBanner:Show()
+end
+
+-- Hide the setup banner only if it is shown AND was raised for `reason` —
+-- see WM.ShowSetupBanner. No-op in every other case.
+function WM.HideSetupBanner(reason)
+	if setupBanner and setupBanner:IsShown() and setupBanner.reason == reason then
+		setupBanner:Hide()
+	end
+end
+
+-- The reason the setup banner is currently showing for, or nil when it is
+-- hidden. The drift check consults this before spending an emergency
+-- viewport re-apply on the flap-back path.
+function WM.SetupBannerReason()
+	if setupBanner and setupBanner:IsShown() then
+		return setupBanner.reason
+	end
+	return nil
 end
 
 --------------------------------------------------------------------------------
@@ -672,7 +745,11 @@ function WM.AnchorTooltip(owner)
 	GameTooltip:SetOwner(owner, "ANCHOR_NONE")
 	GameTooltip:ClearAllPoints()
 	GameTooltip:SetPoint("BOTTOM", owner, "TOP", 0, WM.Px(18))
-	if GameTooltip.SetClampedToScreen then
+	-- Band.Clamp degrades to plain SetClampedToScreen on 1.12 (no clamp-rect
+	-- API); owners live inside the band, so the tooltip lands there anyway.
+	if WM.Band then
+		WM.Band.Clamp(GameTooltip)
+	elseif GameTooltip.SetClampedToScreen then
 		GameTooltip:SetClampedToScreen(true)
 	end
 end
@@ -695,8 +772,13 @@ local origSetDefaultAnchor = GameTooltip_SetDefaultAnchor
 function GameTooltip_SetDefaultAnchor(tooltip, parent)
 	origSetDefaultAnchor(tooltip, parent)
 	tooltip:ClearAllPoints()
-	local anchor = WM.WorldSquare or UIParent
+	-- The world square hangs off the band frame, so this parks the tooltip
+	-- inside the streamed crop in band mode too.
+	local anchor = WM.WorldSquare or WM.BandFrame or UIParent
 	tooltip:SetPoint("BOTTOM", anchor, "BOTTOM", 0, WM.Px(12))
+	if WM.Band then
+		WM.Band.Clamp(tooltip)
+	end
 end
 
 --------------------------------------------------------------------------------

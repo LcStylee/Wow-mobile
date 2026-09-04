@@ -35,7 +35,11 @@ local function Reflow()
 		WM.WorldSquare:GetHeight() / f:GetHeight())
 	f:SetScale(scale)
 	f:ClearAllPoints()
-	f:SetPoint("TOP", UIParent, "TOP", 0, 0)
+	-- Anchored to the world square (not UIParent): the square hangs off the
+	-- band frame, so the tree stays inside the streamed crop in band mode
+	-- (a centered band makes this identical to a UIParent anchor in portrait
+	-- mode — the change matters only when the band is offset).
+	f:SetPoint("TOP", WM.WorldSquare, "TOP", 0, 0)
 	-- The close button lives inside the scaled frame: compensate so it stays
 	-- ~100 physical px.
 	closeButton:SetWidth(WM.Px(100) / scale)
