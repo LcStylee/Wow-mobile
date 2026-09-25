@@ -86,6 +86,9 @@ test.beforeAll(async () => {
   fs.rmSync(portFile, { force: true });
   server = spawn(bin, [
     '--capture', 'test',
+    // The whole-window pipeline: since v0.5.0 auto means the phone frame,
+    // which band.spec.js covers; this suite streams the full window.
+    '--layout', 'portrait',
     '--no-tls',
     '--token', TOKEN,
     '--addr', '127.0.0.1:0',
