@@ -37,12 +37,11 @@ local RATIO_MIN = 0.60
 local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band (34 px visible strip + 12 px gaps)
 
 local function RatioMax()
-	-- BAND aspect in design px: height over width of the region the layout
-	-- actually lives in — the full window in portrait mode, the centered 9:16
-	-- band in landscape mode (Band.lua; band height is the window height, so
-	-- only the width reference changes). Uniform scale, so UI units suffice.
+	-- FRAME aspect in design px: height over width of the phone frame the
+	-- layout lives in (Band.lua). Uniform scale, so UI units suffice.
 	local bandWidth = (WM.Band and WM.Band.width) or UIParent:GetWidth()
-	local aspect = UIParent:GetHeight() / bandWidth
+	local bandHeight = (WM.Band and WM.Band.height) or UIParent:GetHeight()
+	local aspect = bandHeight / bandWidth
 	local maxRatio = aspect - DECK_FIXED_PX / DESIGN_WIDTH
 	if maxRatio > 1.20 then maxRatio = 1.20 end
 	if maxRatio < RATIO_MIN then maxRatio = RATIO_MIN end
@@ -164,6 +163,7 @@ local function PrintHelp()
 	WM.Print("commands:")
 	WM.Print(string.format("  /wm viewport <%d..%d>  — world-square height in design px (1080 = full-width square)", lo, hi))
 	WM.Print("  /wm scale <0.64..1.0>  — uiScale cvar override")
+	WM.Print("  /wm phone [name|id|WxH]  — pick the phone the frame is shaped for (no argument: toggle the selector)")
 	WM.Print("  /wm settings  — open the touch settings panel")
 	WM.Print("  /wm status  — viewport/deck/module health")
 	WM.Print("  /wm errors  — list recorded module errors")
@@ -184,7 +184,7 @@ local function PrintErrors()
 	end
 end
 
--- /wm status: one-glance health — band mode, viewport geometry, deck
+-- /wm status: one-glance health — phone frame, viewport geometry, deck
 -- presence, errors.
 local function PrintStatus()
 	-- Version first: the wizard updates the files on disk, but a RUNNING game
@@ -203,18 +203,15 @@ local function PrintStatus()
 		-- label honestly, since the crop-match claim is only approximate then.
 		local units = band.px.approx
 			and "UI units (physical size unavailable — crop match approximate)"
-			or "physical px; the server's crop must match"
-		if band.mode == "band" then
-			WM.Print(string.format(
-				"mode: landscape band — 9:16 band %dx%d at x=%d (%s)",
-				band.px.width, band.px.height, band.px.x, units))
-		else
-			WM.Print(string.format("mode: portrait full-window — %dx%d (%s)",
-				band.px.width, band.px.height, units))
-		end
-		-- Basis dump — every number the band derivation used plus the world
+			or "physical px; the server crops the outline's interior"
+		WM.Print(string.format(
+			"mode: phone frame — %s, %dx%d at (%d,%d) of a %dx%d window (%s)%s",
+			band.PhoneName(band.phone), band.px.width, band.px.height, band.px.x, band.px.y,
+			band.client.w, band.client.h, units,
+			band.NeedsReload() and " — /reload pending" or ""))
+		-- Basis dump — every number the frame derivation used plus the world
 		-- rect that actually applied, so a field report pinpoints any residual
-		-- addon/server crop mismatch in one paste: compare the "band rect" /
+		-- addon/server crop mismatch in one paste: compare the "frame rect" /
 		-- "world rect" px against the server log's crop numbers.
 		if band.client then
 			local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
@@ -223,9 +220,9 @@ local function PrintStatus()
 				band.client.basis, band.client.w, band.client.h,
 				uiW, uiH, uiW / uiH))
 			WM.Print(string.format(
-				"band rect: x=%d w=%d h=%d px (left=%.1f width=%.1f UI units)",
-				band.px.x, band.px.width, band.px.height,
-				band.left or 0, band.width or 0))
+				"frame rect: x=%d y=%d w=%d h=%d px (left=%.1f top=%.1f width=%.1f UI units)",
+				band.px.x, band.px.y, band.px.width, band.px.height,
+				band.left or 0, band.top or 0, band.width or 0))
 			if WM.Viewport and WM.Viewport.GetStatus then
 				local vs = WM.Viewport.GetStatus()
 				if vs.leftFrac then
@@ -268,8 +265,11 @@ end
 SLASH_WOWMOBILE1 = "/wm"
 SlashCmdList["WOWMOBILE"] = function(msg)
 	local cmd, arg = msg:match("^%s*(%S*)%s*(%S*)")
+	local rest = msg:match("^%s*%S*%s*(.-)%s*$") or ""
 	cmd = cmd:lower()
-	if cmd == "viewport" then
+	if cmd == "phone" then
+		if WM.PhoneSelect then WM.PhoneSelect.Command(rest) end
+	elseif cmd == "viewport" then
 		Config.SetHeight(arg)
 	elseif cmd == "scale" then
 		Config.SetScale(arg)

@@ -9,21 +9,24 @@ package wininput
 
 import "github.com/LcStylee/Wow-mobile/server/internal/window"
 
+// CropFunc returns the CLIENT-LOCAL rect the stream crops out of a
+// clientW x clientH client area (the phone frame, docs/PHONE_FRAME.md), ok
+// false when the whole client area is streamed. It must return the exact
+// crop the running capture uses, so touch stays aligned with the video.
+type CropFunc func(clientW, clientH int) (window.Rect, bool)
+
 // TargetRect resolves the screen rect that normalized coordinates map onto
-// for a live client rect. In band layout a landscape window contributes only
-// its centered 9:16 band — the exact rect the capture crops — so a tap at the
-// phone's center lands on the window's center column; a portrait window (or
-// portrait layout) maps onto the whole client area, matching the full-window
-// stream.
-func TargetRect(client window.Rect, band bool) window.Rect {
-	if !band {
+// for a live client rect: the crop (offset by the client origin) under frame
+// layout, the whole client area otherwise (nil crop, or no crop decided).
+func TargetRect(client window.Rect, crop CropFunc) window.Rect {
+	if crop == nil {
 		return client
 	}
-	f, ok := window.ComputeBandFrame(client.W, client.H)
-	if !ok || !f.Banded {
+	r, ok := crop(client.W, client.H)
+	if !ok || r.W < 2 || r.H < 2 {
 		return client
 	}
-	return window.Rect{X: client.X + f.Band.X, Y: client.Y + f.Band.Y, W: f.Band.W, H: f.Band.H}
+	return window.Rect{X: client.X + r.X, Y: client.Y + r.Y, W: r.W, H: r.H}
 }
 
 // MapNormalized converts one normalized coordinate pair (0..65535 per

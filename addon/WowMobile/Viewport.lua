@@ -224,15 +224,17 @@ function Viewport.Apply()
 		-- no effective scale anywhere, so a client that misreports its scale
 		-- chain cannot shrink or shift the world.
 		local bandLeftUI = (WM.Band and WM.Band.left) or 0
+		local bandTopUI = (WM.Band and WM.Band.top) or 0
 		local bandWidthUI = (WM.Band and WM.Band.width) or UIParent:GetWidth()
 		local heightUI = bandWidthUI * ratio
 		local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
 		MeasureFullWorldFrame()
 		local leftWF = wfFull.width * (bandLeftUI / uiW)
+		local topWF = wfFull.height * (bandTopUI / uiH)
 		local widthWF = wfFull.width * (bandWidthUI / uiW)
 		local heightWF = wfFull.height * (heightUI / uiH)
 		WorldFrame:ClearAllPoints()
-		WorldFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", leftWF, 0)
+		WorldFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", leftWF, -topWF)
 		WorldFrame:SetSize(widthWF, heightWF)
 		lastAppliedWF = widthWF
 		square:SetHeight(heightUI)

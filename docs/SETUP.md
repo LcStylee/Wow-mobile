@@ -219,6 +219,33 @@ non-loopback IP, no loopback listener exists: wowstreamd then logs a warning
 and skips the browser auto-open instead of advertising an unreachable URL
 (the tray icon still offers Quit).
 
+## Your phone frame (the red outline)
+
+After logging in you see the game in its normal window with a **red outline**
+in the middle: that is your phone screen — everything inside it is streamed,
+everything outside stays on the PC. Next to the outline sits the **phone
+selector**:
+
+- **Search** your phone model (e.g. `galaxy s25`, `iphone 16 pro`) or scroll
+  the list — the 20 most-used phones come first.
+- Click your phone: the outline takes its exact shape immediately. Click
+  **Reload UI to rebuild the layout** (or tap the banner) so the touch UI is
+  re-laid-out for the new shape.
+- **Not listed?** Enter a custom portrait size (W x H) — the size of the area
+  your browser gives the stream; the phone app's notice suggests a model when
+  it recognizes your phone.
+- The panel shows your **game window size** and the **frame size in pixels**;
+  both update live when you resize or maximize the window, switch between
+  fullscreen and windowed, or move to a 4K monitor — the frame always keeps
+  your phone's shape.
+- Close the panel with **x** (the small red **Phone** tab reopens it), or use
+  `/wm phone` from chat: `/wm phone` toggles the panel, `/wm phone iphone 17`
+  picks by name, `/wm phone 1080x2340` sets a custom size.
+
+The streaming host finds the outline on its own. If the addon is not loaded
+yet (character select, a very old addon), the dashboard's **Phone model** list
+decides the frame instead and the warning row says so.
+
 ## Private servers (1.12 clients)
 
 WoW Mobile also hosts 1.12-era private-server clients (launched through

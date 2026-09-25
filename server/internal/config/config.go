@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/LcStylee/Wow-mobile/server/internal/capture"
+	"github.com/LcStylee/Wow-mobile/server/internal/phones"
 )
 
 // Encoder names accepted by --encoder. EncoderAuto is resolved to a concrete
@@ -46,26 +47,27 @@ const (
 )
 
 // Layout values accepted by --layout: how the stream is framed relative to
-// the game window (the BAND CONTRACT, docs/ARCHITECTURE.md).
+// the game window (the PHONE FRAME contract, docs/PHONE_FRAME.md).
 //
-//   - LayoutBand: the game window runs native LANDSCAPE (no portrait forcing,
-//     no window-size enforcement) and the stream is the centered 9:16 portrait
-//     band cropped out of the live client area — bandHeight = clientHeight,
-//     bandWidth = round-half-to-even(clientHeight*9/16), horizontally
-//     centered. The addon computes the identical band from the same window
-//     dimensions; the phone client needs nothing (the hello reports the
-//     encoded band). A portrait window in band mode streams full-window.
+//   - LayoutFrame: the game window runs as a normal widescreen window (any
+//     size, windowed or fullscreen, never forced) and the stream is the
+//     centered portrait PHONE FRAME: the addon outlines it in red on the PC
+//     screen with the aspect of the phone model picked in-game, and the
+//     server crops exactly the outline's interior (fallback: the dashboard's
+//     phone, see phones.Default). "band" is accepted as an alias of frame
+//     with the generic 9:16 phone (the v0.4.x band layout).
 //   - LayoutPortrait: the classic mode — the window itself is forced to the
 //     fitted 9:16 portrait resolution and captured whole.
-//   - LayoutAuto (default): band for legacy (1.12-engine) clients — the
-//     1.12 field client rejects portrait render resolutions outright — and
-//     portrait for Classic Era (band is fully supported there via --layout
-//     band; only this auto default stays portrait, which works natively on
-//     Era).
+//   - LayoutAuto (default): frame for every client type.
 const (
 	LayoutAuto     = "auto"
-	LayoutBand     = "band"
+	LayoutFrame    = "frame"
 	LayoutPortrait = "portrait"
+	// layoutBandAlias is the v0.4.x name, parsed as LayoutFrame with the
+	// generic 9:16 phone.
+	layoutBandAlias = "band"
+	// PhoneGeneric916 is the phone id the band alias selects.
+	PhoneGeneric916 = "generic-9-16"
 )
 
 // ResolutionFit is the --resolution value (and default) that sizes the
@@ -96,7 +98,11 @@ type Config struct {
 	// Layout is one of the Layout* constants: how the stream is framed —
 	// the centered 9:16 band cropped from a native landscape window (band),
 	// the whole forced-portrait window (portrait), or by client type (auto).
-	Layout       string
+	Layout string
+	// Phone is the --phone id: the dashboard's initial phone model, used to
+	// frame the stream while the addon's outline is not visible. "" = the
+	// remembered dashboard choice, else phones.DefaultID.
+	Phone        string
 	Encoder      string // one of the Encoder* constants
 	Capture      string // CaptureWindow (production) or CaptureTest (synthetic test pattern)
 	PortFile     string // --port-file: write the bound TCP port here after listen (test harnesses)
@@ -128,7 +134,8 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.StringVar(&cfg.Token, "token", "", "pairing token (default: randomly generated and printed at startup)")
 	fs.StringVar(&resolution, "resolution", ResolutionFit, "capture resolution: \"fit\" (default) sizes the WoW window to the largest 9:16 portrait rect that fits the primary monitor, capped at the 1080x1920 design size; an explicit WIDTHxHEIGHT must match the WoW window client size")
 	fs.IntVar(&cfg.FPS, "fps", 60, "capture/encode frame rate")
-	fs.StringVar(&cfg.Layout, "layout", LayoutAuto, "stream framing: \"band\" streams the centered 9:16 portrait band cropped from a native LANDSCAPE game window (no portrait window forcing); \"portrait\" forces the classic fitted portrait window and captures it whole; \"auto\" (default) picks band for legacy 1.12-engine clients and portrait for Classic Era")
+	fs.StringVar(&cfg.Layout, "layout", LayoutAuto, "stream framing: \"frame\" streams the centered phone frame the addon outlines in red inside a normal widescreen game window (any size); \"portrait\" forces the classic fitted portrait window and captures it whole; \"band\" = frame with a generic 9:16 phone; \"auto\" (default) = frame")
+	fs.StringVar(&cfg.Phone, "phone", "", "phone model id (see phones/phones.json) used to frame the stream until the addon's red outline is detected; the dashboard can change it live")
 	fs.IntVar(&cfg.BitrateKbps, "bitrate-kbps", 8000, "video bitrate in kbit/s (CBR)")
 	fs.StringVar(&cfg.Encoder, "encoder", EncoderAuto, "video encoder: auto|nvenc|amf|qsv|x264")
 	fs.StringVar(&cfg.Capture, "capture", CaptureWindow, "capture source: \"window\" streams the game window (production); \"test\" streams ffmpeg's testsrc2 synthetic pattern through the identical encode/parse/WebRTC path — works on any OS, needs no game (the setup wizard is skipped), for verifying the video pipeline end to end")
@@ -191,9 +198,19 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 		return nil, fmt.Errorf("--capture %q: must be window|test", cfg.Capture)
 	}
 	switch cfg.Layout {
-	case LayoutAuto, LayoutBand, LayoutPortrait:
+	case LayoutAuto, LayoutFrame, LayoutPortrait:
+	case layoutBandAlias:
+		cfg.Layout = LayoutFrame
+		if cfg.Phone == "" {
+			cfg.Phone = PhoneGeneric916
+		}
 	default:
-		return nil, fmt.Errorf("--layout %q: must be auto|band|portrait", cfg.Layout)
+		return nil, fmt.Errorf("--layout %q: must be auto|frame|portrait (band = frame with a 9:16 phone)", cfg.Layout)
+	}
+	if cfg.Phone != "" {
+		if _, ok := phones.ByID(cfg.Phone); !ok {
+			return nil, fmt.Errorf("--phone %q: unknown phone id (see phones/phones.json)", cfg.Phone)
+		}
 	}
 	switch cfg.ClientType {
 	case ClientTypeAuto, ClientTypeEra, ClientTypeLegacy:

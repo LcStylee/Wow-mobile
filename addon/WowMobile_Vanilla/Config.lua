@@ -34,12 +34,11 @@ local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band
 Config.DECK_FIXED_PX = DECK_FIXED_PX -- Viewport clamps the square against it
 
 local function RatioMax()
-	-- BAND aspect in design px: height over width of the region the layout
-	-- actually lives in — the full window in portrait mode, the centered 9:16
-	-- band in landscape mode (Band.lua; band height is the window height, so
-	-- only the width reference changes). Uniform scale, so UI units suffice.
+	-- FRAME aspect in design px: height over width of the phone frame the
+	-- layout lives in (Band.lua). Uniform scale, so UI units suffice.
 	local bandWidth = (WM.Band and WM.Band.width) or UIParent:GetWidth()
-	local aspect = UIParent:GetHeight() / bandWidth
+	local bandHeight = (WM.Band and WM.Band.height) or UIParent:GetHeight()
+	local aspect = bandHeight / bandWidth
 	local maxRatio = aspect - DECK_FIXED_PX / DESIGN_WIDTH
 	if maxRatio > 1.20 then maxRatio = 1.20 end
 	if maxRatio < RATIO_MIN then maxRatio = RATIO_MIN end
@@ -162,6 +161,7 @@ local function PrintHelp()
 	WM.Print("commands:")
 	WM.Print(string.format("  /wm viewport <%d..%d>  — world-square height in design px (1080 = full-width square)", lo, hi))
 	WM.Print("  /wm scale <0.64..1.0>  — uiScale cvar override")
+	WM.Print("  /wm phone [name|id|WxH]  — pick the phone the frame is shaped for (no argument: toggle the selector)")
 	WM.Print("  /wm settings  — open the touch settings panel")
 	WM.Print("  /wm status  — viewport/deck/module health")
 	WM.Print("  /wm errors  — list recorded module errors")
@@ -206,21 +206,19 @@ local function PrintStatus()
 		if band.px.approx then
 			units = "UI units (physical size unavailable — crop match approximate)"
 		else
-			units = "physical px; the server's crop must match"
+			units = "physical px; the server crops the outline's interior"
 		end
-		if band.mode == "band" then
-			WM.Print(string.format(
-				"mode: landscape band — 9:16 band %dx%d at x=%d (%s)",
-				band.px.width, band.px.height, band.px.x, units))
-		else
-			WM.Print(string.format("mode: portrait full-window — %dx%d (%s)",
-				band.px.width, band.px.height, units))
-		end
+		local pending = ""
+		if band.NeedsReload() then pending = " — /reload pending" end
+		WM.Print(string.format(
+			"mode: phone frame — %s, %dx%d at (%d,%d) of a %dx%d window (%s)%s",
+			band.PhoneName(band.phone), band.px.width, band.px.height, band.px.x, band.px.y,
+			band.client.w, band.client.h, units, pending))
 	end
 	-- Basis dump — every number the band derivation used (Band.ClientPixels'
 	-- chosen-basis logic) plus the world rect that actually applied, so a
 	-- field report pinpoints any residual addon/server crop mismatch in one
-	-- paste: compare "band rect"/"world rect" px against the server log's
+	-- paste: compare "frame rect"/"world rect" px against the server log's
 	-- crop numbers.
 	if band and band.client then
 		local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
@@ -229,9 +227,9 @@ local function PrintStatus()
 			band.gxRaw or "unreadable", uiW, uiH, uiW / uiH,
 			band.client.basis, band.client.w, band.client.h))
 		WM.Print(string.format(
-			"band rect: x=%d w=%d h=%d px (left=%.1f width=%.1f UI units)",
-			band.px.x, band.px.width, band.px.height,
-			band.left or 0, band.width or 0))
+			"frame rect: x=%d y=%d w=%d h=%d px (left=%.1f top=%.1f width=%.1f UI units)",
+			band.px.x, band.px.y, band.px.width, band.px.height,
+			band.left or 0, band.top or 0, band.width or 0))
 	end
 	if WM.Viewport and WM.Viewport.GetStatus and band and band.client then
 		local vs = WM.Viewport.GetStatus()
@@ -276,8 +274,11 @@ SlashCmdList["WOWMOBILE"] = function(msg)
 	msg = msg or ""
 	-- Lua 5.0: no string.match — string.find with captures instead.
 	local _, _, cmd, cmdArg = string.find(msg, "^%s*(%S*)%s*(%S*)")
+	local _, _, rest = string.find(msg, "^%s*%S*%s*(.-)%s*$")
 	cmd = string.lower(cmd or "")
-	if cmd == "viewport" then
+	if cmd == "phone" then
+		if WM.PhoneSelect then WM.PhoneSelect.Command(rest or "") end
+	elseif cmd == "viewport" then
 		Config.SetHeight(cmdArg)
 	elseif cmd == "scale" then
 		Config.SetScale(cmdArg)

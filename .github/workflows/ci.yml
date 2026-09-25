@@ -48,6 +48,11 @@ jobs:
           sudo apt-get install -y -qq nsis
           makensis -DVERSION=v0.0.0-ci -DEXE="$PWD/wowstreamd.exe" installer/wowmobile.nsi
 
+      # phones/phones.json is the single source of truth for the phone-frame
+      # table; the Go/JS/Lua copies must be regenerated with it.
+      - name: generated phone tables up to date
+        run: node tools/genphones.js --check
+
       - name: client tests
         working-directory: client
         run: node --test tests/

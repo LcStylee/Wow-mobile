@@ -14,7 +14,8 @@ import { TouchLayer } from './input.js';
 import { QuickRail } from './quickbar.js';
 import { ChatKeyboard } from './keyboard.js';
 import { Hud } from './hud.js';
-import { initLayout } from './layout.js';
+import { initLayout, setVideoAspect } from './layout.js';
+import { aspectNotice } from './phonematch.js';
 
 const TOKEN_KEY = 'wowmobile.token';
 const CLIENT_ID = 'wowmobile-pwa/1.0';
@@ -341,7 +342,11 @@ class App {
           this.#fatal(`Server protocol v${msg.proto[0]} is newer than this client.`);
           return;
         }
-        if (msg.video) this.#touch.setVideoGeometry(msg.video);
+        if (msg.video) {
+          this.#touch.setVideoGeometry(msg.video);
+          setVideoAspect(msg.video.w, msg.video.h);
+          showPhoneNotice(msg.video.w, msg.video.h);
+        }
         // Persist the token only now that the server accepted it: the QR-scan
         // path deliberately defers persistence to this point so a mis-scanned
         // "token" can never clobber a working saved pairing (idempotent for
@@ -1042,6 +1047,30 @@ function initShellUpdate(app) {
     location.reload();
   });
 }
+
+// Phone-aspect notice: the stream (hello's encoded size) is shaped for a
+// different phone than this one — say which, once per distinct size, and let
+// a tap (or 15 s) dismiss it.
+let noticeShownFor = '';
+function showPhoneNotice(w, h) {
+  const el = document.getElementById('phone-notice');
+  if (!el) return;
+  const text = aspectNotice(w, h, screen.width, screen.height, window.devicePixelRatio || 1);
+  const key = `${w}x${h}`;
+  if (!text) {
+    el.hidden = true;
+    return;
+  }
+  if (noticeShownFor === key) return;
+  noticeShownFor = key;
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(showPhoneNotice.timer);
+  showPhoneNotice.timer = setTimeout(() => { el.hidden = true; }, 15000);
+}
+document.getElementById('phone-notice')?.addEventListener('click', (e) => {
+  e.currentTarget.hidden = true;
+});
 
 // One Settings instance shared by the layout decision (deckLayout override)
 // and the app (created before either consumer reads it).

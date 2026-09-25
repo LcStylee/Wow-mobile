@@ -66,21 +66,36 @@ func fixedFileVersion(data []byte) (GameVersion, bool) {
 // custom clients advertise themselves (Turtle WoW stamps 1.17, OctoWow 1.18
 // — both run the 1.12 engine, field report v0.3.2), so such stamps must
 // never be treated as conclusive evidence of a Classic Era client.
+//
+// WoW: Forever (Blizzard, beta September 2026, live November 4 2026) is the
+// exception above that range: it stamps 1.60.x (interface 16001) and runs
+// the MODERN client — Mainline UI architecture and API, the same CVar family
+// as Classic Era — so it takes the Classic Era path (addon/WowMobile, whose
+// TOC lists 16001). Its minor sits far above every vanilla-plus stamp seen in
+// the field, which is what keeps the two apart.
 const (
 	classicEraMinMinor = 13
 	classicEraMaxMinor = 15
+	foreverMinMinor    = 60
+	foreverMaxMinor    = 99
 )
+
+// IsForeverStamp reports a WoW: Forever client version stamp (1.60–1.99).
+func IsForeverStamp(v GameVersion) bool {
+	return v.Major == 1 && v.Minor >= foreverMinMinor && v.Minor <= foreverMaxMinor
+}
 
 // isVanillaPlusStamp reports a major-1 stamp above the official Classic Era
 // range: a vanilla-plus custom client (1.12 engine) announcing its own
 // content version. Inconclusive for classification on its own — but a strong
 // hint toward the 1.12 engine, which the wizard's ask-dialog default uses.
 func isVanillaPlusStamp(v GameVersion) bool {
-	return v.Major == 1 && v.Minor > classicEraMaxMinor
+	return v.Major == 1 && v.Minor > classicEraMaxMinor && !IsForeverStamp(v)
 }
 
 // ClientTypeFromVersion maps a stamped version to a client type: 1.13–1.15 is
-// the official Classic(-Era) lineage, 1.0–1.12 the vanilla client. Everything
+// the official Classic(-Era) lineage and 1.60+ WoW: Forever (both the
+// modern-client "classicEra" type), 1.0–1.12 the vanilla client. Everything
 // else is not classified — the name/path heuristics and, finally, the user
 // decide. That covers two distinct cases:
 //
@@ -103,6 +118,8 @@ func ClientTypeFromVersion(v GameVersion) (ClientType, bool) {
 		return ClientTypeLegacy, true
 	case v.Minor <= classicEraMaxMinor:
 		return ClientTypeClassicEra, true
+	case IsForeverStamp(v):
+		return ClientTypeClassicEra, true // WoW: Forever — modern client, modern addon
 	}
-	return "", false // 1.16+: vanilla-plus custom stamp, not conclusive
+	return "", false // 1.16–1.59: vanilla-plus custom stamp, not conclusive
 }

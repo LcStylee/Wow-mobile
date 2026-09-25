@@ -1,7 +1,8 @@
 # WoW Mobile
 
-Play **your own World of Warcraft Classic Era** on your phone — streamed live from
-your Windows gaming PC, with the entire UI rebuilt for portrait touch.
+Play **your own World of Warcraft Classic Era or WoW: Forever** on your phone —
+streamed live from your Windows gaming PC, with the entire UI rebuilt for
+portrait touch.
 
 The `WowMobile` addon reshapes the interface into a phone layout (designed in
 1080x1920 and scaled to fit): the 3D world in a square viewport up top, and a
@@ -10,26 +11,26 @@ The `WowMobile` addon reshapes the interface into a phone layout (designed in
 and injects your touches back into the game as ordinary mouse and keyboard
 input. The phone side is a zero-install web app you add to your home screen.
 
-There are two window layouts, picked automatically by client type:
-
-- **Band** (the default for 1.12-engine private-server clients): the game keeps
-  its normal **landscape** window — resize or maximize it freely — the addon
-  confines the whole phone UI to a centered 9:16 band, and the server crops and
-  streams just that band. 1.12 clients reject portrait render resolutions, so
-  the band is how they get a portrait phone experience anyway.
-- **Portrait** (the default for Classic Era): the game runs in a portrait 9:16
-  window sized to fit your monitor and is captured whole.
+The game keeps its **normal widescreen window** — 4K fullscreen, 1080p, or
+any windowed size in between. The addon draws a **red outline** in the middle
+of it, shaped like **your phone** (pick the model in the panel next to the
+outline — the 20 most-used phones of 2026 come first, search finds the rest,
+or enter a custom size), and puts the whole touch UI inside it. The server
+finds the outline on screen and streams exactly its interior, so the stream
+always matches what you see inside the red line, at any resolution.
 
 ```
-PC:    WoW Classic + WowMobile addon
-        band:     [ ██ | 9:16 phone UI | ██ ]  landscape window, center band streamed
-        portrait: [ 9:16 phone UI ]            portrait window, captured whole
-       └─ wowstreamd: FFmpeg capture/crop → H.264 → WebRTC ⇄ touch input → SendInput
-Phone: browser PWA — fullscreen video + gesture layer (joystick, camera drag, taps)
+PC:    WoW (any window size) + WowMobile addon
+         [ ██ |▌red outline: phone UI▐| phone selector ]
+       └─ wowstreamd: reads the outline → crops → H.264 → WebRTC ⇄ touch → SendInput
+Phone: browser PWA — video sized to the stream + gesture layer + control deck
 ```
 
-The full picture — component boundaries, the band contract and portrait/square
-rationale, the encoder pipeline, and the touch-mapping table — is in
+The old forced-portrait window is still available (`--layout portrait`).
+The phone-frame contract (placement math, outline format, phone table) is
+[docs/PHONE_FRAME.md](docs/PHONE_FRAME.md).
+
+The full picture — component boundaries, the portrait/square rationale, the encoder pipeline, and the touch-mapping table — is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The client⇄server wire format is
 specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
@@ -177,10 +178,11 @@ about how any third party treats your account.
 Yes — streaming, touch input, the dashboard, and the phone client all work
 identically. The wizard's folder picker accepts any folder containing
 `Wow.exe`/`VanillaFixes.exe`, or you can pick **any** game `.exe` yourself
-(`--game-exe` from the command line). 1.12 clients get the **band layout** by
-default — the game keeps a native landscape window (1.12 rejects portrait
-render resolutions) and the server streams the centered 9:16 band — with the
-right `Config.wtf` CVars written automatically. The touch
+(`--game-exe` from the command line). 1.12 clients get the same **phone-frame
+layout** as everyone else — the game keeps a native landscape window (1.12
+rejects portrait render resolutions anyway) and the server streams the
+red-outlined phone frame — with the right `Config.wtf` CVars written
+automatically. The touch
 UI comes along too: the Classic Era addon (Interface `11507`) cannot load on
 1.12, so the wizard installs **`WowMobile_Vanilla`** — a dedicated 1.12
 (Lua 5.0) port of the addon — instead; enable **WoW Mobile (Vanilla)** once at
@@ -212,6 +214,24 @@ in the HUD — set both to the same value, see the
 They would need the pairing token (128 random bits, shown only on your PC), and
 media is DTLS-SRTP encrypted. One session at a time: pairing a second device
 cleanly replaces the first, never mirrors it.
+
+**Does it work with WoW: Forever?**
+Yes — Forever (client 1.60.x, interface 16001, live November 4 2026) runs the
+modern retail-style client, and the `WowMobile` addon loads there: its TOC
+lists `16001`, and a compatibility layer maps the classic API calls Forever
+removed onto their modern replacements and keeps the health bars working
+under Forever's combat-data restrictions ("secret values"). The installer
+recognizes Forever installs (including the beta's `_classic_beta_` folder)
+and installs the right addon. Forever is newer than any field test of this
+project — please report issues with `/wm status` and `/wm errors`. Details:
+[docs/PHONE_FRAME.md §10](docs/PHONE_FRAME.md#10-wow-forever).
+
+**Which phones are supported?**
+Any phone with a modern browser. The in-game selector (and `/wm phone`) lists
+the 20 most-used phones of 2026 first and 13 more after them; pick yours so
+the red outline has exactly your screen's shape. Not listed? Enter a custom
+size, or add it to `phones/phones.json` and run `node tools/genphones.js`
+([how](docs/PHONE_FRAME.md#9-adding-a-phone)).
 
 ## Repository layout
 

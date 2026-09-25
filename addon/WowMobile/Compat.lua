@@ -20,6 +20,191 @@
 local _, WM = ...
 
 --------------------------------------------------------------------------------
+-- WoW: Forever polyfills (interface 16001, client 1.60.x)
+-- Forever runs the MODERN (Mainline, 12.x-era) client and API, where many
+-- Classic globals this addon calls were removed in favor of namespaced APIs.
+-- Each polyfill below is installed ONLY when the classic global is missing
+-- AND its modern replacement exists, and returns the classic positional
+-- shape — so Classic Era (where every global exists) is untouched, call
+-- sites need no branching, and other addons feature-testing the global get a
+-- faithful implementation. Spell book banks: the classic bookType strings
+-- ("spell"/"pet") map onto Enum.SpellBookSpellBank.
+--
+-- Also here: WM.IsSecret(v) — Forever ships Midnight's "secret values":
+-- unit health/power (and more) can arrive as opaque values in restricted
+-- contexts that StatusBars accept but arithmetic, comparisons and
+-- string.format reject. Health/power code checks it before doing math.
+--------------------------------------------------------------------------------
+
+local issecret = issecretvalue
+function WM.IsSecret(v)
+	return issecret ~= nil and issecret(v) == true
+end
+
+local function Bank(bookType)
+	local banks = Enum and Enum.SpellBookSpellBank
+	if not banks then return bookType end
+	if bookType == "pet" or bookType == (BOOKTYPE_PET or "pet") then return banks.Pet end
+	return banks.Player
+end
+
+if not GetSpellInfo and C_Spell and C_Spell.GetSpellInfo then
+	function GetSpellInfo(spell)
+		if spell == nil then return nil end
+		local i = C_Spell.GetSpellInfo(spell)
+		if not i then return nil end
+		return i.name, nil, i.iconID, i.castTime, i.minRange, i.maxRange, i.spellID, i.originalIconID
+	end
+end
+
+if C_SpellBook then
+	if not GetNumSpellTabs and C_SpellBook.GetNumSpellBookSkillLines then
+		function GetNumSpellTabs()
+			return C_SpellBook.GetNumSpellBookSkillLines() or 0
+		end
+	end
+	if not GetSpellTabInfo and C_SpellBook.GetSpellBookSkillLineInfo then
+		function GetSpellTabInfo(index)
+			local d = C_SpellBook.GetSpellBookSkillLineInfo(index)
+			if not d then return nil end
+			return d.name, d.iconID, d.itemIndexOffset or 0, d.numSpellBookItems or 0, d.isGuild, d.offSpecID
+		end
+	end
+	if not GetSpellBookItemName and C_SpellBook.GetSpellBookItemName then
+		function GetSpellBookItemName(slot, bookType)
+			return C_SpellBook.GetSpellBookItemName(slot, Bank(bookType))
+		end
+	end
+	if not GetSpellBookItemTexture and C_SpellBook.GetSpellBookItemTexture then
+		function GetSpellBookItemTexture(slot, bookType)
+			return C_SpellBook.GetSpellBookItemTexture(slot, Bank(bookType))
+		end
+	end
+	if not GetSpellBookItemInfo and C_SpellBook.GetSpellBookItemInfo then
+		local TYPE = { [1] = "SPELL", [2] = "FUTURESPELL", [3] = "PETACTION", [4] = "FLYOUT" }
+		function GetSpellBookItemInfo(slot, bookType)
+			local d = C_SpellBook.GetSpellBookItemInfo(slot, Bank(bookType))
+			if not d then return nil end
+			return TYPE[d.itemType], d.actionID or d.spellID
+		end
+	end
+	if not IsPassiveSpell and C_SpellBook.IsSpellBookItemPassive then
+		function IsPassiveSpell(slot, bookType)
+			return C_SpellBook.IsSpellBookItemPassive(slot, Bank(bookType))
+		end
+	end
+	if not PickupSpellBookItem and C_SpellBook.PickupSpellBookItem then
+		function PickupSpellBookItem(slot, bookType)
+			return C_SpellBook.PickupSpellBookItem(slot, Bank(bookType))
+		end
+	end
+end
+
+if C_Item then
+	if not GetItemInfo and C_Item.GetItemInfo then
+		GetItemInfo = C_Item.GetItemInfo
+	end
+	if not GetItemIcon and C_Item.GetItemIconByID then
+		GetItemIcon = C_Item.GetItemIconByID
+	end
+end
+
+if C_QuestLog then
+	local function QuestID(index)
+		return C_QuestLog.GetQuestIDForLogIndex and C_QuestLog.GetQuestIDForLogIndex(index)
+	end
+	if not GetNumQuestLogEntries and C_QuestLog.GetNumQuestLogEntries then
+		GetNumQuestLogEntries = C_QuestLog.GetNumQuestLogEntries
+	end
+	if not GetQuestLogTitle and C_QuestLog.GetInfo then
+		function GetQuestLogTitle(index)
+			local q = C_QuestLog.GetInfo(index)
+			if not q then return nil end
+			local complete
+			if q.questID and C_QuestLog.IsComplete and C_QuestLog.IsComplete(q.questID) then
+				complete = 1
+			end
+			return q.title, q.level, q.suggestedGroup, q.isHeader, q.isCollapsed, complete, q.frequency, q.questID
+		end
+	end
+	if not SelectQuestLogEntry and C_QuestLog.SetSelectedQuest then
+		function SelectQuestLogEntry(index)
+			local id = QuestID(index)
+			if id then C_QuestLog.SetSelectedQuest(id) end
+		end
+	end
+	if not GetQuestLogLeaderBoard and C_QuestLog.GetQuestObjectives then
+		function GetQuestLogLeaderBoard(objective, index)
+			local id = QuestID(index)
+			local o = id and C_QuestLog.GetQuestObjectives(id)
+			o = o and o[objective]
+			if not o then return nil end
+			return o.text, o.type, o.finished
+		end
+	end
+	if not GetNumQuestLeaderBoards and C_QuestLog.GetQuestObjectives then
+		function GetNumQuestLeaderBoards(index)
+			local id = QuestID(index)
+			local o = id and C_QuestLog.GetQuestObjectives(id)
+			return o and #o or 0
+		end
+	end
+	if not IsQuestWatched and C_QuestLog.GetQuestWatchType then
+		function IsQuestWatched(index)
+			local id = QuestID(index)
+			return id ~= nil and C_QuestLog.GetQuestWatchType(id) ~= nil
+		end
+	end
+	if not AddQuestWatch and C_QuestLog.AddQuestWatch then
+		function AddQuestWatch(index)
+			local id = QuestID(index)
+			if id then C_QuestLog.AddQuestWatch(id) end
+		end
+	end
+	if not RemoveQuestWatch and C_QuestLog.RemoveQuestWatch then
+		function RemoveQuestWatch(index)
+			local id = QuestID(index)
+			if id then C_QuestLog.RemoveQuestWatch(id) end
+		end
+	end
+	if not SetAbandonQuest and C_QuestLog.SetAbandonQuest then
+		SetAbandonQuest = C_QuestLog.SetAbandonQuest
+	end
+	if not AbandonQuest and C_QuestLog.AbandonQuest then
+		AbandonQuest = C_QuestLog.AbandonQuest
+	end
+end
+
+if C_Reputation then
+	if not GetNumFactions and C_Reputation.GetNumFactions then
+		GetNumFactions = C_Reputation.GetNumFactions
+	end
+	if not GetFactionInfo and C_Reputation.GetFactionDataByIndex then
+		function GetFactionInfo(index)
+			local d = C_Reputation.GetFactionDataByIndex(index)
+			if not d then return nil end
+			return d.name, d.description, d.reaction, d.currentReactionThreshold,
+				d.nextReactionThreshold, d.currentStanding, d.atWarWith, d.canToggleAtWar,
+				d.isHeader, d.isCollapsed, d.isHeaderWithRep or not d.isHeader, d.isWatched,
+				d.isChild, d.factionID
+		end
+	end
+	if not ExpandFactionHeader and C_Reputation.ExpandFactionHeader then
+		ExpandFactionHeader = C_Reputation.ExpandFactionHeader
+	end
+	if not CollapseFactionHeader and C_Reputation.CollapseFactionHeader then
+		CollapseFactionHeader = C_Reputation.CollapseFactionHeader
+	end
+end
+
+-- The modern client has no skill-line API (professions moved to the trade
+-- skill UI): an empty list keeps the character sheet's Skills tab working.
+if not GetNumSkillLines then
+	function GetNumSkillLines() return 0 end
+	function GetSkillLineInfo() return nil end
+end
+
+--------------------------------------------------------------------------------
 -- Gossip
 -- Normalized entry shape handed to the UI:
 --   option:   { name, icon, key, index }       key (may be nil) is the real

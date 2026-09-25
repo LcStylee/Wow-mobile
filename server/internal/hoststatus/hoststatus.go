@@ -62,9 +62,10 @@ type Status struct {
 	steps      []Step
 	encoder    string
 	resolution string // decided capture resolution "WxH" (monitor-fitted or explicit)
-	// layout is the live stream-framing line, e.g. "center band 1215x2160 of
-	// 3840x2160 (encoded at 1080x1920)" in band mode or "portrait window
-	// 552x984" in portrait mode; "" until the first frame decision.
+	// layout is the live stream-framing line, e.g. "phone frame 1203x2148
+	// of 3840x2160 (encoded at 1074x1920) — frame: addon outline" in frame
+	// mode or "portrait window 552x984" in portrait mode; "" until the first
+	// frame decision.
 	layout     string
 	clientType string
 	addonNote  string
@@ -81,6 +82,9 @@ type Status struct {
 	pairingURL  string
 	running     bool // serving (the wizard finished and the listener is up)
 	phone       Phone
+	// phoneModel is the dashboard's phone-model id (frame layout's fallback
+	// framing, docs/PHONE_FRAME.md); "" outside frame layout.
+	phoneModel string
 
 	// Live callbacks, optional. Called (unlocked) at snapshot time.
 	connectedFn func() bool
@@ -138,8 +142,8 @@ func (s *Status) SetResolution(res string) {
 	s.resolution = res
 }
 
-// SetLayout records the live stream-framing line (band contract: "center
-// band WxH of AxB", or "portrait window WxH"), recomputed with the live
+// SetLayout records the live stream-framing line ("phone frame WxH of AxB
+// — frame: <source>", or "portrait window WxH"), recomputed with the live
 // window before every capture launch; "" clears it.
 func (s *Status) SetLayout(layout string) {
 	if s == nil {
@@ -150,7 +154,7 @@ func (s *Status) SetLayout(layout string) {
 	s.layout = layout
 }
 
-// SetClientType records "classicEra"/"legacy" for the dashboard.
+// SetClientType records "classicEra"/"forever"/"legacy" for the dashboard.
 func (s *Status) SetClientType(ct string) {
 	if s == nil {
 		return
@@ -239,6 +243,16 @@ func (s *Status) SetRunning(running bool) {
 	s.running = running
 }
 
+// SetPhone records the dashboard's selected phone-model id.
+func (s *Status) SetPhone(id string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.phoneModel = id
+}
+
 // SetPhoneInfo records the most recent successful pairing's request metadata.
 func (s *Status) SetPhoneInfo(remote, userAgent string) {
 	if s == nil {
@@ -278,8 +292,8 @@ type snapshot struct {
 	Steps      []Step `json:"steps"`
 	Encoder    string `json:"encoder"`
 	Resolution string `json:"resolution"`
-	// Layout is the live stream-framing line (band contract), e.g.
-	// "center band 1215x2160 of 3840x2160 (encoded at 1080x1920)".
+	// Layout is the live stream-framing line, e.g. "phone frame 1203x2148
+	// of 3840x2160 (encoded at 1074x1920) — frame: addon outline".
 	Layout     string `json:"layout"`
 	ClientType string `json:"clientType"`
 	AddonNote  string `json:"addonNote"`
@@ -294,7 +308,9 @@ type snapshot struct {
 	SelfCheckOK bool   `json:"selfCheckOk"`
 	PairingURL  string `json:"pairingUrl"`
 	Phone       Phone  `json:"phone"`
-	Stream      Stream `json:"stream"`
+	// PhoneModel is the dashboard's phone-model id ("" outside frame layout).
+	PhoneModel string `json:"phoneModel"`
+	Stream     Stream `json:"stream"`
 }
 
 // JSON serializes the current state for GET /host/api/status.
@@ -318,6 +334,7 @@ func (s *Status) JSON() []byte {
 		SelfCheckOK:    s.selfCheckOK,
 		PairingURL:     s.pairingURL,
 		Phone:          s.phone,
+		PhoneModel:     s.phoneModel,
 	}
 	connectedFn, statsFn := s.connectedFn, s.statsFn
 	s.mu.Unlock()

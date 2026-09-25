@@ -62,14 +62,26 @@
                ffmpeg's stderr tail — readable before any phone connects. -->
           <div><dt>Pipeline</dt><dd id="self-check">checking…</dd></div>
           <div><dt>Window</dt><dd id="resolution">–</dd></div>
-          <!-- Live stream framing (the band contract): "center band
-               1215x2160 of 3840x2160 (encoded at 1080x1920)" in band mode,
-               "portrait window 552x984" in portrait mode — recomputed from
-               the real window before every capture launch. -->
+          <!-- Live stream framing (the phone-frame contract): "phone frame
+               1203x2148 of 3840x2160 (encoded at 1074x1920) — frame: addon
+               outline", or "portrait window 552x984" in portrait mode —
+               recomputed from the real window before every capture launch. -->
           <div><dt>Layout</dt><dd id="layout">–</dd></div>
           <div><dt>Client</dt><dd id="client-type">–</dd></div>
           <div><dt>Phone</dt><dd id="phone">not connected</dd></div>
         </dl>
+        <!-- Phone model (frame layout only): the fallback framing while the
+             addon's red outline is not visible in the game window. The
+             in-game selector (/wm phone) is the primary control. -->
+        <div id="phone-picker" hidden>
+          <h2 class="mt">Phone model</h2>
+          <p class="hint">Pick your phone in-game (the panel next to the red
+            outline, or <code>/wm phone</code>). This choice frames the stream
+            only while the outline is not visible.</p>
+          <input id="phone-search" type="search" placeholder="Search phones…"
+            autocomplete="off" aria-label="Search phone models">
+          <ul id="phone-list" role="listbox" aria-label="Phone models"></ul>
+        </div>
         <!-- Change-game affordance: shown once a game install is chosen. -->
         <p class="hint" id="game-hint" hidden>Wrong install? Restart WoW Mobile
           with <code>--choose-game</code> to pick a different World of Warcraft

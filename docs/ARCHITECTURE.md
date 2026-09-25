@@ -34,6 +34,16 @@ UI rebuilt for portrait touch. Three components, one repo:
 
 ### 1. THE BAND CONTRACT — the primary design
 
+> **Superseded in v0.5.0 by the PHONE FRAME contract
+> ([PHONE_FRAME.md](PHONE_FRAME.md)).** The idea below — a normal landscape
+> window with the phone UI confined to a centered portrait region that the
+> server crops — is unchanged, but the region now has the aspect of the phone
+> model picked in-game, sits inside a 6 px red/cyan outline the addon draws,
+> and the server READS that outline off the window instead of recomputing a
+> 9:16 rect (so the addon's drawing is the single source of truth). The 9:16
+> band survives as the `generic-9-16` phone (`--layout band`). The rationale
+> below still applies; the formulas are PHONE_FRAME.md §4.
+
 The touch experience is a 9:16 portrait surface. The game window does **not**
 have to be: when the game's client area is **LANDSCAPE** (`width > height`),
 the stream is the **centered 9:16 portrait band** cropped out of it — the
@@ -311,18 +321,20 @@ client from it, so the released `wowstreamd.exe` is fully self-contained.
 
 | Path | What | Validated by |
 |---|---|---|
-| `addon/WowMobile/` | WoW Classic Era addon (Lua, `## Interface: 11507`); embedded, wizard-installed on Classic Era clients | luaparse syntax check (CI) + critic review |
+| `addon/WowMobile/` | WoW Classic Era + WoW: Forever addon (Lua, `## Interface: 11507, 16001`); embedded, wizard-installed on both | luaparse syntax check (CI) + critic review |
 | `addon/WowMobile_Vanilla/` | 1.12 port of the addon (Lua 5.0, `## Interface: 11200`); embedded, wizard-installed on 1.12 private-server clients (which the Classic Era addon cannot load on) | luaparse syntax check (CI) + critic review |
 | `server/` | Go streaming host for Windows + first-run wizard (console text flow, or native dialogs in the windowed GUI mode of the `-H=windowsgui` release build) | `GOOS=windows go vet ./...`, `go test ./...` (portable packages), CI |
 | `client/` | Zero-build PWA touch client; embedded, served by the exe | `node --test tests/` (CI), critic review |
 | `client/host/` | Host status dashboard (QR, checklist, quit); embedded separately (`HostFS`) and served **loopback-only** at `/host` | `node --check` (CI), loopback-enforcement unit tests |
 | `protocol/` | Data-channel wire protocol spec | shared contract for server + client |
+| `phones/` | Phone table (`phones.json`, the single source of truth) + shared frame contract vectors | `tools/genphones.js --check` (CI); vectors asserted in Go, JS and both Lua addons |
+| `tools/` | `genphones.js` (phone-table generator), `lua50check.js` (1.12 Lua 5.0 gate) | CI |
 | `e2e/` | Playwright pipeline gate: `wowstreamd --capture test` streamed into a real browser; asserts frames decode, pixels are not black, input round-trips | `npm test` in `e2e/` (CI) |
 | `embed.go` | Root embed package (`ClientFS`, `HostFS`, `AddonFS`, `VanillaAddonFS`) | `embed_test.go` drift guard: embedded trees == disk trees byte-for-byte |
 | `installer/` | NSIS script producing `WowMobile-Setup.exe` (Start Menu/Desktop shortcuts, uninstaller) | `makensis` compile check (CI) |
 | `assets/` | App icon (`wowmobile.ico` + PNG source + generator); baked into the exe via the committed `rsrc_windows_amd64.syso` | — |
 | `.github/workflows/` | CI on every push/PR; tag-triggered release of `WowMobile-Setup.exe` + `wowstreamd.exe` | workflow runs on GitHub Actions |
-| `docs/` | This document, setup guide, touch UI coverage matrix | — |
+| `docs/` | This document, the phone-frame contract, setup guide, touch UI coverage matrix | — |
 
 ## Trust & security model
 

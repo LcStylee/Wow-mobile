@@ -92,6 +92,9 @@ type HostUI struct {
 	// Quit is invoked by POST /host/api/quit — the same graceful shutdown as
 	// Ctrl+C (cancel the Serve context).
 	Quit func()
+	// SetPhone (optional; frame layout) is invoked by POST /host/api/phone
+	// with a phone-model id; it returns an error for unknown ids.
+	SetPhone func(id string) error
 }
 
 // EnableHostUI turns on the /host dashboard routes. Must be called before

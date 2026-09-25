@@ -154,7 +154,7 @@ func makeWowDir(t *testing.T, withConfig bool) string {
 // makeGameDir builds a fake game dir around the given executable name. When
 // withConfig is set, Config.wtf is pre-satisfied for the client type the
 // wizard will assign to that exe (Classic Era for WowClassic.exe, legacy for
-// everything else in these tests).
+// everything else in these tests) under the portrait layout baseOpts pins.
 func makeGameDir(t *testing.T, exeName string, withConfig bool) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -194,6 +194,10 @@ func baseOpts(t *testing.T, wow string, sys *fakeSys, p Prompter) Options {
 		WowDirFlag:     wow,
 		Interactive:    true,
 		PollInterval:   time.Millisecond,
+		// Most wizard tests exercise the portrait flow (resolution fit,
+		// window enforcement); tests of the default (auto -> phone frame)
+		// clear this explicitly.
+		Layout: config.LayoutPortrait,
 	}
 }
 
@@ -505,6 +509,7 @@ func TestLegacyClientFlow(t *testing.T) {
 	sys := &fakeSys{pathFFmpeg: "ff", launchShows: true, deskW: 1920, deskH: 1080}
 	p := &scriptPrompter{t: t, confirms: []bool{true, true}} // create Config.wtf, launch
 	opts := baseOpts(t, dir, sys, p)
+	opts.Layout = "" // auto: the default layout under test
 
 	res, err := Run(opts)
 	if err != nil {
@@ -513,8 +518,8 @@ func TestLegacyClientFlow(t *testing.T) {
 	if res.ClientType != ClientTypeLegacy {
 		t.Fatalf("Wow.exe not detected as legacy: %+v", res)
 	}
-	if res.Layout != config.LayoutBand {
-		t.Fatalf("auto layout for a legacy client must resolve to band, got %q", res.Layout)
+	if res.Layout != config.LayoutFrame {
+		t.Fatalf("auto layout for a legacy client must resolve to the phone frame, got %q", res.Layout)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "Interface", "AddOns", "WowMobile")); !os.IsNotExist(err) {
 		t.Fatal("Classic Era addon must not be installed for a 1.12 client")
@@ -556,8 +561,8 @@ func TestLegacyClientFlow(t *testing.T) {
 	if !strings.Contains(text, LegacyAddonNote) {
 		t.Fatalf("legacy addon note missing:\n%s", text)
 	}
-	if !strings.Contains(text, "band layout") {
-		t.Fatalf("band layout line missing from the wizard output:\n%s", text)
+	if !strings.Contains(text, "phone-frame layout") {
+		t.Fatalf("phone-frame layout line missing from the wizard output:\n%s", text)
 	}
 }
 
@@ -602,13 +607,13 @@ func TestEraExplicitBandLayout(t *testing.T) {
 	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true, deskW: 2560, deskH: 1440}
 	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
 	opts := baseOpts(t, wow, sys, p)
-	opts.Layout = config.LayoutBand
+	opts.Layout = config.LayoutFrame
 
 	res, err := Run(opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.Layout != config.LayoutBand || res.ClientType != ClientTypeClassicEra {
+	if res.Layout != config.LayoutFrame || res.ClientType != ClientTypeClassicEra {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 	// Band mode leaves Width/Height as the design fallback frame only.
@@ -637,6 +642,7 @@ func TestLegacyBandUnmeasurableDesktop(t *testing.T) {
 	sys := &fakeSys{pathFFmpeg: "ff", windowPresent: true}
 	p := &scriptPrompter{t: t, confirms: []bool{true}} // create Config.wtf
 	opts := baseOpts(t, dir, sys, p)
+	opts.Layout = "" // auto: the default layout under test
 
 	if _, err := Run(opts); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1523,5 +1529,21 @@ func TestResolutionFitUnmeasurableFallsBack(t *testing.T) {
 	}
 	if opts2.Width != 600 || opts2.Height != 1066 {
 		t.Fatalf("persisted fit fallback wrong: %dx%d", opts2.Width, opts2.Height)
+	}
+}
+
+// --layout auto resolves to the phone frame for every client type (v0.5.0,
+// docs/PHONE_FRAME.md); explicit choices pass through.
+func TestResolveLayoutDefaultsToFrame(t *testing.T) {
+	for _, ct := range []ClientType{ClientTypeClassicEra, ClientTypeLegacy} {
+		if got := resolveLayout("", ct); got != config.LayoutFrame {
+			t.Errorf("auto for %s = %q, want frame", ct, got)
+		}
+		if got := resolveLayout(config.LayoutAuto, ct); got != config.LayoutFrame {
+			t.Errorf("explicit auto for %s = %q, want frame", ct, got)
+		}
+		if got := resolveLayout(config.LayoutPortrait, ct); got != config.LayoutPortrait {
+			t.Errorf("explicit portrait for %s = %q", ct, got)
+		}
 	}
 }

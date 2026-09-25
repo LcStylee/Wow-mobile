@@ -20,7 +20,7 @@ import (
 // runFirstRunWizard runs the five-step installer wizard before streaming.
 // It fills cfg.FFmpegPath with the located ffmpeg when the flag was not set,
 // so the rest of startup needs no PATH lookup of its own, and returns the
-// RESOLVED layout (config.LayoutBand/LayoutPortrait — the wizard settles
+// RESOLVED layout (config.LayoutFrame/LayoutPortrait — the wizard settles
 // --layout auto by the located client type; "" when the wizard was skipped
 // and main must fall back). In console mode the wizard is the classic text
 // flow on stdin/stdout; in GUI mode the same wizard logic speaks through

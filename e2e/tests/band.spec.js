@@ -1,21 +1,23 @@
-// Band-mode pipeline gate (the BAND CONTRACT, docs/ARCHITECTURE.md): the
-// server runs with --layout band and a LANDSCAPE 1280x720 "window" (the
-// --capture test platform reports the configured resolution as the live
-// client area), so the whole band chain runs for real:
+// Phone-frame pipeline gate (docs/PHONE_FRAME.md): the server runs with
+// --layout band — the v0.4.x alias of the frame layout with the generic 9:16
+// phone — and a LANDSCAPE 1280x720 "window" (the --capture test platform
+// reports the configured resolution as the live client area and has no
+// outline probe, so the dashboard phone frames the stream), so the whole
+// frame chain runs for real:
 //
 //   testsrc2 1280x720 (the simulated window)
-//     -> crop=405:720:438:0    (the centered 9:16 band, contract formula)
-//     -> scale=404:720         (even-floored encode)
+//     -> crop=398:708:441:6    (the centered frame inside the 6 px ring margin,
+//                               phones/contract_vectors.json generic-9-16)
 //     -> H.264 -> WebRTC -> browser
 //
 // Assertions, deliberately end-to-end honest:
-//   1. the browser DECODES the band: videoWidth x videoHeight == 404x720 —
-//      the hello geometry and the encoder agreed on the band, not the window;
+//   1. the browser DECODES the frame: videoWidth x videoHeight == 398x708 —
+//      the hello geometry and the encoder agreed on the frame, not the window;
 //   2. the picture is not black (the crop landed on live testsrc2 content);
 //   3. a synthesized tap at the phone's horizontal center is logged by the
-//      server's injector at the BAND-OFFSET window coordinate: winX ~= 640 —
-//      the window's center column, i.e. bandX(438) + half the band — proving
-//      the input mapping uses the same band the capture cropped.
+//      server's injector at the FRAME-OFFSET window coordinate: winX ~= 640 —
+//      the window's center column, i.e. frameX(441) + half the frame —
+//      proving the input mapping uses the same frame the capture cropped.
 //
 // The H.264-capability gating mirrors stream.spec.js (see the discussion
 // there): CI sets WOWMOBILE_REQUIRE_H264=1 to hard-fail on a codec-less
@@ -33,12 +35,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // The simulated game window: landscape 720p.
 const WINDOW_W = 1280;
 const WINDOW_H = 720;
-// The band contract for that window: bandW = roundHalfToEven(720*9/16) = 405
-// at bandX = roundHalfToEven((1280-405)/2) = 438; encode = even-floored band.
-const BAND_X = 438;
-const BAND_W = 405;
-const ENC_W = 404;
-const ENC_H = 720;
+// The frame contract for that window (generic-9-16 = 1080:1920): frameH =
+// 720 - 2*6 = 708, frameW = roundHalfToEven(708*1080/1920) = 398 at frameX =
+// roundHalfToEven((1280-398)/2) = 441; encode = the even frame itself.
+const BAND_X = 441;
+const BAND_W = 398;
+const ENC_W = 398;
+const ENC_H = 708;
 const FPS = 30;
 const TOKEN = 'e2e-band';
 
@@ -116,7 +119,7 @@ test.afterAll(async () => {
 // video content fills it 1:1 and tap coordinates need no letterbox math.
 test.use({ viewport: { width: ENC_W, height: ENC_H } });
 
-test('landscape window streams the centered 9:16 band and taps land band-offset', async ({ page }) => {
+test('landscape window streams the centered phone frame and taps land frame-offset', async ({ page }) => {
   await page.addInitScript(() => {
     window.__pcs = [];
     const Orig = window.RTCPeerConnection;
@@ -166,8 +169,8 @@ test('landscape window streams the centered 9:16 band and taps land band-offset'
     .toBeGreaterThan(0);
 
   // 1. The decoded stream IS the band, not the window: the hello geometry and
-  // the encoder both said 404x720 (crop + even-floor of the 1280x720 window's
-  // centered 405-wide band).
+  // the encoder both said 398x708 (the 1280x720 window's centered 398x708
+  // frame).
   await expect
     .poll(async () => page.evaluate(() => {
       const v = document.getElementById('video');
@@ -205,7 +208,7 @@ test('landscape window streams the centered 9:16 band and taps land band-offset'
   // 3. Input path with the band offset: dismiss the start overlay, tap the
   // control deck at the phone's HORIZONTAL CENTER, and require the server's
   // injector to log the mapped window coordinate at the window's center
-  // column — bandX + round(0.5 * (bandW-1)) = 438 + 202 = 640 — proving the
+  // column — frameX + round(0.5 * (frameW-1)) = 441 + 198 = 639 — proving the
   // tap was mapped into the band, not the full window (full-window mapping
   // would log ~640 too ONLY by coincidence of centering, so also require it
   // strictly inside the band's x-range while a full-window left-edge tap
@@ -238,7 +241,7 @@ test('landscape window streams the centered 9:16 band and taps land band-offset'
   expect(centerY).toBeLessThan(ENC_H);
 
   // A tap at the phone's LEFT edge pins the band offset itself: it must land
-  // at ~bandX (438) — far from window x=0, where full-window mapping would
+  // at ~frameX (441) — far from window x=0, where full-window mapping would
   // put it.
   const before = serverLog.length;
   await page.mouse.click(1, Math.round(ENC_H * 0.9));

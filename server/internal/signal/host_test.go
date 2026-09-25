@@ -287,3 +287,59 @@ func TestQRSVGTooLongErrorsNotPanics(t *testing.T) {
 		t.Fatal("oversized content must error")
 	}
 }
+
+func TestHostPhones(t *testing.T) {
+	status := hoststatus.New("v-test")
+	var picked string
+	s := New(":0", "tok", false, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("x")}}, "", "v-test", nil, testLogger())
+	s.EnableHostUI(HostUI{
+		FS:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("x")}},
+		Status: status,
+		SetPhone: func(id string) error {
+			if id != "galaxy-a07" {
+				return fmt.Errorf("unknown phone %q", id)
+			}
+			picked = id
+			return nil
+		},
+	})
+	mux := http.NewServeMux()
+	s.registerHostRoutes(mux)
+
+	rec := do(mux, "GET", "/host/api/phones", "127.0.0.1:1")
+	var list []struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Popularity int    `json:"popularity"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list) < 20 {
+		t.Fatalf("phones: %d %s", rec.Code, rec.Body.String())
+	}
+	if list[0].Popularity != 1 || list[0].Name == "" {
+		t.Fatalf("first phone must be the most used: %+v", list[0])
+	}
+
+	post := func(body, remote string, header bool) int {
+		req := httptest.NewRequest("POST", "/host/api/phone", strings.NewReader(body))
+		req.RemoteAddr = remote
+		req.Host = "127.0.0.1:8443"
+		if header {
+			req.Header.Set(PhoneHeader, "1")
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if c := post(`{"id":"galaxy-a07"}`, "127.0.0.1:1", false); c != http.StatusForbidden {
+		t.Fatalf("headerless phone change: %d", c)
+	}
+	if c := post(`{"id":"galaxy-a07"}`, "192.168.1.9:1", true); c != http.StatusForbidden {
+		t.Fatalf("LAN phone change: %d", c)
+	}
+	if c := post(`{"id":"nope"}`, "127.0.0.1:1", true); c != http.StatusBadRequest {
+		t.Fatalf("unknown phone: %d", c)
+	}
+	if c := post(`{"id":"galaxy-a07"}`, "127.0.0.1:1", true); c != http.StatusNoContent || picked != "galaxy-a07" {
+		t.Fatalf("phone change: %d picked=%q", c, picked)
+	}
+}

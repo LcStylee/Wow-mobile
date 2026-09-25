@@ -26,11 +26,14 @@
   --safe-left: env(safe-area-inset-left, 0px);
   /* Full dynamic viewport height; vh fallback for pre-dvh engines. */
   --vh100: 100vh;
-  /* Deck layout's video height: the 9:16 frame at full width, clamped to the
+  /* Stream aspect (height/width): the phone frame the server crops, set from
+   * the hello by layout.js setVideoAspect; 9:16 until then. */
+  --video-ratio: 1.7777778;
+  /* Deck layout's video height: the stream at full width, clamped to the
    * viewport below the top inset (the clamp only binds on screens where the
    * overlay fallback takes over anyway). #video, #touch and the deck all
    * derive from this ONE value, so their boxes can never disagree. */
-  --video-h: min(calc(100vw * 16 / 9), calc(var(--vh100) - var(--safe-top)));
+  --video-h: min(calc(100vw * var(--video-ratio)), calc(var(--vh100) - var(--safe-top)));
 }
 
 @supports (height: 100dvh) {
@@ -792,4 +795,23 @@ body.layout-overlay #hud.collapsed #hud-actions button:not(#btn-hud) {
   #st-enc {
     display: none;
   }
+}
+
+/* Phone-aspect notice (phonematch.js): the stream is shaped for another
+ * phone model. One line under the top inset; tap to dismiss. */
+#phone-notice {
+  position: fixed;
+  top: calc(var(--safe-top) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px;
+  border: 1px solid #ff3b3b;
+  border-radius: 10px;
+  background: rgba(20, 8, 8, 0.92);
+  color: var(--text, #e8e6df);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  z-index: 60;
 }

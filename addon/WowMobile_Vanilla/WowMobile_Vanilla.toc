@@ -2,16 +2,16 @@
 # ^ WoW vanilla 1.12 client (Lua 5.0). This is the vanilla port of the addon;
 #   the Classic Era 1.15 variant lives in addon/WowMobile.
 ## Title: WoW Mobile (Vanilla)
-## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in the centered 9:16 band of a native landscape window (band layout, the 1.12 default) or fills a portrait window; 1080x1920 design space, world square + control deck.
+## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone); world square + control deck.
 ## Author: WoW Mobile project
-## Version: 0.4.3
+## Version: 0.5.0
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/timers,
-# Band the landscape-band mode decision + the anchor frame the whole layout
-# hangs off (it must precede every WM.Px consumer, since the px factor is
-# computed against the band width — band layout is the server default for
-# 1.12 clients), Config the saved variables, Blizzard the default-UI
+# Phones the generated phone table (tools/genphones.js), Band the phone frame
+# + red outline + the anchor frame the whole layout hangs off (it must precede
+# every WM.Px consumer, since the px factor is computed against the frame
+# width), Config the saved variables, Blizzard the default-UI
 # banishment, Viewport the world square and deck rect (anchored to the band
 # frame), Deck the panel/scroller/menu infrastructure,
 # MoveMode the long-press pickup/drop layer (its MakeTarget/Begin*/Drop* API
@@ -33,10 +33,12 @@
 # WorldMap reflows Blizzard's map over the deck; Talents reflows the LoD
 # Blizzard_TalentUI TalentFrame into the world square (installed on
 # ADDON_LOADED, since 1.12 loads it via TalentFrame_LoadUI on first open).
-# Settings loads last because its panel
-# drives Config + Viewport. (No Compat.lua in this port: the 1.12 API is
+# Settings loads after the deck modules
+# because its panel drives Config + Viewport; PhoneSelect (the phone selector
+# beside the outline) needs only Band and loads last. (No Compat.lua in this port: the 1.12 API is
 # called directly.)
 Core.lua
+Phones.lua
 Band.lua
 Config.lua
 Blizzard.lua
@@ -72,3 +74,4 @@ Reader.lua
 WorldMap.lua
 Talents.lua
 Settings.lua
+PhoneSelect.lua

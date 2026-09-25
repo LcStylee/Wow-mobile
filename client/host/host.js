@@ -17,10 +17,15 @@
 
   const CLIENT_TYPE_LABELS = {
     classicEra: "WoW Classic Era (1.15)",
+    forever: "WoW: Forever (1.60)",
     legacy: "1.12-era client (private server)",
   };
 
   let quitRequested = false;
+  // Phone picker state (frame layout): the table from /host/api/phones and
+  // the server's current choice.
+  let phoneTable = null;
+  let currentPhone = "";
   let missedPolls = 0;
 
   function renderSteps(steps) {
@@ -85,12 +90,20 @@
 
     $("encoder").textContent = st.encoder || "probing…";
     $("resolution").textContent = st.resolution || "–";
-    // Live stream framing (band contract): e.g. "layout: center band
-    // 1215x2160 of 3840x2160 (encoded at 1080x1920)".
+    // Live stream framing (phone-frame contract): e.g. "phone frame
+    // 1203x2148 of 3840x2160 (encoded at 1074x1920) — frame: addon outline".
     $("layout").textContent = st.layout || "–";
     $("client-type").textContent = CLIENT_TYPE_LABELS[st.clientType] || "–";
     // The change-game affordance only makes sense once a game was chosen.
     $("game-hint").hidden = !st.clientType;
+
+    // Phone picker: only in frame layout (the server reports phoneModel).
+    $("phone-picker").hidden = !st.phoneModel;
+    if (st.phoneModel && st.phoneModel !== currentPhone) {
+      currentPhone = st.phoneModel;
+      if (!phoneTable) loadPhones();
+      else renderPhones();
+    }
 
     const phone = st.phone || {};
     const phoneEl = $("phone");
@@ -136,6 +149,57 @@
       // means the server is really gone.
       missedPolls += 1;
       if (quitRequested || missedPolls >= 3) $("offline").hidden = false;
+    }
+  }
+
+  async function loadPhones() {
+    try {
+      const res = await fetch("/host/api/phones", { cache: "no-store" });
+      if (!res.ok) return;
+      phoneTable = await res.json();
+      renderPhones();
+    } catch {
+      // Next status change retries.
+    }
+  }
+
+  // Substring search over "name id", every term must match; ranked phones
+  // first (the table arrives in selector order).
+  function renderPhones() {
+    const list = $("phone-list");
+    const terms = $("phone-search").value.toLowerCase().split(/\s+/).filter(Boolean);
+    list.textContent = "";
+    for (const p of phoneTable || []) {
+      const hay = (p.name + " " + p.id).toLowerCase();
+      if (!terms.every((t) => hay.includes(t))) continue;
+      const li = document.createElement("li");
+      li.role = "option";
+      li.dataset.id = p.id;
+      li.setAttribute("aria-selected", String(p.id === currentPhone));
+      const name = document.createElement("span");
+      name.textContent = (p.popularity ? p.popularity + ". " : "") + p.name;
+      const dims = document.createElement("small");
+      dims.textContent = p.streamW + "×" + p.streamH;
+      li.append(name, dims);
+      li.addEventListener("click", () => pickPhone(p.id));
+      list.append(li);
+    }
+  }
+
+  async function pickPhone(id) {
+    try {
+      // Custom header = the server's CSRF guard (see quit()).
+      const res = await fetch("/host/api/phone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Wowmobile-Phone": "1" },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) {
+        currentPhone = id;
+        renderPhones();
+      }
+    } catch {
+      // Server gone: the offline overlay covers it.
     }
   }
 
@@ -194,6 +258,7 @@
 
   $("copy").addEventListener("click", copyPairingURL);
   $("quit").addEventListener("click", quit);
+  $("phone-search").addEventListener("input", renderPhones);
 
   poll();
   setInterval(poll, 1000);

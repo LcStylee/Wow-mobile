@@ -59,6 +59,9 @@ const (
 	// for "Replace it") the RUNNING instance's loopback dashboard even under
 	// a non-default --addr; 8443 is the fallback when absent.
 	KeyLastPort = "last_port"
+	// KeyPhone records the phone model id picked on the dashboard (frame
+	// layout's fallback framing when the addon's outline is not visible).
+	KeyPhone = "phone"
 )
 
 // StoreFileName is the persisted settings file inside the wowstreamd config

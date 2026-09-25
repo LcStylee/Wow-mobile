@@ -2,7 +2,8 @@
 // the wizard builds the complete list of WoW installs on the machine — the
 // persisted choice, the Blizzard registry location, every Battle.net product
 // directory (_classic_era_, _classic_, _retail_, and their _ptr_/_beta_
-// variants) under every "World of Warcraft" folder at the well-known
+// variants — the WoW: Forever beta installs as _classic_beta_; _forever_ is
+// scanned too, in case the live release gets its own folder) under every "World of Warcraft" folder at the well-known
 // locations and fixed-drive roots — and lets the USER pick, because multi-
 // install machines are common and guessing between installs picks wrong.
 //
@@ -58,6 +59,7 @@ type GameScanSources struct {
 // install). Matched case-insensitively.
 var wowProductDirNames = []string{
 	"_classic_era_", "_classic_era_ptr_", "_classic_era_beta_",
+	"_forever_", "_forever_ptr_", "_forever_beta_",
 	"_classic_", "_classic_ptr_", "_classic_beta_",
 	"_retail_", "_ptr_", "_xptr_", "_beta_",
 }
@@ -226,6 +228,8 @@ func candidateLabel(exe string, v GameVersion, ct ClientType) string {
 			name = fmt.Sprintf("Retail %d.x", v.Major)
 		}
 		return fmt.Sprintf("%s — %s (stream only: touch UI addon unavailable)", name, dir)
+	case ct == ClientTypeClassicEra && IsForeverStamp(v):
+		return fmt.Sprintf("WoW: Forever (%d.%d) — %s", v.Major, v.Minor, dir)
 	case ct == ClientTypeClassicEra:
 		if v.Major == 1 {
 			return fmt.Sprintf("WoW Classic Era (%d.%d) — %s", v.Major, v.Minor, dir)

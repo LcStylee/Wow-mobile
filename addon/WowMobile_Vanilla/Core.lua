@@ -34,7 +34,7 @@ WM.Layout = {} -- named anchor frames of the control-deck stack
 -- /wm status (Config.lua): a running game keeps OLD addon code until
 -- /reload even after the wizard updates the files, and this is how a field
 -- report proves which code is live.
-WM.VERSION = "0.4.3"
+WM.VERSION = "0.5.0"
 
 function WM.Version()
 	if GetAddOnMetadata then

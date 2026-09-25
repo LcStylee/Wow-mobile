@@ -89,10 +89,10 @@ func measureFitResolution() (w, h, workW, workH int, ok bool) {
 }
 
 // newPlatform locates the WoW window up front (failing fast with guidance if
-// the game is not running) and wires the Win32 injector. band selects the
-// band-contract input mapping (phone coordinates land in the centered 9:16
-// band of a landscape client area — the exact rect the capture crops).
-func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, error) {
+// the game is not running) and wires the Win32 injector. crop (frame layout;
+// nil = whole client) is the phone frame the capture crops, so phone
+// coordinates land exactly where the stream shows them.
+func newPlatform(cfg *config.Config, crop wininput.CropFunc, log *slog.Logger) (*platform, error) {
 	makeProcessDPIAware(log) // before any window geometry is read
 
 	// Bind the tracker to the CHOSEN install: among title-matching windows,
@@ -132,7 +132,7 @@ func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, er
 	lastReason := "\x00never-logged" // sentinel unequal to any real reason
 	return &platform{
 		newInjector: func() (input.Injector, error) {
-			return wininput.New(tracker, band, log), nil
+			return wininput.New(tracker, crop, log), nil
 		},
 		clientRect: func() (window.Rect, bool) {
 			rc, err := tracker.ClientRect()
@@ -180,7 +180,7 @@ func newPlatform(cfg *config.Config, band bool, log *slog.Logger) (*platform, er
 				"%d visible windows are titled %q and this capture path (gdigrab) picks one by exact title — the stream may show the WRONG WoW instance; close the other instance, or use an encoder with the ddagrab path (NVENC), which pins the capture to the chosen window's screen position",
 				n, title)
 		},
-		bandBasis:         newBandBasisReader(cfg),
+		frameProbe:        newFrameProbe(tracker),
 		enforceWindowSize: newWindowSizeEnforcer(tracker, log),
 	}, nil
 }
@@ -258,4 +258,17 @@ func ddagrabTarget(tracker *window.Tracker, encW, encH int, subRect *capture.Rec
 		return nil, 0, err.Error()
 	}
 	return outputLocalRect(eff, desktop), idx, ""
+}
+
+// newFrameProbe returns the platform.frameProbe implementation: grab the
+// client area and read the addon's phone-frame outline off it. Called at
+// each capture launch and ~1 Hz by the geometry watchdog while streaming.
+func newFrameProbe(tracker *window.Tracker) func() (window.Rect, bool) {
+	return func() (window.Rect, bool) {
+		pix, rc, err := tracker.GrabClient()
+		if err != nil {
+			return window.Rect{}, false
+		}
+		return window.DetectOutline(pix, rc.W, rc.H, 4*rc.W)
+	}
 }

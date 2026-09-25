@@ -354,3 +354,51 @@ footer .hint {
   color: var(--text-dim);
   max-width: 420px;
 }
+
+/* Phone-model picker (frame layout). */
+#phone-search {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+}
+
+#phone-list {
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+#phone-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+#phone-list li:last-child {
+  border-bottom: none;
+}
+
+#phone-list li:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#phone-list li[aria-selected="true"] {
+  color: var(--accent);
+  background: rgba(212, 160, 23, 0.1);
+}
+
+#phone-list small {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}

@@ -77,9 +77,16 @@ local function UpdateCellVisuals(cell)
 	local r, g, b = WM.UnitColor(unit)
 	cell.name:SetTextColor(r, g, b)
 	local hp, hpMax = UnitHealth(unit), UnitHealthMax(unit)
-	cell.health:SetMinMaxValues(0, hpMax > 0 and hpMax or 1)
-	cell.health:SetValue(hp)
 	cell.health:SetStatusBarColor(r, g, b)
+	-- WoW: Forever restricted context: opaque values go to the bar as-is,
+	-- and the percentage text (which needs math) is skipped.
+	local secret = WM.IsSecret(hp) or WM.IsSecret(hpMax)
+	if secret then
+		cell.health:SetMinMaxValues(0, hpMax)
+	else
+		cell.health:SetMinMaxValues(0, hpMax > 0 and hpMax or 1)
+	end
+	cell.health:SetValue(hp)
 	if not UnitIsConnected(unit) then
 		cell.status:SetText("Offline")
 		cell.status:SetTextColor(0.6, 0.6, 0.65)
@@ -87,7 +94,7 @@ local function UpdateCellVisuals(cell)
 	elseif UnitIsDeadOrGhost(unit) then
 		cell.status:SetText(UnitIsGhost(unit) and "Ghost" or "Dead")
 		cell.status:SetTextColor(0.9, 0.35, 0.35)
-	elseif hpMax > 0 and hp < hpMax then
+	elseif not secret and hpMax > 0 and hp < hpMax then
 		cell.status:SetText(math.floor(hp / hpMax * 100 + 0.5) .. "%")
 		cell.status:SetTextColor(0.92, 0.92, 0.92)
 	else

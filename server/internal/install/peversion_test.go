@@ -70,6 +70,11 @@ func TestClientTypeFromVersion(t *testing.T) {
 		{GameVersion{1, 16}, "", false},
 		{GameVersion{1, 17}, "", false}, // Turtle WoW
 		{GameVersion{1, 18}, "", false}, // OctoWow
+		{GameVersion{1, 59}, "", false},
+		// WoW: Forever (1.60.x, interface 16001): the modern client — the
+		// Classic Era path (modern addon, modern CVars), never vanilla-plus.
+		{GameVersion{1, 60}, ClientTypeClassicEra, true},
+		{GameVersion{1, 61}, ClientTypeClassicEra, true},
 		{GameVersion{2, 4}, "", false},  // TBC private client: heuristics/user decide
 		{GameVersion{3, 3}, "", false},  // WotLK
 		{GameVersion{11, 0}, "", false}, // retail
@@ -92,6 +97,7 @@ func TestIsVanillaPlusStamp(t *testing.T) {
 		{GameVersion{1, 16}, true},
 		{GameVersion{1, 17}, true},
 		{GameVersion{1, 18}, true},
+		{GameVersion{1, 60}, false}, // WoW: Forever is not a vanilla-plus stamp
 		{GameVersion{2, 18}, false}, // major must be 1
 	}
 	for _, tc := range cases {

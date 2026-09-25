@@ -1,16 +1,18 @@
-## Interface: 11507
-# ^ Tracks the WoW Classic Era client patch (1.15.07). Bump this number when
-#   the client patches; nothing inside the addon keys off it.
+## Interface: 11507, 16001
+# ^ Classic Era (1.15.07) and WoW: Forever (1.60.1 — interface 16001, the
+#   modern-API "camelot" game type). Bump when either client patches; nothing
+#   inside the addon keys off it (Compat.lua feature-detects every API).
 ## Title: WoW Mobile
-## Notes: Portrait touch UI overhaul for streaming WoW Classic Era to a phone (1080x1920 window, 1080x1080 world viewport + control deck).
+## Notes: Portrait touch UI overhaul for streaming WoW Classic Era / WoW: Forever to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone).
 ## Author: WoW Mobile project
-## Version: 0.4.3
+## Version: 0.5.0
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/queue,
-# Band the landscape-band mode decision + the anchor frame the whole layout
-# hangs off (it must precede every WM.Px consumer, since the px factor is
-# computed against the band width), Compat the API shims, Config the saved
+# Phones the generated phone table (tools/genphones.js), Band the phone frame
+# + red outline + the anchor frame the whole layout hangs off (it must
+# precede every WM.Px consumer, since the px factor is computed against the
+# frame width), Compat the API shims, Config the saved
 # variables, Viewport the world square and deck rect, Deck the
 # panel/scroller/menu infrastructure. Bar and HUD
 # modules then stack bottom-up inside the deck (each anchors to the frame the
@@ -32,8 +34,11 @@
 # Blizzard's map over the deck (ARCHITECTURE §4); Talents reflows
 # Blizzard_TalentUI into the world square. LootSheet/RollFrames only need
 # Core/Deck/Viewport (they replace default frames banished in Blizzard.lua).
-# Settings loads last because its panel drives Config + Viewport.
+# Settings loads after the deck modules because its panel drives Config +
+# Viewport; PhoneSelect (the phone selector beside the outline) needs only
+# Band and loads last.
 Core.lua
+Phones.lua
 Band.lua
 Compat.lua
 Config.lua
@@ -71,3 +76,4 @@ Raid.lua
 WorldMap.lua
 Talents.lua
 Settings.lua
+PhoneSelect.lua

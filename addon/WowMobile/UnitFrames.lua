@@ -77,9 +77,17 @@ local function UpdateHealth(f)
 	local unit = f.unit
 	if not UnitExists(unit) then return end
 	local hp, hpMax = UnitHealth(unit), UnitHealthMax(unit)
+	f.health:SetStatusBarColor(WM.UnitColor(unit))
+	if WM.IsSecret(hp) or WM.IsSecret(hpMax) then
+		-- WoW: Forever restricted context: the bar takes the opaque values
+		-- as-is; no arithmetic or text is possible on them.
+		f.health:SetMinMaxValues(0, hpMax)
+		f.health:SetValue(hp)
+		f.health.text:SetText(UnitIsDeadOrGhost(unit) and (UnitIsGhost(unit) and "Ghost" or "Dead") or "")
+		return
+	end
 	f.health:SetMinMaxValues(0, hpMax > 0 and hpMax or 1)
 	f.health:SetValue(hp)
-	f.health:SetStatusBarColor(WM.UnitColor(unit))
 	if UnitIsDeadOrGhost(unit) then
 		f.health.text:SetText(UnitIsGhost(unit) and "Ghost" or "Dead")
 	elseif hpMax > 0 then
@@ -95,6 +103,13 @@ local function UpdatePower(f)
 	local _, token = UnitPowerType(unit)
 	local c = PowerBarColor[token] or PowerBarColor["MANA"]
 	f.power:SetStatusBarColor(c.r, c.g, c.b)
+	if WM.IsSecret(pp) or WM.IsSecret(ppMax) then
+		f.power:Show()
+		f.power:SetMinMaxValues(0, ppMax)
+		f.power:SetValue(pp)
+		f.power.text:SetText("")
+		return
+	end
 	if ppMax > 0 then
 		f.power:Show()
 		f.power:SetMinMaxValues(0, ppMax)

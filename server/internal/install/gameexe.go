@@ -50,8 +50,10 @@ func (ct ClientType) String() string {
 
 // KnownGameExes are the game executables recognized inside a selected folder,
 // in preference order. Matching is case-insensitive everywhere, so "Wow.exe"
-// also covers "WoW.exe" and "wow.exe".
-var KnownGameExes = []string{"WowClassic.exe", "VanillaFixes.exe", "Wow.exe"}
+// also covers "WoW.exe" and "wow.exe". WowClassicB/WowClassicT are the
+// Classic-family beta/PTR builds Battle.net installs under _classic_beta_ /
+// _classic_ptr_ — where the WoW: Forever beta lives.
+var KnownGameExes = []string{"WowClassic.exe", "WowClassicB.exe", "WowClassicT.exe", "VanillaFixes.exe", "Wow.exe"}
 
 // classicEraDirName is the Battle.net folder holding the Classic Era client.
 const classicEraDirName = "_classic_era_"
@@ -138,7 +140,8 @@ func ResolveGameExe(path string) (string, error) {
 // only classify as 1.12-era OUTSIDE such a tree.
 func DetectClientType(exePath string) (ClientType, bool) {
 	base := strings.ToLower(lastPathComponent(exePath))
-	if base == "wowclassic.exe" {
+	switch base {
+	case "wowclassic.exe", "wowclassicb.exe", "wowclassict.exe":
 		return ClientTypeClassicEra, true
 	}
 	if strings.Contains(strings.ToLower(exePath), classicEraDirName) {

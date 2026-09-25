@@ -144,6 +144,25 @@ func TestAssembleCandidatesVanillaPlusStamps(t *testing.T) {
 	}
 }
 
+// WoW: Forever stamps 1.60.x: it must land on the Classic Era path (modern
+// addon), labeled as Forever — never as a vanilla-plus 1.12-engine client,
+// which would install the 1.12 addon port into a modern client.
+func TestAssembleCandidatesForever(t *testing.T) {
+	dir := makeGameDir(t, "WowClassicB.exe", false)
+	exe := filepath.Join(dir, "WowClassicB.exe")
+	probe := func(string) (GameVersion, bool) { return GameVersion{Major: 1, Minor: 60}, true }
+	cands := assembleCandidates(GameScanSources{Exes: []string{exe}}, probe)
+	if len(cands) != 1 || cands[0].Type != ClientTypeClassicEra {
+		t.Fatalf("Forever must classify as the modern (classicEra) client: %+v", cands)
+	}
+	if want := "WoW: Forever (1.60) — " + dir; cands[0].Label != want {
+		t.Errorf("label:\nwant %q\ngot  %q", want, cands[0].Label)
+	}
+	if found, ok := FindKnownGameExe(dir); !ok || found != exe {
+		t.Errorf("WowClassicB.exe not found in its folder: %q %v", found, ok)
+	}
+}
+
 func TestClientTypeForModernMajor(t *testing.T) {
 	cases := []struct {
 		v    GameVersion

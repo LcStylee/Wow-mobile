@@ -128,15 +128,15 @@ function Viewport.OnApply(fn)
 	table.insert(reflowers, fn)
 end
 
--- The BAND rect in UI units at call time: left offset from UIParent's left
--- edge, and width. Full window when Band.lua is unavailable (its failure is
+-- The FRAME rect in UI units at call time: left offset from UIParent's left
+-- edge, width, top offset from UIParent's top edge, height. Full window when Band.lua is unavailable (its failure is
 -- already bannered by the crash guard) — exactly the pre-band behavior.
 local function BandRect()
 	local band = WM.Band
 	if band and band.width then
-		return band.left or 0, band.width
+		return band.left or 0, band.width, band.top or 0, band.height or UIParent:GetHeight()
 	end
-	return 0, UIParent:GetWidth()
+	return 0, UIParent:GetWidth(), 0, UIParent:GetHeight()
 end
 
 -- The intended square height in UI units, derived ONLY from live
@@ -157,7 +157,7 @@ end
 -- the configured height (lets Apply hand reflowers the configured integer
 -- verbatim instead of a float roundtrip).
 local function ComputeHeightUI()
-	local _, bandW = BandRect()
+	local _, bandW, _, bandH = BandRect()
 	local ratio = Viewport.HeightPx() / 1080
 	local heightUI = bandW * ratio
 	local deckFixed = (WM.Config and WM.Config.DECK_FIXED_PX) or 790
@@ -165,11 +165,11 @@ local function ComputeHeightUI()
 	-- of the MEASURED band width, never via WM.Px: its cached pxFactor is
 	-- deliberately not refreshed on drift, and this function must clamp
 	-- correctly whatever that factor holds (CheckLayoutFresh's emergency
-	-- re-apply runs exactly when the factor is stale). The band spans the
-	-- full window height in both modes, so UIParent's height is the budget.
-	local maxUI = UIParent:GetHeight() - bandW * (deckFixed / 1080)
-	if maxUI < UIParent:GetHeight() * 0.25 then
-		maxUI = UIParent:GetHeight() * 0.25 -- degenerate window: keep SOME world
+	-- re-apply runs exactly when the factor is stale). The frame's height
+	-- is the budget.
+	local maxUI = bandH - bandW * (deckFixed / 1080)
+	if maxUI < bandH * 0.25 then
+		maxUI = bandH * 0.25 -- degenerate window: keep SOME world
 	end
 	if heightUI > maxUI then
 		if heightUI > maxUI + bandW * (2 / 1080) then
@@ -260,7 +260,7 @@ function Viewport.Apply()
 	-- reflowers (QuickBar's floor((h - 328) / 104)) would silently drop a
 	-- slot at exact-fit heights (744/848/952/1056). Only a clamped/shaved
 	-- square back-computes from what actually applied.
-	local bandLeft, bandW = BandRect()
+	local bandLeft, bandW, bandTop = BandRect()
 	local heightPx
 	if exact then
 		heightPx = Viewport.HeightPx()
@@ -279,10 +279,11 @@ function Viewport.Apply()
 	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
 	MeasureFullWorldFrame()
 	local leftWF = wfFull.width * (bandLeft / uiW)
+	local topWF = wfFull.height * (bandTop / uiH)
 	local widthWF = wfFull.width * (bandW / uiW)
 	local heightWF = wfFull.height * (heightUI / uiH)
 	WorldFrame:ClearAllPoints()
-	WorldFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", leftWF, 0)
+	WorldFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", leftWF, -topWF)
 	WorldFrame:SetWidth(widthWF)
 	WorldFrame:SetHeight(heightWF)
 	lastAppliedWF = widthWF
@@ -295,13 +296,9 @@ function Viewport.Apply()
 		-- Band.lua crops them), so a real clamp means one of the cases below.
 		local hint
 		local band = WM.Band
-		if band and band.mode == "band" then
-			hint = "the 9:16 band cannot fit a world square this tall above the deck"
-				.. " — lower /wm viewport (or /wm reset), then reload"
-		elseif band then
-			hint = "landscape windows are handled by the 9:16 band automatically, so this"
-				.. " portrait window is too short for the deck — re-run the server wizard"
-				.. " to restore a supported window size, then reload"
+		if band then
+			hint = "the phone frame cannot fit a world square this tall above the deck"
+				.. " — lower /wm viewport (or /wm reset), or pick a taller phone (/wm phone), then reload"
 		else
 			hint = "the band module is unavailable (see /wm errors), so a landscape window"
 				.. " cannot be cropped — re-run the server wizard, then reload"
@@ -364,16 +361,17 @@ function Viewport.Verify()
 	end
 	-- Intended rect, re-computed NOW from the live band metrics, as fractions
 	-- of the cached full-window rect (all four comparisons in WF units).
-	local bandLeft, bandW = BandRect()
+	local bandLeft, bandW, bandTop = BandRect()
 	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
 	local wantL = wfFull.left + wfFull.width * (bandLeft / uiW)
+	local wantT = wfFull.top - wfFull.height * (bandTop / uiH)
 	local wantW = wfFull.width * (bandW / uiW)
 	local wantH = wfFull.height * (ComputeHeightUI() / uiH)
 	-- Slack scales with the BAND width (what is being verified), not the full
 	-- window: on a wide window full-width slack would triple the tolerance
 	-- and let small genuine drifts pass.
 	local tol = wantW * 0.005 + 2 -- rounding slack: 0.5% + 2 WF units
-	local badTop = math.abs(wfT - wfFull.top) > tol
+	local badTop = math.abs(wfT - wantT) > tol
 	local badL = math.abs(wfL - wantL) > tol
 	local badW = math.abs((wfR - wfL) - wantW) > tol
 	local badH = math.abs((wfT - wfB) - wantH) > tol
@@ -397,7 +395,7 @@ function Viewport.Verify()
 				.. " wanted %.0fx%.0f at (%.0f, top %.0f), full window %.0fx%.0f"
 				.. " (world looks stretched or leaves a gap); reload to reapply",
 			wfR - wfL, wfT - wfB, wfL, wfT,
-			wantW, wantH, wantL, wfFull.top, wfFull.width, wfFull.height))
+			wantW, wantH, wantL, wantT, wfFull.width, wfFull.height))
 	end
 	WM.ShowSetupBanner("The 3D world viewport did not apply — the world looks stretched.", "verify")
 end

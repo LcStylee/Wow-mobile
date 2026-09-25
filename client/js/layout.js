@@ -1,7 +1,9 @@
-// Screen layout: top-anchored 9:16 video with a bottom "phone deck".
+// Screen layout: top-anchored portrait video with a bottom "phone deck".
 //
-// Phones are taller than 9:16, so a top-anchored full-width 9:16 video leaves
-// a dead strip at the bottom that the stream can never use. The PRIMARY
+// The stream's aspect is whatever phone frame the server crops (the hello's
+// encoded size — docs/PHONE_FRAME.md; 9:16 until the first hello), and it is
+// shaped to leave exactly the deck's height free below it on the phone it was
+// picked for, so a top-anchored full-width video leaves a bottom strip. The PRIMARY
 // layout ("deck") parks ALL native chrome there — quick keys, the compact
 // stats line, Snd/Set/End — so nothing overlays the game. The FALLBACK
 // ("overlay"), for screens at most ~16:9 tall (old 16:9 phones, landscape
@@ -21,16 +23,44 @@
 export const MIN_DECK_PX = 55;
 export const FADE_AFTER_MS = 4000; // overlay chrome fades after this idle time
 
+// Stream aspect as height/width. 16/9 until the first hello reports the
+// encoded size; setVideoAspect updates it and the --video-ratio CSS variable
+// the #video/#touch/deck boxes derive from.
+export const DEFAULT_VIDEO_RATIO = 16 / 9;
+let videoRatio = DEFAULT_VIDEO_RATIO;
+
+/**
+ * Adopt the stream's encoded size (from the hello). Portrait only — anything
+ * else keeps the previous ratio. Fires 'wm-video-aspect' so initLayout
+ * re-decides the mode and the touch layer drops its cached geometry.
+ */
+export function setVideoAspect(w, h) {
+  if (!(w > 0) || !(h > w)) return;
+  const ratio = h / w;
+  if (Math.abs(ratio - videoRatio) < 1e-6) return;
+  videoRatio = ratio;
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty('--video-ratio', String(ratio));
+    window.dispatchEvent(new Event('wm-video-aspect'));
+  }
+}
+
+export function videoAspect() {
+  return videoRatio;
+}
+
 /**
  * Pick the layout mode for a viewport. Pure (unit-tested).
  * @param w,h        visual viewport CSS px
  * @param safeTop    env(safe-area-inset-top) px — the video sits below it
  * @param safeBottom env(safe-area-inset-bottom) px — unusable deck padding
+ * @param minDeck    minimum deck content height
+ * @param ratio      stream height/width (default: the live stream's)
  * @returns 'deck' | 'overlay'
  */
-export function layoutMode(w, h, safeTop, safeBottom, minDeck = MIN_DECK_PX) {
+export function layoutMode(w, h, safeTop, safeBottom, minDeck = MIN_DECK_PX, ratio = videoRatio) {
   if (!(w > 0) || !(h > 0)) return 'overlay';
-  const videoH = (w * 16) / 9; // the stream is 9:16: height = width·16/9
+  const videoH = w * ratio; // full-width portrait stream
   const deckH = h - safeTop - videoH;
   // The deck's bottom padding is max(5px, safe-bottom) (styles.css #hud), so
   // an inset below that floor still costs the full 5px — mirroring the CSS
@@ -249,6 +279,12 @@ export function initLayout(settings) {
   });
 
   window.addEventListener('resize', apply);
+  // A new stream aspect (hello) moves every box: re-decide, and let the touch
+  // layer drop its cached geometry like any other layout change.
+  window.addEventListener('wm-video-aspect', () => {
+    apply();
+    window.dispatchEvent(new Event('wm-layout-change'));
+  });
   // The visual viewport can resize without a window resize event (iOS
   // toolbar collapse, keyboard geometry) — listen to it directly where it
   // exists, since its size now feeds the decision.

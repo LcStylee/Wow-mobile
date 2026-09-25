@@ -52,6 +52,7 @@ import (
 	"github.com/LcStylee/Wow-mobile/server/internal/rtc"
 	sig "github.com/LcStylee/Wow-mobile/server/internal/signal"
 	"github.com/LcStylee/Wow-mobile/server/internal/window"
+	"github.com/LcStylee/Wow-mobile/server/internal/wininput"
 )
 
 // version identifies this build in the startup banner and --version. Releases
@@ -90,8 +91,8 @@ type platform struct {
 	// whose crop is a fixed screen rect).
 	clientRect func() (window.Rect, bool)
 	// captureRect returns the game window's client rect — or, when crop is
-	// non-nil, that CLIENT-LOCAL sub-rectangle of it (band mode's centered
-	// 9:16 band) — translated into the local coordinates of the DXGI output
+	// non-nil, that CLIENT-LOCAL sub-rectangle of it (frame mode's phone
+	// frame) — translated into the local coordinates of the DXGI output
 	// (monitor) fully containing it, plus that output's ddagrab output_idx,
 	// when the rect is usable for the zero-copy ddagrab path: exactly the
 	// encW x encH the encoder will produce (the ddagrab graph has no
@@ -114,19 +115,11 @@ type platform struct {
 	// "" when unambiguous. Consulted only for launches that actually use the
 	// gdigrab input; nil on platforms without a real game window.
 	titleAmbiguity func() string
-	// bandBasis (optional; Windows window capture only) returns the physical
-	// client size the ADDON starts its band computation from: the
-	// gxResolution CVar in the game's Config.wtf — the only physical-size
-	// source a 1.12 client exposes to Lua (ARCHITECTURE.md's band contract).
-	// ok=false when no Config.wtf is locatable or it holds no parsable
-	// gxResolution. Band layout compares it against the live client rect
-	// before every ffmpeg launch (window.BandBasisCheck, mirroring the
-	// addon's chosen-basis logic): a stale CVar an up-to-date addon
-	// compensates for is an informational log note, and the dashboard warning
-	// fires only when the addon's band really lands off the stream's crop —
-	// the addon-UI-cut-at-the-band-edge failure the v0.4.0 field report hit.
-	// Nil on platforms without a game install (test platform, non-Windows).
-	bandBasis func() (w, h int, ok bool)
+	// frameProbe (optional; Windows window capture only) screenshots the
+	// game window's client area and returns the interior of the addon's red
+	// phone-frame outline, client-local (window.DetectOutline). Nil where
+	// there is no real window.
+	frameProbe func() (window.Rect, bool)
 	// enforceWindowSize (optional; Windows window capture only) resizes the
 	// game window's client area to the configured resolution when it is a
 	// plain windowed (non-maximized, non-fullscreen) window of a different
@@ -186,10 +179,10 @@ func run(ui *appUI) error {
 	if cfg.Setup {
 		// Resolve --layout auto the same way a real run without a wizard
 		// would (explicit flag, --client-type, remembered client type), so
-		// `--setup` on a band-mode setup prints the band instructions — the
+		// `--setup` on a frame-mode setup prints the phone-frame instructions — the
 		// portrait steps (a forced 1080x1920-ish window) are exactly what
-		// band mode exists to avoid on a 1.12 client.
-		setupBand := fallbackLayout(cfg, nil) == config.LayoutBand
+		// frame mode exists to avoid.
+		setupBand := fallbackLayout(cfg, nil) == config.LayoutFrame
 		resolveFitResolution(cfg, setupBand, nil) // fill Width/Height for the printout
 		window.PrintSetup(os.Stdout, cfg.Width, cfg.Height, setupBand)
 		return nil
@@ -235,38 +228,47 @@ func run(ui *appUI) error {
 			return err
 		}
 	}
-	// The wizard resolves --layout auto by the located client type (band for
-	// legacy 1.12-engine clients, portrait for Classic Era); runs without a
-	// wizard (--skip-setup, --capture test, non-Windows dev) resolve it from
-	// the flags and the remembered client type instead.
+	// The wizard resolves --layout auto (the phone frame for every client
+	// type); runs without a wizard (--skip-setup, --capture test, non-Windows
+	// dev) resolve it from the flags instead.
 	if layout == "" {
 		layout = fallbackLayout(cfg, log)
 	}
-	bandMode := layout == config.LayoutBand
+	frameMode := layout == config.LayoutFrame
 	// --resolution fit is normally resolved inside the wizard; --skip-setup
 	// (and non-Windows dev runs) still need concrete numbers for capture and
-	// the hello geometry, so measure here as the fallback. In band mode the
-	// numbers are only the no-window fallback frame — the live band decides
-	// the real encode geometry.
-	resolveFitResolution(cfg, bandMode, log)
-	if bandMode {
-		status.SetResolution("native landscape (9:16 band)")
+	// the hello geometry, so measure here as the fallback. In frame mode the
+	// numbers are only the no-window fallback frame — the live phone frame
+	// decides the real encode geometry.
+	resolveFitResolution(cfg, frameMode, log)
+	if frameMode {
+		status.SetResolution("native window (phone frame)")
 	} else {
 		status.SetResolution(fmt.Sprintf("%dx%d", cfg.Width, cfg.Height))
 	}
 
 	// --capture test replaces the Windows window platform with the portable
 	// test-pattern stand-in: same encoder/parser/WebRTC path, synthetic input.
+	// The phone-frame resolver owns the crop AND the input mapping target
+	// (frame.go), so the two can never disagree; the platform supplies its
+	// outline probe once built.
+	frames := newFrameResolver(initialPhone(cfg), nil, persistPhone(log))
+	var crop wininput.CropFunc
+	if frameMode {
+		crop = frames.Crop
+		status.SetPhone(frames.Phone().ID)
+	}
 	var plat *platform
 	if cfg.Capture == config.CaptureTest {
 		log.Info("capture source: testsrc2 synthetic pattern (--capture test)")
-		plat = newTestPlatform(cfg, bandMode, log)
+		plat = newTestPlatform(cfg, crop, log)
 	} else {
-		plat, err = newPlatform(cfg, bandMode, log)
+		plat, err = newPlatform(cfg, crop, log)
 		if err != nil {
 			return err
 		}
 	}
+	frames.probe = plat.frameProbe
 
 	ffmpegPath := cfg.FFmpegPath
 	if ffmpegPath == "" {
@@ -305,7 +307,7 @@ func run(ui *appUI) error {
 	// input injection already follows the live rect independently.
 	geom := newLiveGeometry(cfg.Width, cfg.Height)
 	// The dashboard's single warning row has several independent per-launch
-	// sources now (the frame decision — portrait's mismatch check or band's
+	// sources now (the frame decision — portrait's mismatch check or frame's
 	// basis check — and the gdigrab title-ambiguity check below); each owns a
 	// slot so none overwrites another's active warning.
 	warnRow := newWarningRow(status.SetWarning, "frame", "gdigrab")
@@ -333,44 +335,42 @@ func run(ui *appUI) error {
 				"resolution", fmt.Sprintf("%dx%d", encW, encH))
 		}
 	}
-	// reportBand is band mode's counterpart: no size to enforce, nothing to
-	// warn about — the live layout line ("center band 1215x2160 of
-	// 3840x2160") goes to the log and the dashboard, and a portrait window
-	// under band layout is called out as the full-window fallback it is.
-	lastBandDesc := "\x00never-reported"
-	reportBand := func(aw, ah int, f window.BandFrame) {
-		desc := window.BandLayoutDescription(aw, ah, f)
-		if desc == lastBandDesc {
-			return
-		}
-		lastBandDesc = desc
-		status.SetLayout(desc)
-		if f.Banded {
+	// reportFrame is frame mode's counterpart: the live layout line ("phone
+	// frame 1203x2148 of 3840x2160 — frame: addon outline") goes to the log
+	// and the dashboard, and while the addon's outline is not visible the
+	// warning row says so — the stream is then framed for the dashboard's
+	// phone, which may not match what the addon drew. Frame mode is the
+	// "frame" slot's ONLY writer (reportGeometry owns it in portrait mode).
+	lastFrameDesc := "\x00never-reported"
+	lastFrameWarn := "\x00never-reported"
+	reportFrame := func(aw, ah int, d frameDecision) {
+		desc := window.PhoneFrameDescription(aw, ah, d.frame, d.source, d.phone.Name())
+		if desc != lastFrameDesc {
+			lastFrameDesc = desc
+			status.SetLayout(desc)
 			log.Info("stream layout", "layout", desc)
-		} else {
-			log.Warn("band layout: the game window is portrait — streaming the full window (the band contract only applies to landscape windows)",
-				"window", fmt.Sprintf("%dx%d", aw, ah))
+		}
+		warn := ""
+		if d.source == window.SourceDashboard || d.source == window.SourceDefault {
+			warn = fmt.Sprintf("The WowMobile addon's red phone outline is not visible in the game window, so the stream is framed for the %s picked here. "+
+				"Log in with the addon enabled (v0.5.0 or newer, /wm phone to pick your phone) and keep the game window unobstructed; the stream switches to the outline automatically.",
+				d.phone.Name())
+		}
+		if warn != lastFrameWarn {
+			lastFrameWarn = warn
+			warnRow.set("frame", warn)
 		}
 	}
-	// reportBandBasis surfaces band mode's basis diagnostics (the addon's
-	// gxResolution vs the live client rect the stream crops from) — see
-	// newBandBasisReporter for the semantics. Band mode is the "frame" slot's
-	// ONLY writer (reportGeometry owns it in portrait mode), so the two never
-	// fight over it — and the gdigrab-ambiguity source lives in its own slot.
-	reportBandBasis := newBandBasisReporter(plat.bandBasis,
-		func(msg string) { warnRow.set("frame", msg) },
-		func(msg string) { log.Warn(msg) },
-		func(msg string) { log.Info(msg) })
 	// enforceSize runs the direct-window-resize path (Windows window capture,
 	// PORTRAIT layout only): a windowed game at the wrong size is resized to
 	// the configured resolution BEFORE the geometry self-heal reads it —
 	// CVars cannot size a windowed 1.12 client, SetWindowPos can. Outcomes
 	// surface on the log and the dashboard's "Game running" step detail; the
 	// implementation self-limits re-attempts, so calling it per launch cannot
-	// become a fight. Band mode retires enforcement outright: any landscape
-	// window is welcome, the band adapts to it.
+	// become a fight. Frame mode retires enforcement outright: any window
+	// size is welcome, the phone frame adapts to it.
 	enforceSize := func() {
-		if bandMode || plat.enforceWindowSize == nil {
+		if frameMode || plat.enforceWindowSize == nil {
 			return
 		}
 		if msg, outcome, acted := plat.enforceWindowSize(cfg.Width, cfg.Height); acted {
@@ -382,10 +382,10 @@ func run(ui *appUI) error {
 	// ffmpeg launch: the encode must frame the ACTUAL window — a fixed crop
 	// of the assumed size grabs desktop (or off-screen, i.e. black) pixels;
 	// degraded-but-visible beats black. Portrait layout self-heals the whole
-	// frame to the real client area (capture.EncodeSize); band layout
-	// recomputes the centered 9:16 band per the band contract
-	// (window.ComputeBandFrame) and crops it before encoding, scaling down to
-	// the 1080x1920 design cap when the band exceeds it. Either way the hello
+	// frame to the real client area (capture.EncodeSize); frame layout
+	// resolves the phone frame (frames.Resolve: the addon's outline, else the
+	// dashboard phone per the contract) and crops it before encoding,
+	// scaling down to the 1080x1920 design cap when the frame exceeds it. Either way the hello
 	// geometry (geom) follows the encoder's real output. Returns the observed
 	// client rect (ok=false when the window was unreadable) so the argv
 	// callback can record what this launch was built from.
@@ -395,27 +395,20 @@ func run(ui *appUI) error {
 			return window.Rect{}, false // no window to measure: keep the configured fallback frame
 		}
 		aw, ah := rc.W, rc.H
-		if bandMode {
-			f, fok := window.ComputeBandFrame(aw, ah)
+		if frameMode {
+			d, fok := frames.Resolve(aw, ah)
 			if !fok {
 				// Degenerate rect (mid-resize, minimized race): keep the
-				// fallback frame. reportBand/reportBandBasis are deliberately
-				// skipped too — the basis is unknowable without a real rect,
-				// so the dashboard warning row holds its last state rather
-				// than flapping; the next launch with a readable rect (the
-				// geometry watchdog forces one within seconds of the window
-				// settling) re-evaluates and updates or clears it.
+				// fallback frame; the geometry watchdog forces a relaunch
+				// within seconds of the window settling.
 				return rc, true
 			}
+			f := d.frame
 			c.Width, c.Height = f.EncW, f.EncH
-			c.CropRect, c.SourceW, c.SourceH = nil, 0, 0
-			if f.Banded {
-				c.CropRect = &capture.Rect{X: f.Band.X, Y: f.Band.Y, W: f.Band.W, H: f.Band.H}
-				c.SourceW, c.SourceH = aw, ah
-			}
+			c.CropRect = &capture.Rect{X: f.Band.X, Y: f.Band.Y, W: f.Band.W, H: f.Band.H}
+			c.SourceW, c.SourceH = aw, ah
 			geom.set(f.EncW, f.EncH)
-			reportBand(aw, ah, f)
-			reportBandBasis(aw, ah, f)
+			reportFrame(aw, ah, d)
 			return rc, true
 		}
 		encW, encH, mismatch := capture.EncodeSize(aw, ah, cfg.Width, cfg.Height)
@@ -439,9 +432,9 @@ func run(ui *appUI) error {
 		if c.Encoder == capture.NVENC {
 			// Only NVENC consumes the ddagrab target; skipping the DXGI
 			// probe elsewhere keeps the other encoders' launches quiet. The
-			// band crop is folded into the ddagrab rect when usable (ddagrab
+			// frame crop is folded into the ddagrab rect when usable (ddagrab
 			// crops at grab time and has no filter stage), so a matching
-			// band takes the zero-copy path too.
+			// frame takes the zero-copy path too.
 			c.CaptureRect, c.CaptureOutput = plat.captureRect(c.Width, c.Height, c.CropRect)
 			if c.CaptureRect != nil {
 				c.CropRect, c.SourceW, c.SourceH = nil, 0, 0
@@ -578,7 +571,7 @@ func run(ui *appUI) error {
 
 	// Geometry watchdog: while capture is active, poll the live client rect
 	// and relaunch the video pipeline when the window settled on a different
-	// rect than the running ffmpeg was launched with (band mode deliberately
+	// rect than the running ffmpeg was launched with (frame mode deliberately
 	// un-pins the window, so mid-session resizes/moves are expected; input
 	// injection follows the live window per event, and the stream must not be
 	// left cropping stale pixels until a phone reconnect).
@@ -587,6 +580,7 @@ func run(ui *appUI) error {
 		clientRect: plat.clientRect,
 		launched:   launchGeom.get,
 		restart:    videoSup.Restart,
+		frameDrift: frameDriftFunc(frameMode, frames),
 		log:        log,
 	})
 
@@ -605,7 +599,17 @@ func run(ui *appUI) error {
 	if err != nil {
 		return fmt.Errorf("embedded host dashboard missing: %w", err)
 	}
-	server.EnableHostUI(sig.HostUI{FS: hostFS, Status: status, Quit: quit})
+	hostUI := sig.HostUI{FS: hostFS, Status: status, Quit: quit}
+	if frameMode {
+		hostUI.SetPhone = func(id string) error {
+			if err := frames.SetPhone(id); err != nil {
+				return err
+			}
+			status.SetPhone(id)
+			return nil
+		}
+	}
+	server.EnableHostUI(hostUI)
 
 	// Bind before the banner: a port-in-use failure must surface as the error,
 	// never after a full "ready" message. The single-instance mutex rules out
@@ -755,8 +759,8 @@ func writePortFile(path string, port int) error {
 
 // liveGeometry is the concurrency-safe holder for the geometry the encoder is
 // currently producing: written by the capture argv callback at every ffmpeg
-// launch (self-healing to the actual window client area — in band layout, to
-// the encoded band cropped from it), read by the rtc hello reply. Seeded with
+// launch (self-healing to the actual window client area — in frame layout, to
+// the encoded phone frame cropped from it), read by the rtc hello reply. Seeded with
 // the configured resolution so a hello racing the very first capture launch
 // still advertises a sane frame.
 type liveGeometry struct {
@@ -783,7 +787,7 @@ func (g *liveGeometry) get() (int, int) {
 // sets/clears only that slot ("" clears); the row renders every active slot
 // in the declared order, so — e.g. — a gdigrab title-ambiguity warning can
 // coexist with (rather than overwrite, or be clobbered by) portrait mode's
-// window/resolution mismatch or band mode's basis warning. Mutex-guarded for
+// window/resolution mismatch or frame mode's outline-missing note. Mutex-guarded for
 // safety; in practice all writers run on the video supervisor's goroutine
 // (plus the pre-stream check in run()).
 type warningRow struct {
@@ -845,38 +849,16 @@ func trayTooltipLoop(ctx context.Context, setTooltip func(string), connected fun
 
 // fallbackLayout resolves --layout auto for runs the wizard did not settle
 // (--setup, --skip-setup, --capture test, non-Windows dev): an explicit flag
-// wins; otherwise the client type — the --client-type flag, or on Windows the
-// remembered choice in the config store — picks band for legacy 1.12-engine
-// clients; with no known client type the classic portrait mode stands. log
-// may be nil (the --setup printout path).
+// wins, otherwise the phone frame — the default for every client type since
+// v0.5.0 (docs/PHONE_FRAME.md). log may be nil (the --setup printout path).
 func fallbackLayout(cfg *config.Config, log *slog.Logger) string {
 	if cfg.Layout != config.LayoutAuto {
 		return cfg.Layout
 	}
-	ct := cfg.ClientType
-	if ct == config.ClientTypeAuto && runtime.GOOS == "windows" && cfg.Capture != config.CaptureTest {
-		// Same store the wizard writes; read-only here. KeyClientType
-		// describes the game recorded in KeyGameExe (Store semantics), so
-		// when --game-exe/--wow-dir select an install explicitly, the
-		// remembered type is honored only if it describes that same install
-		// — otherwise a stale legacy record would silently pick band layout
-		// for an unrelated Era client (and vice versa).
-		if dir, err := os.UserConfigDir(); err == nil {
-			store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
-			if storedClientTypeTrusted(store, cfg.GameExe, cfg.WowDir) &&
-				install.ClientType(store.Get(install.KeyClientType)) == install.ClientTypeLegacy {
-				ct = config.ClientTypeLegacy
-			}
-		}
-	}
-	layout := config.LayoutPortrait
-	if ct == config.ClientTypeLegacy {
-		layout = config.LayoutBand
-	}
 	if log != nil {
-		log.Info("layout resolved", "layout", layout, "reason", "--layout auto without a wizard run")
+		log.Info("layout resolved", "layout", config.LayoutFrame, "reason", "--layout auto without a wizard run")
 	}
-	return layout
+	return config.LayoutFrame
 }
 
 // storedClientTypeTrusted reports whether the store's remembered
@@ -912,114 +894,6 @@ func normPath(p string) string {
 	return p
 }
 
-// newBandBasisReporter builds band mode's per-launch basis reporter,
-// extracted from run() so bandbasis_test.go can drive it: the addon computes
-// ITS band from the gxResolution CVar while the stream crops from the LIVE
-// client rect, and window.BandBasisCheck mirrors the addon's chosen-basis
-// logic to grade any disagreement. A genuine mis-placement (the addon's UI
-// really sits shifted/cut at the stream's band edges) goes to the dashboard
-// warning row and the warn log; a stale-CVar note (an up-to-date addon
-// compensates automatically — typically a desktop-sized gxResolution with
-// the window maximized above the taskbar) is logged informationally and
-// never occupies the warning row. Checked once per capture (re)launch —
-// never in a hot path — reported only on change, and the row clears when the
-// check clears (sizes reconciled, portrait live window, basis unreadable).
-// basis may be nil (no reader on this platform): the reporter is then inert.
-func newBandBasisReporter(basis func() (int, int, bool), setWarning func(string), warnLog, infoLog func(string)) func(aw, ah int, f window.BandFrame) {
-	last := "\x00never-reported" // sentinel unequal to any real state
-	return func(aw, ah int, f window.BandFrame) {
-		if basis == nil {
-			return
-		}
-		msg, warn := "", false
-		if f.Banded {
-			if bw, bh, ok := basis(); ok {
-				msg, warn = window.BandBasisCheck(aw, ah, bw, bh)
-			}
-		}
-		if msg == last {
-			return
-		}
-		last = msg
-		if warn {
-			setWarning(msg)
-			warnLog(msg)
-			return
-		}
-		setWarning("") // a note (or a clean check) never occupies the warning row
-		if msg != "" {
-			infoLog(msg)
-		}
-	}
-}
-
-// newBandBasisReader returns the platform.bandBasis implementation: it reads
-// the gxResolution CVar from the game's Config.wtf — the size the 1.12 addon
-// computes its band from. The path is cached only once FOUND — locating it
-// again while unresolved costs one os.Stat and covers the brand-new install
-// whose Config.wtf (or wizard store entry) appears mid-session — and the
-// FILE is re-read on every call: WoW rewrites Config.wtf on exit, so a
-// mid-session game restart with a corrected gxResolution must clear the
-// band-basis warning on the next capture launch. A cached path whose file
-// disappears is dropped and re-located, so a mid-session wizard re-run that
-// picks a DIFFERENT install stops feeding the diagnostic the old install's
-// values. Calls happen only per ffmpeg launch — never per frame or per
-// watchdog poll.
-func newBandBasisReader(cfg *config.Config) func() (int, int, bool) {
-	var mu sync.Mutex
-	var path string // "" until locateConfigWTF succeeds once
-	return func() (int, int, bool) {
-		mu.Lock()
-		if path == "" {
-			path = locateConfigWTF(cfg)
-		}
-		p := path
-		mu.Unlock()
-		if p == "" {
-			return 0, 0, false
-		}
-		content, err := os.ReadFile(p)
-		if err != nil {
-			if os.IsNotExist(err) {
-				mu.Lock()
-				if path == p {
-					path = "" // stale cache (install switched/removed): re-locate next call
-				}
-				mu.Unlock()
-			}
-			return 0, 0, false
-		}
-		return install.ReadResolutionSetting(content, "gxResolution")
-	}
-}
-
-// locateConfigWTF finds the running game's WTF\Config.wtf when it can:
-// --game-exe names the install outright; otherwise the wizard's remembered
-// game exe (KeyGameExe — the wizard runs before the platform is built, so the
-// store is fresh) under the same trust rule fallbackLayout applies (an
-// explicit --wow-dir only honors a store entry recorded under that
-// directory); a bare --wow-dir with no usable store entry is probed for a
-// 1.12-style layout (WTF directly under the game dir). "" when nothing is
-// locatable — the caller then simply skips the basis comparison.
-func locateConfigWTF(cfg *config.Config) string {
-	if cfg.GameExe != "" {
-		return install.ConfigWTFPath(cfg.GameExe)
-	}
-	if dir, err := os.UserConfigDir(); err == nil {
-		store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
-		if exe := store.Get(install.KeyGameExe); exe != "" && storedClientTypeTrusted(store, "", cfg.WowDir) {
-			return install.ConfigWTFPath(exe)
-		}
-	}
-	if cfg.WowDir != "" {
-		p := filepath.Join(cfg.WowDir, "WTF", "Config.wtf")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
 // targetInstallDir resolves the CHOSEN install's directory for the
 // game-window process filter (window.NewTrackerFor): every game-window
 // decision — capture geometry, input injection, window-size enforcement —
@@ -1027,8 +901,8 @@ func locateConfigWTF(cfg *config.Config) string {
 // install may run alongside without the stream or the clicks landing on it
 // (v0.4.2 field report). --game-exe names the install outright; otherwise
 // the wizard's remembered game exe (KeyGameExe — the wizard runs and
-// persists before the platform is built) under the same trust rule
-// locateConfigWTF applies; a bare --wow-dir is itself the install dir. ""
+// persists before the platform is built) under the storedClientTypeTrusted
+// rule; a bare --wow-dir is itself the install dir. ""
 // when nothing is known — the finder then keeps today's title-only matching
 // (single-install setups, --skip-setup with no flags and no store).
 func targetInstallDir(cfg *config.Config) string {
@@ -1053,7 +927,7 @@ func targetInstallDir(cfg *config.Config) string {
 // resolved by the wizard (--skip-setup, --setup, or a non-Windows dev run):
 // the same monitor-fit math the wizard uses, or the 1080x1920 design
 // resolution where nothing can be measured. Band mode skips the monitor fit
-// outright — the live band decides the encode; the design resolution is only
+// outright — the live phone frame decides the encode; the design resolution is only
 // the no-window fallback frame. No-op once the numbers are set. log may be
 // nil (the --setup printout path).
 func resolveFitResolution(cfg *config.Config, band bool, log *slog.Logger) {
@@ -1063,7 +937,7 @@ func resolveFitResolution(cfg *config.Config, band bool, log *slog.Logger) {
 	if band {
 		cfg.Width, cfg.Height = window.DesignW, window.DesignH
 		if log != nil {
-			log.Info("band layout: no portrait fit; the 1080x1920 design space is only the no-window fallback frame")
+			log.Info("phone-frame layout: no portrait fit; the 1080x1920 design space is only the no-window fallback frame")
 		}
 		return
 	}

@@ -116,17 +116,25 @@ local function UpdateStrip()
 	if not UnitExists("pet") then return end
 	strip.name:SetText(UnitName("pet") or "")
 	local hp, hpMax = UnitHealth("pet"), UnitHealthMax("pet")
-	strip.health:SetMinMaxValues(0, hpMax > 0 and hpMax or 1)
-	strip.health:SetValue(hp)
-	local frac = hpMax > 0 and hp / hpMax or 0
-	if frac < 0.25 then
-		strip.health:SetStatusBarColor(0.85, 0.25, 0.25)
-	elseif frac < 0.5 then
-		strip.health:SetStatusBarColor(0.95, 0.80, 0.25)
-	else
+	if WM.IsSecret(hp) or WM.IsSecret(hpMax) then
+		-- WoW: Forever restricted context: bar only, no math on the values.
+		strip.health:SetMinMaxValues(0, hpMax)
+		strip.health:SetValue(hp)
 		strip.health:SetStatusBarColor(0.30, 0.80, 0.35)
+		strip.health.text:SetText("")
+	else
+		strip.health:SetMinMaxValues(0, hpMax > 0 and hpMax or 1)
+		strip.health:SetValue(hp)
+		local frac = hpMax > 0 and hp / hpMax or 0
+		if frac < 0.25 then
+			strip.health:SetStatusBarColor(0.85, 0.25, 0.25)
+		elseif frac < 0.5 then
+			strip.health:SetStatusBarColor(0.95, 0.80, 0.25)
+		else
+			strip.health:SetStatusBarColor(0.30, 0.80, 0.35)
+		end
+		strip.health.text:SetText(hpMax > 0 and (math.floor(frac * 100 + 0.5) .. "%") or "")
 	end
-	strip.health.text:SetText(hpMax > 0 and (math.floor(frac * 100 + 0.5) .. "%") or "")
 	-- Happiness only exists for hunter pets on Classic Era; GetPetHappiness
 	-- returns nil for other pets (and is absent on some builds entirely).
 	local happiness = GetPetHappiness and GetPetHappiness()

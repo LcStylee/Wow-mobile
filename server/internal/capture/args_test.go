@@ -258,8 +258,9 @@ func TestVideoArgsBandCropClientAreaVerbatim(t *testing.T) {
 // term anywhere in the argv (no gdigrab offset_x/offset_y, no crop
 // adjustment). The window styles differ only in the client rects they
 // produce; each row's band/encode values are the band contract's output for
-// that client area (precomputed window.ComputeBandFrame results — the
-// contract itself is pinned in window/band_test.go), so this table pins the
+// that client area (precomputed v0.4.x 9:16 band results — the crop is
+// opaque data here; the frame contract itself is pinned in
+// window/phoneframe_test.go), so this table pins the
 // pass-through invariant across the styles explicitly.
 func TestVideoArgsBandCropWindowStyles(t *testing.T) {
 	cases := []struct {

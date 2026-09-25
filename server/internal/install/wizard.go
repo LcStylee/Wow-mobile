@@ -236,7 +236,7 @@ type Result struct {
 	GameDir    string     // its directory — Interface\ and WTF\ live beneath it
 	ClientType ClientType // classicEra or legacy (1.12 private server)
 	FFmpegPath string     // located ffmpeg executable
-	// Layout is the RESOLVED layout: config.LayoutBand or
+	// Layout is the RESOLVED layout: config.LayoutFrame or
 	// config.LayoutPortrait, never auto — Options.Layout auto resolves by
 	// the located client type (band for legacy, portrait for Classic Era).
 	Layout string
@@ -288,11 +288,17 @@ func Run(opts Options) (res *Result, err error) {
 		return nil, err
 	}
 	res.GameDir = filepath.Dir(res.GameExe)
-	opts.Status.SetClientType(string(res.ClientType))
+	// The dashboard names WoW: Forever explicitly: it shares the Classic Era
+	// settings/addon path (modern client) but is a different game.
+	ctLabel := string(res.ClientType)
+	if v, ok := opts.peVersion(res.GameExe); ok && IsForeverStamp(v) {
+		ctLabel = "forever"
+		fmt.Fprintf(opts.Out, "  WoW: Forever client (%d.%d) — using the modern WowMobile addon (interface 16001)\n", v.Major, v.Minor)
+	}
+	opts.Status.SetClientType(ctLabel)
 
-	// The layout resolves only now — auto follows the located client type
-	// (band for legacy 1.12-engine clients, portrait for Classic Era) — and
-	// with it the capture resolution, before any step consumes either: the
+	// The layout resolves only now (auto = the phone frame for every client
+	// type) and with it the capture resolution, before any step consumes either: the
 	// Config.wtf step writes them, and the caller feeds them to capture and
 	// the hello geometry.
 	opts.Layout = resolveLayout(opts.Layout, res.ClientType)
@@ -339,23 +345,19 @@ func stepLine(out io.Writer, n int, label, result string) {
 	fmt.Fprintf(out, "[%d/%d] %s %s %s\n", n, wizardSteps, label, strings.Repeat(".", dots), result)
 }
 
-// resolveLayout turns --layout auto ("" included) into a concrete layout for
-// the located client type: BAND for legacy 1.12-engine clients — the field
-// 1.12 client rejects portrait render resolutions and stretches, while every
-// client happily renders native landscape, so the centered 9:16 band needs no
-// window forcing at all — and PORTRAIT for Classic Era (band is fully
-// supported there via --layout band, its addon ships Band.lua too; only the
-// AUTO default stays portrait for now, since portrait works natively on Era).
-// An explicit band/portrait passes through untouched.
+// resolveLayout turns --layout auto ("" included) into a concrete layout:
+// the PHONE FRAME for every client type (docs/PHONE_FRAME.md) — the game
+// keeps a normal widescreen window and the addon outlines the phone-shaped
+// region the server streams, so no client needs window forcing any more. An
+// explicit frame/portrait passes through untouched; ct is kept for the
+// signature's callers and future per-client defaults.
 func resolveLayout(layout string, ct ClientType) string {
+	_ = ct
 	switch layout {
-	case config.LayoutBand, config.LayoutPortrait:
+	case config.LayoutFrame, config.LayoutPortrait:
 		return layout
 	}
-	if ct == ClientTypeLegacy {
-		return config.LayoutBand
-	}
-	return config.LayoutPortrait
+	return config.LayoutFrame
 }
 
 // resolveResolution decides the capture resolution after the layout is known.
@@ -383,12 +385,12 @@ func resolveLayout(layout string, ct ClientType) string {
 // alternative and requires confirmation to keep (GUI mode: a message box via
 // the dialog Prompter; --yes keeps the explicit flag value, logged).
 func resolveResolution(opts *Options) error {
-	if opts.Layout == config.LayoutBand {
+	if opts.Layout == config.LayoutFrame {
 		if opts.ResolutionFit {
 			opts.Width, opts.Height = window.DesignW, window.DesignH
 		}
-		fmt.Fprintln(opts.Out, "band layout: the game runs native landscape; the stream is the centered 9:16 band of the live window")
-		opts.Status.SetResolution("native landscape (9:16 band)")
+		fmt.Fprintln(opts.Out, "phone-frame layout: the game keeps a normal window at any size; the stream is the red-outlined phone frame the addon draws (/wm phone picks the phone)")
+		opts.Status.SetResolution("native window (phone frame)")
 		return nil
 	}
 
@@ -911,11 +913,11 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 	want := PortraitSettingsFor(ct, opts.Width, opts.Height)
 	desc := fmt.Sprintf("%dx%d", opts.Width, opts.Height)
 	windowKind := fmt.Sprintf("%s portrait", desc)
-	if opts.Layout == config.LayoutBand {
+	if opts.Layout == config.LayoutFrame {
 		dw, dh, haveDesktop := opts.Sys.PrimaryDesktopResolution()
 		want = BandSettingsFor(ct, dw, dh, haveDesktop)
 		desc = "native landscape"
-		windowKind = "native landscape (band layout)"
+		windowKind = "native landscape (phone-frame layout)"
 	}
 	path := filepath.Join(gameDir, "WTF", "Config.wtf")
 
@@ -1121,7 +1123,7 @@ func stepGameRunning(opts *Options, gameExe string) error {
 // whatever exists, so there is nothing to force.
 func gameWindowDetail(opts *Options, gameDir string) string {
 	detail := "window found"
-	if opts.Layout == config.LayoutBand {
+	if opts.Layout == config.LayoutFrame {
 		return detail
 	}
 	if msg, acted := opts.Sys.EnforceGameWindowSize(gameDir, opts.WindowTitle, opts.Width, opts.Height); acted {

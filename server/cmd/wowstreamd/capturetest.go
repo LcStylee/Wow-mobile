@@ -17,21 +17,23 @@ import (
 
 // newTestPlatform is the --capture test stand-in for the Windows window/input
 // platform: the "window" client area is exactly the configured resolution
-// (there is no real window; under band layout main then crops the centered
-// 9:16 band out of the synthetic frame, exactly like production), the ddagrab
+// (there is no real window; under frame layout main then crops the phone
+// frame out of the synthetic frame, exactly like production — no outline
+// probe exists here, so it is the dashboard/default phone's frame), the ddagrab
 // path is disabled (lavfi feeds the encoder directly), and injected input is
 // logged instead of synthesized — including the WINDOW coordinates the real
-// injector would target, computed through the same portable band mapping
+// injector would target, computed through the same portable crop mapping
 // (wininput.TargetRect/MapNormalized), so a test client (or the e2e harness)
-// can verify the full input path, band offset included, by watching the
+// can verify the full input path, frame offset included, by watching the
 // server log.
-func newTestPlatform(cfg *config.Config, band bool, log *slog.Logger) *platform {
-	target := wininput.TargetRect(window.Rect{W: cfg.Width, H: cfg.Height}, band)
+func newTestPlatform(cfg *config.Config, crop wininput.CropFunc, log *slog.Logger) *platform {
+	client := window.Rect{W: cfg.Width, H: cfg.Height}
 	return &platform{
 		newInjector: func() (input.Injector, error) {
 			return &logInjector{
 				log:    log.With("component", "test-injector"),
-				target: target,
+				client: client,
+				crop:   crop,
 			}, nil
 		},
 		clientRect:  func() (window.Rect, bool) { return window.Rect{W: cfg.Width, H: cfg.Height}, true },
@@ -43,27 +45,32 @@ func newTestPlatform(cfg *config.Config, band bool, log *slog.Logger) *platform 
 // logInjector implements input.Injector by logging each event — the honest
 // terminal for injected input on a machine with no game window. Every pointer
 // line carries both the normalized protocol coordinates and the mapped window
-// coordinates (winX/winY, band offset applied under band layout). The e2e
+// coordinates (winX/winY, frame offset applied under frame layout). The e2e
 // harness asserts on these lines to prove the input path end to end.
 type logInjector struct {
 	log    *slog.Logger
-	target window.Rect // the rect normalized coordinates map onto
+	client window.Rect       // the simulated client area
+	crop   wininput.CropFunc // the frame the capture crops (nil = whole client)
 }
 
+// target is resolved per event, like the real injector: the frame can change
+// mid-session (dashboard phone).
+func (l *logInjector) target() window.Rect { return wininput.TargetRect(l.client, l.crop) }
+
 func (l *logInjector) PointerMove(x, y uint16) error {
-	px, py := wininput.MapNormalized(x, y, l.target)
+	px, py := wininput.MapNormalized(x, y, l.target())
 	l.log.Info("input: pointer move", "x", x, "y", y, "winX", px, "winY", py)
 	return nil
 }
 
 func (l *logInjector) PointerButton(btn input.Button, down bool, x, y uint16) error {
-	px, py := wininput.MapNormalized(x, y, l.target)
+	px, py := wininput.MapNormalized(x, y, l.target())
 	l.log.Info("input: pointer button", "button", int(btn), "down", down, "x", x, "y", y, "winX", px, "winY", py)
 	return nil
 }
 
 func (l *logInjector) Wheel(x, y uint16, delta int16) error {
-	px, py := wininput.MapNormalized(x, y, l.target)
+	px, py := wininput.MapNormalized(x, y, l.target())
 	l.log.Info("input: wheel", "x", x, "y", y, "delta", delta, "winX", px, "winY", py)
 	return nil
 }

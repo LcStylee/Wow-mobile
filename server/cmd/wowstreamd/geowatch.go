@@ -69,6 +69,11 @@ type geometryWatch struct {
 	clientRect func() (window.Rect, bool) // the game window's live client rect
 	launched   func() (rect window.Rect, posSensitive, valid bool)
 	restart    func(reason string) // relaunch the video pipeline (Supervisor.Restart)
+	// frameDrift (optional; frame layout) re-checks the phone frame for the
+	// launched client size and returns a relaunch reason once it has settled
+	// on a different crop (the user picked another phone in-game or on the
+	// dashboard). It debounces itself.
+	frameDrift func(clientW, clientH int) (string, bool)
 	log        *slog.Logger
 	// interval overrides geometryPollInterval when non-zero (tests only).
 	interval time.Duration
@@ -134,6 +139,11 @@ func geometryWatchdog(ctx context.Context, gw geometryWatch) {
 				gw.restart(fmt.Sprintf(
 					"game window changed under a running capture: %dx%d at (%d,%d) -> %dx%d at (%d,%d)",
 					launched.W, launched.H, launched.X, launched.Y, cur.W, cur.H, cur.X, cur.Y))
+			} else if !differs && !firedValid && gw.frameDrift != nil {
+				if reason, drift := gw.frameDrift(cur.W, cur.H); drift {
+					firedFor, firedValid = launched, true
+					gw.restart(reason)
+				}
 			}
 		}
 		prev, prevOK = cur, true

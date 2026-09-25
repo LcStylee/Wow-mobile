@@ -7,6 +7,7 @@
 import './geometry.test.js';
 import './layout.test.js';
 import './net.test.js';
+import './phones.test.js';
 import './protocol.test.js';
 import './qrscan.test.js';
 import './settings.test.js';

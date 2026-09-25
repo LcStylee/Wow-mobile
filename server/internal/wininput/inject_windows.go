@@ -119,27 +119,27 @@ var extendedVKs = map[uint16]bool{
 }
 
 // Injector maps normalized protocol coordinates to the tracked WoW window —
-// under band layout, to the centered 9:16 band inside it (TargetRect; the
-// exact rect the capture crops, read from the same live client rect) — and
+// under frame layout, to the phone frame inside it (TargetRect; the exact
+// rect the capture crops) — and
 // injects via SendInput. It enforces PROTOCOL.md safety rule 1: events that
 // create state (downs, moves, wheel) require the game window to be
 // foreground — otherwise it requests focus and reports the event dropped.
 // Releases always inject so nothing can stay stuck.
 type Injector struct {
 	win  *window.Tracker
-	band bool // band layout: map into the centered 9:16 band of a landscape window
+	crop CropFunc // frame layout: map into the streamed phone frame (nil = whole client)
 	log  *slog.Logger
 
 	mu          sync.Mutex
 	lastDropLog time.Time // throttles the not-foreground log line
 }
 
-// New creates the injector. band selects the band-contract mapping: phone
-// coordinates land inside the centered 9:16 band of a landscape client area,
-// computed per event from the live rect — the same formula the capture crop
-// used, so touch stays aligned with the stream across window resizes.
-func New(win *window.Tracker, band bool, log *slog.Logger) *Injector {
-	return &Injector{win: win, band: band, log: log}
+// New creates the injector. crop (nil = whole client area) returns the phone
+// frame the running capture crops, resolved per event against the live rect,
+// so touch stays aligned with the stream across window resizes and phone
+// changes.
+func New(win *window.Tracker, crop CropFunc, log *slog.Logger) *Injector {
+	return &Injector{win: win, crop: crop, log: log}
 }
 
 // requireForeground implements the focus-or-drop rule for state-entering
@@ -266,14 +266,14 @@ func (inj *Injector) Key(vk uint16, down bool) error {
 // PROTOCOL.md) to MOUSEEVENTF_ABSOLUTE|VIRTUALDESK coordinates (0..65535
 // across the whole virtual desktop, which may span monitors and have a
 // negative origin). The mapping target is the live client rect — or, under
-// band layout, the centered 9:16 band inside it (TargetRect), the exact
+// frame layout, the phone frame inside it (TargetRect), the exact
 // region the capture is cropping.
 func (inj *Injector) absoluteCoords(nx, ny uint16) (int32, int32, error) {
 	rc, err := inj.win.ClientRect()
 	if err != nil {
 		return 0, 0, err
 	}
-	target := TargetRect(rc, inj.band)
+	target := TargetRect(rc, inj.crop)
 	if target.W < 2 || target.H < 2 {
 		return 0, 0, fmt.Errorf("wininput: degenerate mapping target %+v", target)
 	}

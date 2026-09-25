@@ -43,6 +43,16 @@ WM.OnInit(function()
 	-- Stance bar name differs across Classic builds.
 	WM.BanishFrame(_G["StanceBarFrame"] or _G["ShapeshiftBarFrame"])
 
+	-- WoW: Forever runs the modern (Mainline) default UI, whose bars and HUD
+	-- pieces carry different names; each is nil (and skipped) on Classic Era.
+	WM.BanishFrame(_G["MainActionBar"])           -- 12.x name of MainMenuBar
+	WM.BanishFrame(_G["MicroMenuContainer"])
+	WM.BanishFrame(_G["BagsBar"])
+	WM.BanishFrame(_G["StatusTrackingBarManager"]) -- XP/rep bars (XPBar.lua)
+	WM.BanishFrame(_G["PlayerCastingBarFrame"])    -- CastBar.lua
+	WM.BanishFrame(_G["StanceBar"])
+	WM.BanishFrame(_G["PetActionBar"])
+
 	-- HUD pieces replaced by Auras.lua / CastBar.lua / Minimap.lua.
 	WM.BanishFrame(BuffFrame)
 	WM.BanishFrame(TemporaryEnchantFrame)

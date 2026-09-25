@@ -60,15 +60,15 @@ WM.Colors = {
 --------------------------------------------------------------------------------
 -- Design-space conversion
 -- All layout constants in this addon are written in *physical pixels* of the
--- 1080-wide streamed design space. That space is the BAND — the full window
--- in portrait mode, the centered 9:16 band in landscape mode (Band.lua) — so
--- the factor converts design px against the band's width in UI units and
--- keeps physical touch-target sizes constant regardless of the uiScale cvar.
--- Band.lua loads right after this file and immediately corrects the initial
--- full-window factor below, before any other module calls WM.Px. Recomputed
--- on scale/resolution/mode changes; frames built with the old factor keep
--- their size until /reload (Config prints a hint on scale changes; a live
--- MODE flip raises the persistent setup banner below via Band.Update).
+-- 1080-wide streamed design space. That space is the PHONE FRAME (Band.lua:
+-- the centered, red-outlined portrait region shaped like the phone picked
+-- in-game), so the factor converts design px against the frame's width in UI
+-- units and keeps physical touch-target sizes constant regardless of the
+-- uiScale cvar. Band.lua loads right after this file and immediately corrects
+-- the initial full-window factor below, before any other module calls WM.Px.
+-- Recomputed on scale/resolution/phone changes; frames built with the old
+-- factor keep their size until /reload (a phone change raises the persistent
+-- setup banner below via Band.Update).
 --------------------------------------------------------------------------------
 
 local pxFactor = UIParent:GetWidth() / 1080

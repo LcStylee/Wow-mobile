@@ -6,9 +6,13 @@
 package signal
 
 import (
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/LcStylee/Wow-mobile/server/internal/phones"
 )
 
 // registerHostRoutes mounts the /host tree when EnableHostUI configured it.
@@ -24,6 +28,8 @@ func (s *Server) registerHostRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /host/api/status", LoopbackOnly(http.HandlerFunc(s.handleHostStatus)))
 	mux.Handle("GET /host/qr.svg", LoopbackOnly(http.HandlerFunc(s.handleHostQR)))
 	mux.Handle("POST /host/api/quit", LoopbackOnly(http.HandlerFunc(s.handleHostQuit)))
+	mux.Handle("GET /host/api/phones", LoopbackOnly(http.HandlerFunc(s.handleHostPhones)))
+	mux.Handle("POST /host/api/phone", LoopbackOnly(http.HandlerFunc(s.handleHostSetPhone)))
 }
 
 // LoopbackOnly rejects with 403 any request whose peer address is not a
@@ -125,4 +131,54 @@ func (s *Server) handleHostQuit(w http.ResponseWriter, r *http.Request) {
 		// requests, so ordering is cosmetic — but the page likes its 204.
 		go s.host.Quit()
 	}
+}
+
+// PhoneHeader is the dashboard's proof-of-intent header on POST
+// /host/api/phone — same reasoning as QuitHeader: a custom header keeps
+// cross-origin no-cors posts from any page open in this PC's browser out.
+const PhoneHeader = "X-Wowmobile-Phone"
+
+// phoneJSON is one phone-selector row for the dashboard.
+type phoneJSON struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Popularity int    `json:"popularity"`
+	StreamW    int    `json:"streamW"`
+	StreamH    int    `json:"streamH"`
+}
+
+// handleHostPhones serves the phone table in selector order.
+func (s *Server) handleHostPhones(w http.ResponseWriter, r *http.Request) {
+	out := make([]phoneJSON, 0, len(phones.All))
+	for _, p := range phones.All {
+		out = append(out, phoneJSON{ID: p.ID, Name: p.Name(), Popularity: p.Popularity, StreamW: p.StreamW, StreamH: p.StreamH})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(out) //nolint:errcheck
+}
+
+// handleHostSetPhone changes the dashboard phone: body {"id": "<phone id>"}.
+func (s *Server) handleHostSetPhone(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(PhoneHeader) == "" {
+		http.Error(w, "phone selection requires the dashboard's "+PhoneHeader+" header", http.StatusForbidden)
+		return
+	}
+	if s.host.SetPhone == nil {
+		http.Error(w, "phone selection is only available in frame layout", http.StatusConflict)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "bad request body", http.StatusBadRequest)
+		return
+	}
+	if err := s.host.SetPhone(body.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.log.Info("dashboard phone changed", "phone", body.ID)
+	w.WriteHeader(http.StatusNoContent)
 }

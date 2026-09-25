@@ -117,7 +117,7 @@ func TestLayoutFlag(t *testing.T) {
 	if err != nil || cfg.Layout != LayoutAuto {
 		t.Fatalf("default layout = %q err=%v, want auto", cfg.Layout, err)
 	}
-	for _, v := range []string{LayoutBand, LayoutPortrait, LayoutAuto} {
+	for _, v := range []string{LayoutFrame, LayoutPortrait, LayoutAuto} {
 		cfg, err := Parse([]string{"--layout", v}, io.Discard)
 		if err != nil || cfg.Layout != v {
 			t.Fatalf("--layout %s: got %q err=%v", v, cfg.Layout, err)
@@ -125,5 +125,17 @@ func TestLayoutFlag(t *testing.T) {
 	}
 	if _, err := Parse([]string{"--layout", "sideways"}, io.Discard); err == nil {
 		t.Fatal("--layout sideways must be rejected")
+	}
+	// v0.4.x "band" is frame with the generic 9:16 phone.
+	cfg, err = Parse([]string{"--layout", "band"}, io.Discard)
+	if err != nil || cfg.Layout != LayoutFrame || cfg.Phone != PhoneGeneric916 {
+		t.Fatalf("--layout band: got %q phone %q err=%v", cfg.Layout, cfg.Phone, err)
+	}
+	cfg, err = Parse([]string{"--layout", "band", "--phone", "galaxy-a07"}, io.Discard)
+	if err != nil || cfg.Phone != "galaxy-a07" {
+		t.Fatalf("--layout band --phone: got phone %q err=%v", cfg.Phone, err)
+	}
+	if _, err := Parse([]string{"--phone", "nokia-3310"}, io.Discard); err == nil {
+		t.Fatal("unknown --phone must be rejected")
 	}
 }

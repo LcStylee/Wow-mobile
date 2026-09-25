@@ -1,0 +1,36 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "WoW Mobile phone table (docs/PHONE_FRAME.md §2)",
+ "type": "object",
+ "required": ["version", "phones"],
+ "properties": {
+  "version": { "const": 1 },
+  "notes": { "type": "array", "items": { "type": "string" } },
+  "phones": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": ["id", "brand", "model", "year", "physW", "physH", "dpr", "insetTop", "insetBottom", "popularity"],
+    "additionalProperties": false,
+    "properties": {
+     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+     "brand": { "type": "string", "minLength": 1 },
+     "model": { "type": "string", "minLength": 1 },
+     "year": { "type": "integer", "minimum": 0 },
+     "physW": { "type": "integer", "minimum": 16 },
+     "physH": { "type": "integer", "minimum": 16 },
+     "dpr": { "type": "number", "exclusiveMinimum": 0 },
+     "insetTop": { "type": "integer", "minimum": 0 },
+     "insetBottom": { "type": "integer", "minimum": 0 },
+     "popularity": { "type": ["integer", "null"], "minimum": 1 },
+     "stream": {
+      "type": "object",
+      "required": ["w", "h"],
+      "additionalProperties": false,
+      "properties": { "w": { "type": "integer", "minimum": 16 }, "h": { "type": "integer", "minimum": 16 } }
+     }
+    }
+   }
+  }
+ }
+}

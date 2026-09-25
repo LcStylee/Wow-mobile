@@ -152,6 +152,8 @@ func TestDetectClientType(t *testing.T) {
 		{`C:\turtle\wow.exe`, ClientTypeLegacy, true},
 		{`C:\turtle\VanillaFixes.exe`, ClientTypeLegacy, true},
 		{`C:\turtle\vanillafixes.EXE`, ClientTypeLegacy, true},
+		{`C:\World of Warcraft\_classic_beta_\WowClassicB.exe`, ClientTypeClassicEra, true}, // WoW: Forever beta
+		{`C:\World of Warcraft\_classic_ptr_\WowClassicT.exe`, ClientTypeClassicEra, true},
 		{`C:\turtle\TurtleWoW.exe`, "", false},                        // unknown name => ask
 		{`C:\_classic_era_\anything.exe`, ClientTypeClassicEra, true}, // tree wins for unknown names too
 	}

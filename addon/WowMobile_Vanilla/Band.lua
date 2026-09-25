@@ -1,66 +1,51 @@
 --------------------------------------------------------------------------------
--- WowMobile (Vanilla 1.12) · Band — Lua 5.0 port of the Classic Era Band.lua
--- THE BAND CONTRACT (shared with the server — deterministic, no protocol
--- change): when the game window's client area is LANDSCAPE (width > height),
--- the touch experience lives in a centered 9:16 portrait band computed, in
--- PHYSICAL client pixels, as
---     bandHeight = clientHeight
---     bandWidth  = roundHalfToEven(clientHeight * 9, 16)
---     bandX      = roundHalfToEven(clientWidth - bandWidth, 2)
---     bandY      = 0
--- The server crops the stream to this exact rect and the hello reports the
--- band dimensions, so the phone client is unchanged; the addon computes the
--- same rect INDEPENDENTLY from the same window dimensions and confines every
--- visible surface to it — anything outside the crop is invisible on the
--- phone. When the window is PORTRAIT (height >= width) the band is the full
--- window and behavior is exactly the pre-band layout. Band layout is the
--- server default for this 1.12-engine client (resolveLayout: the field 1.12
--- client rejects portrait render resolutions, so the wizard writes a native
--- landscape gxResolution and this module carries the deck into the band).
+-- WowMobile (Vanilla 1.12) · Band — Lua 5.0 port of the Classic Era Band.lua:
+-- the PHONE FRAME (docs/PHONE_FRAME.md).
+-- The game keeps a normal widescreen window at whatever size the PC uses. The
+-- whole phone UI lives in a centered portrait FRAME with the aspect of the
+-- phone model picked in-game (PhoneSelect.lua; the table is Phones.lua,
+-- generated from phones/phones.json). In PHYSICAL client pixels, RING = 6:
+--     availW, availH = clientW - 2*RING, clientH - 2*RING
+--     frameH = availH;  frameW = roundHalfToEven(availH * streamW, streamH)
+--     if frameW > availW: frameW = availW; frameH = rhe(availW * streamH, streamW)
+--     frameX = rhe(clientW - frameW, 2);  frameY = rhe(clientH - frameH, 2)
+-- Around the frame (OUTSIDE it, never streamed) this module draws the
+-- outline: outer 4 px pure red for the person at the PC, inner 2 px pure cyan
+-- — the machine tag the server reads off the window to crop EXACTLY the
+-- interior. So even when this client's physical-size basis is only
+-- approximate (no GetPhysicalScreenSize on 1.12 — ClientPixels below), the
+-- stream matches what is drawn: the server crops the drawn ring, not a
+-- recomputed rect.
 --
--- This module owns the mode decision and publishes:
---   WM.Band.mode          — "band" (landscape client) | "full" (portrait)
---   WM.Band.left/right/width — band edges/width in UI units of UIParent
---   WM.Band.px            — { x, width, height } in physical client pixels
---                           (the numbers the server's crop uses verbatim);
---                           .approx is true when the gxResolution cvar was
---                           unreadable and the numbers are UI units instead
---   WM.BandFrame          — mouse-disabled frame exactly covering the band;
---                           the world square and the deck anchor to it, which
---                           is what carries the entire module tree into the
---                           band
---   WM.Band.Clamp(frame)  — best-effort clamp of a floater toward the band
---                           (1.12 degrades to plain screen clamping — below)
---   WM.Band.Refresh()     — recompute + re-anchor, no banner logic (Core's
---                           RebaseLayout / drift check)
---   WM.Band.Update()      — Refresh + px factor + mode-flip banner (events)
+-- Publishes the same fields as the Classic Era module: WM.Band.mode ("frame"),
+-- left/right/width/top/height (UI units), px {x,y,width,height,approx}, client,
+-- phone, unit; WM.BandFrame; Band.Clamp, Band.Refresh (recompute + re-anchor,
+-- no banner — Core's RebaseLayout/drift check), Band.Update (events: + px
+-- factor + reload banner), Band.SetPhone(id), Band.SetCustom(w, h),
+-- Band.OnChange(fn), Band.NeedsReload(), Band.PhoneName(p), Band.PhoneById(id).
 --
--- Inside the band the 1080x1920 design space is unchanged: WM.Px converts
--- design px against the BAND width (Core's WM.UpdatePxFactor consults
--- WM.Band), so every module's fraction-of-design-width layout lands in the
--- band without rewriting any layout logic.
---
--- 1.12 platform differences from the Classic Era original (all local to this
--- file): Lua 5.0 (math.mod for '%', table.getn for '#', string.find for
--- string.match, no addon vararg), no GetPhysicalScreenSize (the gxResolution
--- cvar carries the physical client size instead), no SetClampRectInsets, no
--- combat lockdown (frame anchoring is legal at any time, so there is no
--- out-of-combat queue), SetTexture(r,g,b,a) instead of SetColorTexture.
+-- 1.12 platform differences (all local to this file): Lua 5.0 (math.mod,
+-- table.getn, string.find/len), no GetPhysicalScreenSize, no
+-- SetClampRectInsets, no combat lockdown (anchoring is always legal), no
+-- CVar registration, SetTexture(r,g,b,a) instead of SetColorTexture,
+-- SetWidth/SetHeight instead of SetSize.
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
 
 local Band = {}
 WM.Band = Band
+Band.mode = "frame"
+
+local Data = WM.PhoneData
+local RING = Data.ringPx
+local RING_OUTER = Data.ringOuterPx
+local RING_INNER = Data.ringInnerPx
 
 -- roundHalfToEven(num, den): num/den rounded to the nearest integer, exact
--- halves to the EVEN neighbor (banker's rounding). This is a verbatim port of
--- server/internal/window/band.go's roundHalfToEven — the normative snap of
--- the band contract — in the same pure integer arithmetic, so both sides
--- derive byte-identical crop geometry on every input (the vector check below
--- pins the parity). Band inputs keep num and den non-negative, where Lua's
--- floor and math.mod agree exactly with Go's truncating / and % (q is never
--- negative here, so math.mod(q, 2) is the plain parity bit).
+-- halves to the EVEN neighbor — the shared snap of the contract
+-- (tools/genphones.js rhe, window.roundHalfToEven). Inputs are non-negative,
+-- where floor and math.mod agree with Go's truncating / and %.
 local function RoundHalfToEven(num, den)
 	local q = math.floor(num / den)
 	local r = num - q * den
@@ -72,37 +57,91 @@ local function RoundHalfToEven(num, den)
 	return q + math.mod(q, 2) -- exact half: round to even
 end
 
--- Contract vectors — window WxH -> band x/width — shared verbatim with the
--- server: band_test.go's TestComputeBandFrameContractAnchors (and its odd-dims
--- test) asserts these exact numbers against the Go implementation, and the
--- Classic Era Band.lua carries the same table, and VerifyContract below
--- asserts them against this Lua 5.0 port at load — so the implementations
--- cannot drift apart silently. Changing any value is a cross-component
--- protocol change.
-local CONTRACT_VECTORS = {
-	-- { clientW, clientH, bandX, bandW }
-	{ 1280, 720, 438, 405 },   -- the e2e scenario (720p)
-	{ 1920, 1080, 656, 608 },  -- 1080p: 607.5 -> even neighbor 608
-	{ 3840, 2160, 1312, 1215 },-- 4K: the ARCHITECTURE.md example (odd width!)
-	{ 2560, 1440, 875, 810 },  -- 1440p: x 875 exact (odd x)
-	{ 3413, 1920, 1166, 1080 },-- band == design space
-	{ 1281, 719, 438, 404 },   -- odd window dims (band_test.go odd-dims case)
-	-- Additional addon-side spot checks (values from the Go implementation).
-	{ 1366, 768, 467, 432 },
-	{ 1600, 900, 547, 506 },
-	{ 1920, 1200, 622, 675 },  -- x 622.5 -> even neighbor 622
-	{ 3440, 1440, 1315, 810 },
-}
+local function FrameRect(clientW, clientH, sw, sh)
+	local availW, availH = clientW - 2 * RING, clientH - 2 * RING
+	if availW < 16 or availH < 16 then return nil end
+	local h = availH
+	local w = RoundHalfToEven(availH * sw, sh)
+	if w > availW then
+		w = availW
+		h = RoundHalfToEven(availW * sh, sw)
+	end
+	return RoundHalfToEven(clientW - w, 2), RoundHalfToEven(clientH - h, 2), w, h
+end
+Band.FrameRect = FrameRect
+
+local byId = {}
+for i = 1, table.getn(Data.list) do
+	byId[Data.list[i].id] = Data.list[i]
+end
+
+function Band.PhoneById(id)
+	return byId[id]
+end
+
+function Band.PhoneName(p)
+	if not p then return "?" end
+	if p.id == "custom" then
+		return string.format("Custom %dx%d", p.streamW, p.streamH)
+	end
+	if p.brand == "" or string.sub(p.model, 1, string.len(p.brand)) == p.brand then
+		return p.model
+	end
+	return p.brand .. " " .. p.model
+end
+
+local function MakeCustom(w, h)
+	w, h = tonumber(w), tonumber(h)
+	if not w or not h then return nil end
+	w, h = math.floor(w + 0.5), math.floor(h + 0.5)
+	if w < 100 or h < 100 or w > 8000 or h > 8000 or h <= w then return nil end
+	return { id = "custom", brand = "", model = "Custom", streamW = w, streamH = h, popularity = 0 }
+end
+
+Band.phone = byId[Data.defaultId]
+
+-- Persistence: SavedVariables only (1.12 has no CVar registration). Loaded
+-- lazily on the first Refresh after VARIABLES_LOADED — Core's RebaseLayout
+-- at PLAYER_LOGIN — so the saved phone's px factor is in place before any
+-- module init sizes a widget.
+local function Encode(p)
+	if p.id == "custom" then
+		return string.format("custom:%dx%d", p.streamW, p.streamH)
+	end
+	return p.id
+end
+
+local function Decode(s)
+	if type(s) ~= "string" or s == "" then return nil end
+	local _, _, w, h = string.find(s, "^custom:(%d+)x(%d+)$")
+	if w then return MakeCustom(w, h) end
+	return byId[s]
+end
+
+local savedLoaded = false
+local function LoadSavedOnce()
+	if savedLoaded or type(WowMobileDB) ~= "table" then return end
+	savedLoaded = true
+	local p = Decode(WowMobileDB.phone)
+	if p then Band.phone = p end
+end
+
+local function Save(p)
+	if type(WowMobileDB) == "table" then
+		WowMobileDB.phone = Encode(p)
+	end
+end
 
 local function VerifyContract()
-	for i = 1, table.getn(CONTRACT_VECTORS) do
-		local v = CONTRACT_VECTORS[i]
-		local w = RoundHalfToEven(v[2] * 9, 16)
-		local x = RoundHalfToEven(v[1] - w, 2)
-		if x ~= v[3] or w ~= v[4] then
+	local v = Data.vectors
+	for i = 1, table.getn(v) do
+		local p = byId[v[i][1]]
+		local x, y, w, h = FrameRect(v[i][2], v[i][3], p.streamW, p.streamH)
+		if x ~= v[i][4] or y ~= v[i][5] or w ~= v[i][6] or h ~= v[i][7] then
 			WM.ReportError(string.format(
-				"Band.lua: band contract vector %dx%d expects x=%d w=%d, got x=%d w=%d — layout would not match the server's crop",
-				v[1], v[2], v[3], v[4], x, w))
+				"Band.lua: phone-frame vector %s %dx%d expects %d,%d %dx%d, got %s,%s %sx%s",
+				v[i][1], v[i][2], v[i][3], v[i][4], v[i][5], v[i][6], v[i][7],
+				tostring(x), tostring(y), tostring(w), tostring(h)))
 			return
 		end
 	end
@@ -126,11 +165,11 @@ end
 --     the same live ASPECT, never absolute px.
 -- So: the LIVE aspect decides, the cvar supplies the absolute integers.
 --   basis "gxResolution" — the cvar's aspect matches the live window's
---     (within 0.4%): use the cvar verbatim; band math is byte-identical to
---     the server's crop of the same rect.
+--     (within 0.4%): use the cvar verbatim; frame math is byte-identical to
+--     the server's computation for the same rect.
 --   basis "gx-derived"  — the aspects diverge (maximized minus taskbar, DPI
 --     virtualization, a client that restored its own rect): keep the cvar's
---     WIDTH, re-derive the height from the live aspect. The resulting band
+--     WIDTH, re-derive the height from the live aspect. The resulting frame
 --     FRACTIONS of the window then match the server's crop of the live rect
 --     to sub-pixel — which is what aligns the layout with the stream — even
 --     when the absolute px are off because the width changed too.
@@ -161,54 +200,40 @@ local function ClientPixels()
 	return math.floor(uiW + 0.5), math.floor(uiH + 0.5), "ui"
 end
 
--- Recompute the published metrics from the live window dimensions. Pure math,
--- no frame mutation — always safe to run.
+-- Recompute the published metrics. Pure math, no frame mutation.
 function Band.Compute()
 	local pw, ph, basis = ClientPixels()
 	local approx = basis == "ui"
-	local uiW = UIParent:GetWidth()
-	-- Chosen basis published for /wm status: the client size the band math
-	-- ran on, and which source supplied it (see ClientPixels).
+	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
 	Band.client = { w = pw, h = ph, basis = basis }
-	if pw > ph then
-		-- Landscape client area: centered 9:16 band (the contract above).
-		local bandW = RoundHalfToEven(ph * 9, 16)
-		local bandX = RoundHalfToEven(pw - bandW, 2)
-		local unit = uiW / pw -- UI units per physical px (uniform scale)
-		Band.mode = "band"
-		Band.px = { x = bandX, width = bandW, height = ph, approx = approx }
-		Band.left = bandX * unit
-		Band.width = bandW * unit
-		Band.right = Band.left + Band.width
-	else
-		-- Portrait client area: full-window mode, exactly the pre-band layout.
-		Band.mode = "full"
-		Band.px = { x = 0, width = pw, height = ph, approx = approx }
-		Band.left = 0
-		Band.width = uiW
-		Band.right = uiW
+	local p = Band.phone
+	local x, y, w, h = FrameRect(pw, ph, p.streamW, p.streamH)
+	if not x then
+		x, y, w, h = 0, 0, pw, ph
 	end
+	local unit = uiW / pw -- UI units per physical px (uniform scale)
+	Band.unit = unit
+	Band.px = { x = x, y = y, width = w, height = h, approx = approx }
+	Band.left = x * unit
+	Band.width = w * unit
+	Band.right = Band.left + Band.width
+	Band.top = y * unit
+	Band.height = h * unit
+	if Band.top + Band.height > uiH then Band.height = uiH - Band.top end
 end
 
 --------------------------------------------------------------------------------
--- Band frame + side rails
+-- Frame, rails, outline
 --------------------------------------------------------------------------------
 
--- Anchor host for the whole UI: Viewport hangs the world square off its top
--- edge and Deck fills it below the square, so re-anchoring THIS frame is the
--- single move that relocates every surface. Mouse-disabled: it must never
--- intercept anything (phone taps are injected into the band, but the PC's
--- own mouse works too).
+-- Anchor host for the whole UI (world square on top, deck below).
+-- Mouse-disabled: it must never intercept anything.
 local bandFrame = CreateFrame("Frame", "WowMobileBand", UIParent)
 bandFrame:SetFrameStrata("BACKGROUND")
 bandFrame:SetFrameLevel(0)
 bandFrame:EnableMouse(false)
 WM.BandFrame = bandFrame
 
--- Plain black backdrops over the side regions outside the band (band mode
--- only). Visual only — mouse-transparent on the PC; phone taps cannot reach
--- there anyway because input injection maps into the band. Anchored to the
--- band frame's edges so they track every re-anchor for free.
 local function CreateRail(name)
 	local rail = CreateFrame("Frame", name, UIParent)
 	rail:SetFrameStrata("BACKGROUND")
@@ -217,40 +242,83 @@ local function CreateRail(name)
 	local black = rail:CreateTexture(nil, "BACKGROUND")
 	black:SetAllPoints(rail)
 	black:SetTexture(0, 0, 0, 1) -- 1.12: SetTexture(r,g,b,a) is the flat fill
-	rail:Hide()
 	return rail
 end
 
 local leftRail = CreateRail("WowMobileBandRailLeft")
 leftRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-leftRail:SetPoint("BOTTOMRIGHT", bandFrame, "BOTTOMLEFT", 0, 0)
+leftRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+leftRail:SetPoint("RIGHT", bandFrame, "LEFT", 0, 0)
 local rightRail = CreateRail("WowMobileBandRailRight")
-rightRail:SetPoint("TOPLEFT", bandFrame, "TOPRIGHT", 0, 0)
+rightRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
 rightRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+rightRail:SetPoint("LEFT", bandFrame, "RIGHT", 0, 0)
+local topRail = CreateRail("WowMobileBandRailTop")
+topRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+topRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+topRail:SetPoint("BOTTOM", bandFrame, "TOP", 0, 0)
+local bottomRail = CreateRail("WowMobileBandRailBottom")
+bottomRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+bottomRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+bottomRail:SetPoint("TOP", bandFrame, "BOTTOM", 0, 0)
 
--- (Re-)anchor the band frame to the computed band rect. 1.12 has no combat
--- lockdown/protected frames, so this is legal at any time — no out-of-combat
--- queue (the Classic Era original needs one).
+-- The outline: 8 strips (4 red, 4 cyan) at whole physical pixels.
+local outline = CreateFrame("Frame", "WowMobilePhoneOutline", UIParent)
+outline:SetFrameStrata("BACKGROUND")
+outline:SetFrameLevel(5)
+outline:EnableMouse(false)
+outline:SetAllPoints(UIParent)
+
+local function Strip(r, g, b)
+	local t = outline:CreateTexture(nil, "OVERLAY")
+	t:SetTexture(r, g, b, 1)
+	return t
+end
+
+local red = { Strip(1, 0, 0), Strip(1, 0, 0), Strip(1, 0, 0), Strip(1, 0, 0) }
+local cyan = { Strip(0, 1, 1), Strip(0, 1, 1), Strip(0, 1, 1), Strip(0, 1, 1) }
+
+local function Put(s, px, py, pw, ph)
+	local u = Band.unit
+	s:ClearAllPoints()
+	s:SetPoint("TOPLEFT", UIParent, "TOPLEFT", px * u, -py * u)
+	s:SetWidth(pw * u)
+	s:SetHeight(ph * u)
+end
+
+-- A ring of thickness t (px) whose inner edge is `inset` px outside the frame.
+local function PlaceRing(strips, x, y, w, h, inset, t)
+	local ox, oy = x - inset - t, y - inset - t
+	local ow, oh = w + 2 * (inset + t), h + 2 * (inset + t)
+	Put(strips[1], ox, oy, ow, t)
+	Put(strips[2], ox, oy + oh - t, ow, t)
+	Put(strips[3], ox, oy + t, t, oh - 2 * t)
+	Put(strips[4], ox + ow - t, oy + t, t, oh - 2 * t)
+end
+
+local function DrawOutline()
+	local p = Band.px
+	PlaceRing(cyan, p.x, p.y, p.width, p.height, 0, RING_INNER)
+	PlaceRing(red, p.x, p.y, p.width, p.height, RING_INNER, RING_OUTER)
+end
+
+-- (Re-)anchor the frame. No combat lockdown on 1.12: legal at any time.
 local function Anchor()
 	bandFrame:ClearAllPoints()
-	bandFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", Band.left, 0)
-	bandFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT",
-		-(UIParent:GetWidth() - Band.right), 0)
-	local on = Band.mode == "band"
-	WM.SetShown(leftRail, on)
-	WM.SetShown(rightRail, on)
+	bandFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", Band.left, -Band.top)
+	bandFrame:SetWidth(Band.width)
+	bandFrame:SetHeight(Band.height)
+	DrawOutline()
 end
 
 --------------------------------------------------------------------------------
--- Band clamping for screen-clamped floaters
+-- Clamping for screen-clamped floaters
 --------------------------------------------------------------------------------
 
--- Best effort on 1.12: SetClampRectInsets does not exist here (it is a 2.x
--- API), so a floater can only be clamped to the WINDOW, not shrunk to the
--- band — exactly the pre-band behavior, never worse. The method probes keep
--- this correct on any client build; callers that must stay inside the band
--- (the boosted unit dropdown) clamp their anchor point against
--- WM.Band.left/right manually instead (UnitFrames.lua).
+-- Best effort on 1.12: SetClampRectInsets does not exist here (a 2.x API), so
+-- a floater can only be clamped to the WINDOW; callers that must stay inside
+-- the frame (the boosted unit dropdown) clamp against WM.Band.left/right
+-- manually (UnitFrames.lua). The probe keeps builds exposing the API right.
 function Band.Clamp(frame)
 	if frame.SetClampedToScreen then
 		frame:SetClampedToScreen(true)
@@ -258,88 +326,96 @@ function Band.Clamp(frame)
 	if not frame.SetClampRectInsets then
 		return
 	end
-	-- Future-proofing for builds that do expose the 2.x API. The insets
-	-- follow the anchor-offset sign convention (+x right, +y up), so an
-	-- INWARD clamp edge needs a POSITIVE left inset and a NEGATIVE right one
-	-- (cf. FrameXML's ChatFrame:SetClampRectInsets(-35, 35, 26, -50), which
-	-- loosens all four sides). Insets are in the frame's own coordinate
-	-- space, hence the scale conversion.
+	local s = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
 	local leftM = Band.left
 	local rightM = UIParent:GetWidth() - Band.right
-	if leftM > 0 or rightM > 0 then
-		local s = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
-		frame:SetClampRectInsets(leftM * s, -rightM * s, 0, 0)
-	else
-		frame:SetClampRectInsets(0, 0, 0, 0)
-	end
+	local topM = Band.top
+	local bottomM = UIParent:GetHeight() - Band.top - Band.height
+	frame:SetClampRectInsets(leftM * s, -rightM * s, -topM * s, bottomM * s)
 end
 
 --------------------------------------------------------------------------------
 -- Update flow
 --------------------------------------------------------------------------------
 
--- The mode every widget's WM.Px size was built for this session (set once at
--- load below). A live flip away from it leaves fixed-size widgets stale —
--- overlapping tap targets inside the band — until /reload.
-local builtMode
+local listeners = {}
+function Band.OnChange(fn)
+	table.insert(listeners, fn)
+end
 
--- Banner-free refresh: metrics + anchors from the live window. Safe at any
--- time on 1.12. Core's RebaseLayout runs it right before module inits size
--- their frames, and the drift check (WM.CheckLayoutFresh) runs it before
--- re-applying the viewport, so the square math always sees fresh band edges.
+-- The frame width (UI units) this session's WM.Px sizes were built for, set
+-- at PLAYER_LOGIN (first OnInit). A phone with another aspect leaves them
+-- stale until /reload; a window resize barely moves it (1% tolerance).
+local builtWidth
+
+function Band.NeedsReload()
+	return builtWidth ~= nil and math.abs(Band.width - builtWidth) > builtWidth * 0.01
+end
+
+-- Banner-free refresh: metrics + anchors from the live window. Core's
+-- RebaseLayout runs it right before module inits size their frames (the
+-- saved phone is picked up here, SavedVariables being loaded by then).
 function Band.Refresh()
+	LoadSavedOnce()
 	Band.Compute()
 	Anchor()
 end
 
--- Full refresh for the event paths: metrics/anchors, the px factor (newly
--- created widgets size against the fresh band), and the mode-flip banner.
+-- Full refresh for the event paths: + px factor, reload banner, listeners.
 function Band.Update()
-	local before = Band.mode
 	Band.Refresh()
 	WM.UpdatePxFactor()
-	if builtMode and Band.mode ~= builtMode then
-		-- Anchors reflowed above, but sizes built with the old px factor are
-		-- stale until reload — a chat line is invisible on a phone, so raise
-		-- the persistent tap-to-reload banner (Core). Re-shown on every update
-		-- while flipped: the re-show re-measures against the live band, so
-		-- the banner itself never goes stale. The chat line (scrollback) is
-		-- printed only on the actual transition.
-		local label
-		if Band.mode == "band" then
-			label = "landscape band"
-		else
-			label = "portrait full-window"
-		end
+	if Band.NeedsReload() then
 		WM.ShowSetupBanner(string.format(
-			"Window switched to %s mode — the touch layout must be rebuilt.",
-			label), "band-mode")
-		if before ~= Band.mode then
-			WM.Print(string.format(
-				"window switched to %s mode — tap the banner (or /wm reload) to re-lay-out the deck",
-				label))
-		end
+			"Phone frame changed to %s — tap to rebuild the touch layout.",
+			Band.PhoneName(Band.phone)), "band-mode")
 	else
-		-- Back on the mode the layout was built for: sizes are correct again,
-		-- so clear our own banner (never another raiser's).
 		WM.HideSetupBanner("band-mode")
+	end
+	for i = 1, table.getn(listeners) do
+		local ok, err = pcall(listeners[i])
+		if not ok then WM.ReportError(err) end
 	end
 end
 
--- Load-time application: the frame must be anchored before Viewport.lua hangs
--- the square off it at ITS file scope, and the px factor must be band-aware
--- before any module calls WM.Px.
+local function Apply(p, silent)
+	Band.phone = p
+	Save(p)
+	Band.Update()
+	if not silent then
+		WM.Print(string.format("phone: %s — frame %dx%d px of %dx%d",
+			Band.PhoneName(p), Band.px.width, Band.px.height, Band.client.w, Band.client.h))
+	end
+end
+
+function Band.SetPhone(id, silent)
+	local p = byId[id]
+	if not p then return false end
+	Apply(p, silent)
+	return true
+end
+
+function Band.SetCustom(w, h)
+	local p = MakeCustom(w, h)
+	if not p then return false end
+	Apply(p)
+	return true
+end
+
+-- Load-time application with the default phone: the frame must be anchored
+-- before Viewport.lua hangs the square off it at ITS file scope.
 Band.Compute()
-builtMode = Band.mode -- the mode this session's WM.Px sizes are built for
 Anchor()
 WM.UpdatePxFactor()
--- Assert the shared contract vectors against the Lua port (reports a module
--- error + red banner on mismatch — deterministic, so this only fires if an
--- edit drifts the formula away from band.go's).
 VerifyContract()
 
--- Registered before Viewport's handlers for the same events (.toc order), so
--- the band metrics are fresh by the time Viewport re-applies the square.
+-- First OnInit (TOC order): RebaseLayout has just refreshed the metrics with
+-- the saved phone, so this width is what every module is about to size for.
+WM.OnInit(function()
+	builtWidth = Band.width
+end)
+
+-- Registered before Viewport's handlers for the same events (.toc order).
 -- TryOn: a bare 1.12 build lacks these events — then the drift check's
 -- timer/loading-screen path (Core) is what re-runs Band.Refresh.
 WM.TryOn("DISPLAY_SIZE_CHANGED", Band.Update)
