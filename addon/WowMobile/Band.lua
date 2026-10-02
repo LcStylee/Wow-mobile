@@ -10,7 +10,7 @@
 --     if frameW > availW: frameW = availW; frameH = rhe(availW * streamH, streamW)
 --     frameX = rhe(clientW - frameW, 2);  frameY = rhe(clientH - frameH, 2)
 -- Around the frame (OUTSIDE it, so never part of the stream) this module
--- draws the outline: outer 4 px pure red, inner 2 px pure cyan. The red is
+-- draws the outline over the normally rendered game: outer 4 px pure red, inner 2 px pure cyan. The red is
 -- for the person at the PC — "your phone screen is in here" — and the cyan is
 -- the machine tag the server reads off the window to crop EXACTLY the
 -- interior, so the stream always matches what the addon drew, whatever the
@@ -211,7 +211,7 @@ function Band.Compute()
 end
 
 --------------------------------------------------------------------------------
--- Frame, rails, outline
+-- Frame and outline
 --------------------------------------------------------------------------------
 
 -- Anchor host for the whole UI (world square on top, deck below).
@@ -222,37 +222,10 @@ bandFrame:SetFrameLevel(0)
 bandFrame:EnableMouse(false)
 WM.BandFrame = bandFrame
 
--- Black backdrops around the frame (PC-only area). Visual only.
-local function CreateRail(name)
-	local rail = CreateFrame("Frame", name, UIParent)
-	rail:SetFrameStrata("BACKGROUND")
-	rail:SetFrameLevel(0)
-	rail:EnableMouse(false)
-	local black = rail:CreateTexture(nil, "BACKGROUND")
-	black:SetAllPoints()
-	black:SetColorTexture(0, 0, 0, 1)
-	return rail
-end
+-- No rails: outside the frame the game renders normally, edge to edge — the
+-- outline alone marks the phone screen (v0.5.1; 0.5.0 blacked it out).
 
-local leftRail = CreateRail("WowMobileBandRailLeft")
-leftRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-leftRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-leftRail:SetPoint("RIGHT", bandFrame, "LEFT", 0, 0)
-local rightRail = CreateRail("WowMobileBandRailRight")
-rightRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
-rightRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
-rightRail:SetPoint("LEFT", bandFrame, "RIGHT", 0, 0)
-local topRail = CreateRail("WowMobileBandRailTop")
-topRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-topRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
-topRail:SetPoint("BOTTOM", bandFrame, "TOP", 0, 0)
-local bottomRail = CreateRail("WowMobileBandRailBottom")
-bottomRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-bottomRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
-bottomRail:SetPoint("TOP", bandFrame, "BOTTOM", 0, 0)
-Band.rightRail, Band.leftRail = rightRail, leftRail
-
--- The outline: one frame above the rails holding 8 strips (4 red, 4 cyan).
+-- The outline: one frame holding 8 strips (4 red, 4 cyan).
 -- Positions are whole physical pixels times the UI unit, so every edge lands
 -- on a pixel boundary; pixel snapping is disabled where the client has it,
 -- so the engine never nudges a strip by a pixel and blends the colours.

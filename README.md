@@ -21,7 +21,7 @@ always matches what you see inside the red line, at any resolution.
 
 ```
 PC:    WoW (any window size) + WowMobile addon
-         [ ██ |▌red outline: phone UI▐| phone selector ]
+         [ game world |▌red outline: phone UI▐| phone selector ]  (world renders full screen)
        └─ wowstreamd: reads the outline → crops → H.264 → WebRTC ⇄ touch → SendInput
 Phone: browser PWA — video sized to the stream + gesture layer + control deck
 ```

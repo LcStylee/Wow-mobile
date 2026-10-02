@@ -92,7 +92,7 @@ Drawn by the addon **outside** the frame rect, so it is never part of the
 stream: a 6 px ring — **outer 4 px pure red `#FF0000`**, **inner 2 px pure
 cyan `#00FFFF`** (the machine tag; the ring still reads as red). Always shown,
 mouse-transparent, whole physical pixels (pixel snapping disabled where the
-client has it). Outside the ring the addon keeps black rails; the selector
+client has it). Outside the ring the game renders normally, edge to edge (the 3D world is never shrunk); the selector
 panel (§6) lives there.
 
 The server locates the frame by **reading the outline off the window**

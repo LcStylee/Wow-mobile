@@ -223,22 +223,7 @@ local function PrintStatus()
 				"frame rect: x=%d y=%d w=%d h=%d px (left=%.1f top=%.1f width=%.1f UI units)",
 				band.px.x, band.px.y, band.px.width, band.px.height,
 				band.left or 0, band.top or 0, band.width or 0))
-			if WM.Viewport and WM.Viewport.GetStatus then
-				local vs = WM.Viewport.GetStatus()
-				if vs.leftFrac then
-					WM.Print(string.format(
-						"world rect: x=%d y=%d w=%d h=%d px"
-							.. " (window fractions x=%.4f y=%.4f w=%.4f h=%.4f; full-window measure %s)",
-						math.floor(vs.leftFrac * band.client.w + 0.5),
-						math.floor(vs.topFrac * band.client.h + 0.5),
-						math.floor(vs.widthFrac * band.client.w + 0.5),
-						math.floor(vs.heightFrac * band.client.h + 0.5),
-						vs.leftFrac, vs.topFrac, vs.widthFrac, vs.heightFrac,
-						vs.fullOk and "ok" or "FAILED — scale fallback in use"))
-				else
-					WM.Print("world rect: unavailable (WorldFrame rect not resolved)")
-				end
-			end
+			WM.Print("world: renders full window, edge to edge (the phone sees it through the top of the frame)")
 		end
 	end
 	if vp < lo or vp > hi then

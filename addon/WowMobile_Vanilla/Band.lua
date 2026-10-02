@@ -223,7 +223,7 @@ function Band.Compute()
 end
 
 --------------------------------------------------------------------------------
--- Frame, rails, outline
+-- Frame and outline
 --------------------------------------------------------------------------------
 
 -- Anchor host for the whole UI (world square on top, deck below).
@@ -234,33 +234,8 @@ bandFrame:SetFrameLevel(0)
 bandFrame:EnableMouse(false)
 WM.BandFrame = bandFrame
 
-local function CreateRail(name)
-	local rail = CreateFrame("Frame", name, UIParent)
-	rail:SetFrameStrata("BACKGROUND")
-	rail:SetFrameLevel(0)
-	rail:EnableMouse(false)
-	local black = rail:CreateTexture(nil, "BACKGROUND")
-	black:SetAllPoints(rail)
-	black:SetTexture(0, 0, 0, 1) -- 1.12: SetTexture(r,g,b,a) is the flat fill
-	return rail
-end
-
-local leftRail = CreateRail("WowMobileBandRailLeft")
-leftRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-leftRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-leftRail:SetPoint("RIGHT", bandFrame, "LEFT", 0, 0)
-local rightRail = CreateRail("WowMobileBandRailRight")
-rightRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
-rightRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
-rightRail:SetPoint("LEFT", bandFrame, "RIGHT", 0, 0)
-local topRail = CreateRail("WowMobileBandRailTop")
-topRail:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-topRail:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
-topRail:SetPoint("BOTTOM", bandFrame, "TOP", 0, 0)
-local bottomRail = CreateRail("WowMobileBandRailBottom")
-bottomRail:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-bottomRail:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
-bottomRail:SetPoint("TOP", bandFrame, "BOTTOM", 0, 0)
+-- No rails: outside the frame the game renders normally, edge to edge — the
+-- outline alone marks the phone screen (v0.5.1; 0.5.0 blacked it out).
 
 -- The outline: 8 strips (4 red, 4 cyan) at whole physical pixels.
 local outline = CreateFrame("Frame", "WowMobilePhoneOutline", UIParent)

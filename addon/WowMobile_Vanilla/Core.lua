@@ -79,7 +79,7 @@ WM.FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 -- sizes use the same width fraction deliberately: the streamed crop is a
 -- 9:16 rect (ARCHITECTURE.md §1), so uniform scaling keeps squares square;
 -- a window that is NOT a shape the deck can live in is detected below
--- (WM.CheckLayoutFresh / Viewport.Verify) rather than guessed around.
+-- (WM.CheckLayoutFresh) rather than guessed around.
 --
 -- The factor is (re)measured at PLAYER_LOGIN immediately before the module
 -- inits size their frames (WM.RebaseLayout), and the geometry it was based
