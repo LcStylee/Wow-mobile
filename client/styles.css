@@ -1,14 +1,10 @@
 /* WoW Mobile — dark, fullscreen, touch-first.
  *
- * DECK LAYOUT (primary; js/layout.js picks it): the 9:16 video is anchored to
- * the TOP of the screen below the safe-area inset, full width, height exactly
- * width·16/9 (--video-h). The leftover bottom strip — dead for a 9:16 stream
- * on any taller-than-16:9 phone — is the "phone deck" (#hud): quick keys,
- * Snd/Set/End, and the compact stats line. Nothing overlays the video.
- *
- * OVERLAY LAYOUT (fallback; body.layout-overlay, screens ≤ ~16:9 tall): the
- * classic full-window letterboxed video, with the same chrome as a slim
- * auto-fading bar along the top edge. */
+ * ONE LAYOUT (since v0.6.2; js/layout.js always sets body.layout-overlay):
+ * the video runs from below the top safe-area inset (camera cutout / status
+ * bar) to the bottom edge, and the native chrome is a single floating,
+ * auto-fading menu button over the game. The #hud "deck" base rules below
+ * are the shared look of that chrome; the layout-overlay rules position it. */
 
 :root {
   --bg: #0a0a10;
@@ -94,10 +90,13 @@ button {
   height: var(--video-h);
 }
 
+/* The only layout since v0.6.1: from below the top inset (camera cutout /
+ * status bar) to the bottom edge. Each phone's stream is shaped to exactly
+ * this box (docs/PHONE_FRAME.md §3), so it fills edge to edge. */
 body.layout-overlay #video,
 body.layout-overlay #touch {
-  top: 0;
-  height: var(--vh100); /* classic full-window letterboxed video */
+  top: var(--safe-top);
+  height: calc(var(--vh100) - var(--safe-top));
 }
 
 #video {

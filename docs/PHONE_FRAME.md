@@ -37,13 +37,15 @@ Adding a phone is one JSON entry plus a regeneration. Entry fields:
 
 ## 3. Stream size per phone (integer, deterministic)
 
-Since v0.6.1 the phone client keeps no native strip below the video (the
-controls live in a floating menu button), so `DECK_LOGICAL_PX = 0` and the
-stream fills the phone between its OS insets, edge to edge. The constant
-stays in the formula so a future strip only has to change one number.
+The phone client's video box runs from below the top inset (camera cutout /
+status bar) to the bottom edge of the screen — the home indicator is only a
+thin overlay line, so the bottom inset is not reserved (v0.6.2). Since v0.6.1
+there is no native strip below the video either (the controls live in a
+floating menu button), so `DECK_LOGICAL_PX = 0`. The constant stays in the
+formula so a future strip only has to change one number.
 
 ```
-reservedPx = roundHalfToEven((insetTop + insetBottom + DECK_LOGICAL_PX) * dpr)
+reservedPx = roundHalfToEven((insetTop + DECK_LOGICAL_PX) * dpr)
 streamW    = physW
 streamH    = physH - reservedPx
 ```
@@ -227,3 +229,8 @@ The phone client shows a single menu button; the quick keys (Space, Esc, chat,
 map, bags), Cam+/Cam− (camera zoom), Config (`/wm settings`), sound, settings,
 disconnect and the connection stats open from it. The menu stays open until
 it is closed by hand.
+
+The world map (v0.6.2) fills the frame's width from the top, above its own
+control row at the frame's bottom edge (Zoom− / Zoom+ / four pan arrows /
+Me / Close); a pinch over it zooms too. Starting at the top keeps the
+unzoomed map clear of the joystick band.

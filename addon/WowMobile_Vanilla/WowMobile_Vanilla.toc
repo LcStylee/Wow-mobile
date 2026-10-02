@@ -4,7 +4,7 @@
 ## Title: WoW Mobile (Vanilla)
 ## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone); world square + control deck.
 ## Author: WoW Mobile project
-## Version: 0.6.1
+## Version: 0.6.2
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/timers,

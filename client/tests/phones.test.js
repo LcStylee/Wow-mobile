@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PHONES, CONTRACT_VECTORS, RING_PX, DEFAULT_PHONE_ID } from '../js/phones.js';
 import { identifyPhones, aspectMismatch, aspectNotice } from '../js/phonematch.js';
-import { layoutMode } from '../js/layout.js';
 
 function rhe(num, den) {
   const q = Math.floor(num / den);
@@ -46,14 +45,18 @@ test('table: 20 most-used first, default present', () => {
   assert.ok(PHONES.slice(20).every((p) => p.popularity === 0));
 });
 
-test('stream fills the phone it was made for, edge to edge (v0.6.1)', () => {
-  // iPhone 17: 402x874 CSS, insets 62/34 — its own stream at full width is
-  // exactly the height between the insets: no black bar, no deck strip.
-  const p = PHONES.find((x) => x.id === 'iphone-17');
-  const videoH = 402 * (p.streamH / p.streamW);
-  assert.ok(Math.abs(videoH - (874 - 62 - 34)) < 1, String(videoH));
-  // Nothing is left for a deck: the single floating menu button (overlay).
-  assert.equal(layoutMode(402, 874, 62, 34, undefined, p.streamH / p.streamW), 'overlay');
+test('stream fills the phone it was made for, edge to edge (v0.6.2)', () => {
+  // The client's video box runs from below the top inset to the bottom edge
+  // (styles.css). Each phone's own stream at full width must be exactly that
+  // tall: no bar under the camera cutout, no bar at the bottom.
+  for (const [id, cssW, cssH, insetTop] of [
+    ['iphone-17', 402, 874, 62],
+    ['iphone-16', 393, 852, 59],
+  ]) {
+    const p = PHONES.find((x) => x.id === id);
+    const videoH = cssW * (p.streamH / p.streamW);
+    assert.ok(Math.abs(videoH - (cssH - insetTop)) < 1, `${id}: ${videoH}`);
+  }
 });
 
 test('identifyPhones picks same-panel models, most popular first', () => {

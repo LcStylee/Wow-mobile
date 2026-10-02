@@ -72,7 +72,7 @@ class App {
   #wakeLock = null;
   #wakeLockRequest = null; // in-flight wakeLock.request; concurrent acquires share it
 
-  /** @param settings shared Settings instance (layout.js reads it too). */
+  /** @param settings shared Settings instance. */
   constructor(settings) {
     this.#settings = settings;
     this.#hud = new Hud({
@@ -1077,13 +1077,12 @@ document.getElementById('phone-notice')?.addEventListener('click', (e) => {
   e.currentTarget.hidden = true;
 });
 
-// One Settings instance shared by the layout decision (deckLayout override)
-// and the app (created before either consumer reads it).
+// One Settings instance shared by the app's components.
 const settings = new Settings();
 
-// Pick the chrome layout (bottom deck vs auto-fading overlay bar) before the
-// app shows anything, and keep it current across resizes/orientation changes.
-initLayout(settings);
+// Apply the layout (video under the top inset, floating auto-fading chrome)
+// before the app shows anything.
+initLayout();
 
 const app = new App(settings);
 app.boot();

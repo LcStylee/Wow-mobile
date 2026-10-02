@@ -94,19 +94,6 @@ export class Hud {
     rail.checked = settings.get('showRail');
     rail.addEventListener('change', () => settings.set('showRail', rail.checked));
 
-    // Deck-vs-overlay escape hatch ("Controls below the game"). layout.js
-    // subscribes to the setting and re-decides immediately; the HUD only owns
-    // the control. A stored value the select has no option for (future
-    // schema drift) leaves selectedIndex -1: snap UI and setting back to
-    // auto, mirroring the bitrate select's self-heal above.
-    const deck = $('set-deck');
-    deck.value = String(settings.get('deckLayout'));
-    if (deck.selectedIndex < 0) {
-      deck.value = 'auto';
-      settings.set('deckLayout', 'auto');
-    }
-    deck.addEventListener('change', () => settings.set('deckLayout', deck.value));
-
     this.setAudio(settings.get('audio'));
     this.setState('idle');
 

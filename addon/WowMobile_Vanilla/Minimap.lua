@@ -23,6 +23,7 @@
 local WM = WowMobile
 
 local MAP_SIZE = 190 -- sized so map + zoom + zone end above the party frames (y>=330)
+local NATIVE_SIZE = 140 -- 1.12 Minimap's XML size (see the SetScale note below)
 
 local function Zoom(delta)
 	local zoom = Minimap:GetZoom() + delta
@@ -69,9 +70,15 @@ WM.OnInit(function()
 	Minimap:SetFrameStrata("LOW")
 	Minimap:SetFrameLevel(holder:GetFrameLevel() + 1)
 	Minimap:ClearAllPoints()
+	-- Size through SetScale, never SetWidth/SetHeight (v0.6.2): the 1.12
+	-- engine renders the minimap terrain for its native 140x140 box only — a
+	-- resized Minimap stops drawing or freezes on one image (field reports
+	-- v0.6.0 "blacked out", v0.6.1 "not moving"). This is how the vanilla
+	-- minimap addons sized it. CENTER with zero offsets is scale-proof.
+	Minimap:SetWidth(NATIVE_SIZE)
+	Minimap:SetHeight(NATIVE_SIZE)
+	Minimap:SetScale(WM.Px(MAP_SIZE) / NATIVE_SIZE)
 	Minimap:SetPoint("CENTER", holder, "CENTER", 0, 0)
-	Minimap:SetWidth(WM.Px(MAP_SIZE))
-	Minimap:SetHeight(WM.Px(MAP_SIZE))
 	Minimap:EnableMouse(true) -- tap = ping, default behavior
 	-- 1.12 XML parentage of MiniMapMailFrame (Minimap vs MinimapCluster) is
 	-- ambiguous across clients; if it rides along with the reparented Minimap

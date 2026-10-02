@@ -73,7 +73,10 @@ function dprMilli(dpr) {
 
 function streamSize(p) {
   if (p.stream) return { w: p.stream.w, h: p.stream.h };
-  const reserved = rhe((p.insetTop + p.insetBottom + DECK_LOGICAL_PX) * dprMilli(p.dpr), 1000);
+  // Only the TOP inset (camera cutout / status bar) is reserved since v0.6.2:
+  // the phone client's video runs to the bottom edge, under the home
+  // indicator, which is a thin overlay line rather than a dead band.
+  const reserved = rhe((p.insetTop + DECK_LOGICAL_PX) * dprMilli(p.dpr), 1000);
   return { w: p.physW, h: p.physH - reserved };
 }
 
