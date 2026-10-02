@@ -91,6 +91,7 @@ local CARRY_H = 112 -- carry bar height; lane 8..120 above the square's bottom
 local SPLIT_W = 580 -- split sheet width; left edge at 1080-8-580 = 492 > 486
 local SPLIT_H = 300
 
+local trashButton  -- carry-bar trash (v0.6.1); built in OnInit
 local payload      -- { kind = "container"|"inventory"|"spell"|"action", icon,
                    --   name, count, quality, invType, bag, slot, invSlot,
                    --   bookSlot, actionSlot } — origin fields only when the
@@ -248,6 +249,10 @@ function Move.Begin(p)
 	CloseSplit()
 	SetBarItem(p.icon, p.name, p.quality,
 		p.count and p.count > 1 and ("x" .. p.count) or "")
+	-- Trash only for bar/book payloads (items keep the X = put back).
+	if trashButton then
+		WM.SetShown(trashButton, p.kind == "action" or p.kind == "spell")
+	end
 	bar:Show()
 	ApplyHighlights()
 end
@@ -646,7 +651,7 @@ WM.OnInit(function()
 	bar.name = WM.CreateText(bar, 30)
 	bar.name:SetPoint("TOPLEFT", bar, "TOPLEFT", WM.Px(116), -WM.Px(22))
 	bar.name:SetJustifyH("LEFT")
-	bar.name:SetWidth(WM.Px(640))
+	bar.name:SetWidth(WM.Px(560))
 	WM.SingleLine(bar.name, 30)
 
 	bar.count = WM.CreateText(bar, 24, "OUTLINE")
@@ -656,6 +661,17 @@ WM.OnInit(function()
 	local cancel = WM.CreateTouchButton(bar, 150, CARRY_H - 16, "X", 44)
 	cancel:SetPoint("RIGHT", bar, "RIGHT", -WM.Px(8), 0)
 	cancel:SetScript("OnClick", function() Move.Cancel() end)
+
+	-- Trash (v0.6.1), left of the X: drops a carried action off the bars
+	-- for good (ClearCursor without Cancel's PlaceAction restore).
+	trashButton = WM.CreateTouchButton(bar, 120, CARRY_H - 16, "", 44)
+	trashButton:SetPoint("RIGHT", cancel, "LEFT", -WM.Px(8), 0)
+	WM.DrawTrashIcon(trashButton, 56)
+	trashButton:SetScript("OnClick", function()
+		ClearCursor()
+		EndCarry()
+	end)
+	trashButton:Hide()
 
 	-- Split stepper sheet: right-aligned above the carry bar (x 492..1072).
 	split = CreateFrame("Frame", "WowMobileSplitSheet", UIParent)

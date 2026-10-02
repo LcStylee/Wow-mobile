@@ -82,6 +82,11 @@ class App {
         // screen's note element renders in the danger style.
         onDisconnect: () => this.stop(),
         onToggleAudio: () => this.#toggleAudio(),
+        onZoom: (dir) => this.#touch.zoom(dir),
+        // The addon's settings panel (moved off the in-game bottom row).
+        onConfig: () => {
+          if (!this.#keyboard.sendLine('/wm settings')) this.#hud.toast('Not connected');
+        },
       },
     });
     const touchEl = document.getElementById('touch');

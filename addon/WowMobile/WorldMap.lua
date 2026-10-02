@@ -99,6 +99,7 @@ WM.OnInit(function()
 		if not UIParent:IsShown() then
 			WM.OutOfCombat("worldmap-uiparent", function() UIParent:Show() end)
 		end
+		if WM.RefreshMinimap then WM.RefreshMinimap() end
 	end)
 
 	-- Pins are re-acquired from pools whenever the displayed map changes;

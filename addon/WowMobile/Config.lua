@@ -105,30 +105,42 @@ end
 function Config.SetScale(v)
 	v = tonumber(v)
 	if not v then
-		-- Same visible-feedback rule as SetHeight above.
-		WM.Print("usage: /wm scale <0.64..1.0> — uiScale cvar override")
+		WM.Print("usage: /wm scale <0.64..1.0> — uiScale cvar override (reloads the UI)")
 		return
 	end
 	-- The uiScale cvar only accepts 0.64..1.0; touch-target sizes stay
 	-- physically constant either way (see WM.Px), so scale mainly affects
-	-- Blizzard-rendered text.
+	-- Blizzard-rendered text. A new scale resizes UIParent, which moves the
+	-- phone frame and every widget sized from it — the field report v0.6.0
+	-- showed a half-shifted layout until a reload — so the change always
+	-- reloads straight away and the layout is rebuilt for the new scale.
 	v = Clamp(v, 0.64, 1.0)
 	WM.db.uiScale = v
-	WM.OutOfCombat("uiscale", function()
-		SetCVar("useUiScale", 1)
-		SetCVar("uiScale", v)
-	end)
-	WM.Print(string.format("UI scale set to %.2f — /wm reload to fully re-lay-out the deck", v))
+	SetCVar("useUiScale", "1")
+	SetCVar("uiScale", tostring(v))
+	WM.Print(string.format("UI scale set to %.2f — reloading the UI", v))
+	ReloadUI()
+end
+
+-- Back to Blizzard's own scaling (no override), then reload.
+function Config.ResetScale()
+	WM.db.uiScale = nil
+	SetCVar("useUiScale", "0")
+	WM.Print("UI scale reset to the game default — reloading the UI")
+	ReloadUI()
 end
 
 function Config.Reset()
+	-- Keep the phone choice: it is a setup fact, not a preference to reset.
+	local phone = WM.db and WM.db.phone
 	WowMobileDB = {}
 	CopyDefaults(Config.defaults, WowMobileDB)
+	WowMobileDB.phone = phone
 	WM.db = WowMobileDB
-	if WM.Viewport then
-		WM.Viewport.Apply()
-	end
-	WM.Print("options reset to defaults — /wm reload recommended")
+	-- Defaults include Blizzard's own UI scale; reload re-lays-out the deck.
+	SetCVar("useUiScale", "0")
+	WM.Print("options reset to defaults — reloading the UI")
+	ReloadUI()
 end
 
 -- Apply the persisted uiScale override once the world is up.

@@ -86,6 +86,7 @@ local carryIsAction     -- true while the cursor payload came OFF an action
                         -- the cursor carries the underlying payload kind
                         -- ("spell"/"item"/"macro"/"petaction"), the same kinds
                         -- Blizzard's own ActionButton code branches on.
+local trashButton       -- carry-bar trash (v0.6.1); built in OnInit
 local lastCursorKey     -- "type:id" of the last rendered cursor payload
 local pendingSplit      -- { bag, slot, count, n } while the stepper is up
 local ticker            -- reconcile fallback, alive only while carrying
@@ -176,6 +177,11 @@ local function RefreshBarFromCursor()
 	end
 	barIcon:SetTexture(icon or WM.TEX_QUESTION)
 	barName:SetText(name or "Held item")
+	-- Trash (v0.6.1) only for bar/book payloads: dropping a spell, macro or
+	-- action off the bar is harmless; items keep the X (Cancel) only.
+	if trashButton then
+		trashButton:SetShown(t == "spell" or t == "macro" or t == "petaction" or carryIsAction == true)
+	end
 	barCount:SetText(carryCount and carryCount > 1 and ("x" .. carryCount) or "")
 end
 
@@ -582,13 +588,26 @@ WM.OnInit(function()
 	barCount:SetPoint("BOTTOMRIGHT", barIcon, "BOTTOMRIGHT", -WM.Px(2), WM.Px(2))
 	barName = WM.CreateText(carryBar, 28)
 	barName:SetPoint("LEFT", WM.Px(122), 0)
-	barName:SetPoint("RIGHT", -WM.Px(130), 0)
+	barName:SetPoint("RIGHT", -WM.Px(250), 0)
 	barName:SetJustifyH("LEFT")
 	barName:SetWordWrap(true)
 
 	local cancel = WM.CreateTouchButton(carryBar, 110, BAR_H - 16, "X", 44)
 	cancel:SetPoint("RIGHT", -WM.Px(8), 0)
 	cancel:SetScript("OnClick", function() MoveMode.Cancel() end)
+
+	-- Trash (v0.6.1), left of the X: removes a carried action/spell/macro
+	-- from the bars for good — ClearCursor without the home-slot restore
+	-- Cancel performs. Items never show it (Cancel returns them).
+	trashButton = WM.CreateTouchButton(carryBar, 110, BAR_H - 16, "", 44)
+	trashButton:SetPoint("RIGHT", cancel, "LEFT", -WM.Px(8), 0)
+	WM.DrawTrashIcon(trashButton, 56)
+	trashButton:SetScript("OnClick", function()
+		HideSplit()
+		EndCarry()
+		ClearCursor()
+	end)
+	trashButton:Hide()
 
 	-- Split stepper -------------------------------------------------------
 	splitSheet = CreateFrame("Frame", "WowMobileSplitSheet", UIParent)

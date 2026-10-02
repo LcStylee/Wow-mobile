@@ -25,7 +25,7 @@ const SRC = path.join(ROOT, "phones", "phones.json");
 
 // Contract constants (PHONE_FRAME.md §3–§5). Changing any of these is a
 // cross-component contract change: every generated file carries them.
-const DECK_LOGICAL_PX = 60; // phone client's control strip below the video (CSS px)
+const DECK_LOGICAL_PX = 0; // phone client's strip below the video (CSS px): none since v0.6.1 (one floating menu button)
 const RING_OUTER_PX = 4; // red part of the outline (physical px)
 const RING_INNER_PX = 2; // cyan machine tag (physical px)
 const RING_PX = RING_OUTER_PX + RING_INNER_PX;
@@ -39,6 +39,15 @@ const DEFAULT_PHONE_ID = "iphone-17";
 // the stream from its top down to the bottom stack as the world zone.
 const TOP_HUD_PX = 130;
 const DECK_STACK_PX = 600;
+// Jump slot in the bottom row (6th menu button): frame-left x and width, and
+// its bottom offset and height from the frame bottom. The phone client maps a
+// tap there to a Space press; both Deck.lua files assert they match.
+const JUMP_X = 518;
+const JUMP_W = 98;
+const JUMP_BOTTOM = 8;
+const JUMP_H = 92;
+// Joystick zone height above the bottom stack (design px).
+const JOY_ZONE_PX = 340;
 const MIN_DIM = 16;
 
 // roundHalfToEven(num, den) — integer banker's rounding, the shared snap of
@@ -199,6 +208,8 @@ function genJS(list, vectors) {
   L.push(`export const RING_PX = ${RING_PX};`);
   L.push(`export const TOP_HUD_PX = ${TOP_HUD_PX};`);
   L.push(`export const DECK_STACK_PX = ${DECK_STACK_PX};`);
+  L.push(`export const JUMP_SLOT = Object.freeze({ x: ${JUMP_X}, w: ${JUMP_W}, bottom: ${JUMP_BOTTOM}, h: ${JUMP_H} });`);
+  L.push(`export const JOY_ZONE_PX = ${JOY_ZONE_PX};`);
   L.push(`export const ENC_MAX_W = ${ENC_MAX_W};`);
   L.push(`export const ENC_MAX_H = ${ENC_MAX_H};`);
   L.push(`export const DEFAULT_PHONE_ID = ${JSON.stringify(DEFAULT_PHONE_ID)};`, "");
@@ -231,6 +242,8 @@ function genLua(list, vectors, vanilla) {
   L.push(`\tringPx = ${RING_PX},`);
   L.push(`\ttopHudPx = ${TOP_HUD_PX},`);
   L.push(`\tdeckStackPx = ${DECK_STACK_PX},`);
+  L.push(`\tjumpX = ${JUMP_X},`);
+  L.push(`\tjumpW = ${JUMP_W},`);
   L.push(`\tencMaxW = ${ENC_MAX_W},`);
   L.push(`\tencMaxH = ${ENC_MAX_H},`);
   L.push(`\tdefaultId = ${JSON.stringify(DEFAULT_PHONE_ID)},`);

@@ -115,6 +115,7 @@ WM.OnInit(function()
 		if not UIParent:IsShown() then
 			UIParent:Show()
 		end
+		if WM.RefreshMinimap then WM.RefreshMinimap() end
 	end)
 
 	-- POIs are re-laid-out whenever the displayed map changes; re-pad after

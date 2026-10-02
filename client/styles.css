@@ -224,6 +224,23 @@ body.layout-overlay #rail.collapsed .rail-strip {
   gap: 4px;
 }
 
+/* Inside the menu panel the groups stack as full-width rows: quick keys,
+ * camera + config, then Snd/Set/End. */
+#hud-menu #hud-top {
+  flex-direction: column;
+}
+
+#hud-menu #hud-top > * {
+  flex: none;
+  min-height: 32px;
+}
+
+#hud-cam {
+  display: flex;
+  gap: 4px;
+}
+
+#hud-cam button,
 #hud-actions button {
   flex: 1 1 0;
   min-width: 0;
@@ -474,6 +491,7 @@ body.layout-overlay .rail-handle {
 }
 
 body.layout-overlay .rail-key,
+body.layout-overlay #hud-cam button,
 body.layout-overlay #hud-actions button {
   height: 36px;
   /* iOS Safari < 18 only honors the -webkit- prefixed property. */

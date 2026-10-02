@@ -34,7 +34,7 @@ WM.Layout = {} -- named anchor frames of the control-deck stack
 -- /wm status (Config.lua): a running game keeps OLD addon code until
 -- /reload even after the wizard updates the files, and this is how a field
 -- report proves which code is live.
-WM.VERSION = "0.6.0"
+WM.VERSION = "0.6.1"
 
 function WM.Version()
 	if GetAddOnMetadata then
@@ -558,6 +558,28 @@ function WM.Translucent(frame, fillAlpha, borderAlpha)
 	if frame.fillTex then frame.fillTex:SetAlpha(fillAlpha) end
 	if frame.borderTex then frame.borderTex:SetAlpha(borderAlpha or fillAlpha) end
 	return frame
+end
+
+-- A small trash-can glyph built from flat textures (no game asset has one on
+-- every client): lid + handle + body with three slits. sizePx is the glyph's
+-- design-px height; centred on parent.
+function WM.DrawTrashIcon(parent, sizePx)
+	local u = WM.Px(sizePx) / 20 -- 20-unit grid
+	local function part(x, y, w, h, r, g, b)
+		local t = parent:CreateTexture(nil, "OVERLAY")
+		t:SetTexture(r, g, b, 1)
+		t:SetWidth(w * u)
+		t:SetHeight(h * u)
+		t:SetPoint("TOPLEFT", parent, "CENTER", (x - 10) * u, (10 - y) * u)
+		return t
+	end
+	local r, g, b = 0.92, 0.35, 0.32
+	part(7, 0, 6, 2, r, g, b)   -- handle
+	part(3, 2, 14, 2, r, g, b)  -- lid
+	part(4, 5, 12, 15, r, g, b) -- body
+	for i = 0, 2 do             -- slits
+		part(6 + i * 3.5, 7, 1.4, 11, 0.12, 0.05, 0.05)
+	end
 end
 
 -- Border/fill recolor helpers (SetTexture re-tint on 1.12).

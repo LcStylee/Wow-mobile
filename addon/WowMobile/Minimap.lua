@@ -39,26 +39,44 @@ local function Zoom(delta)
 	Minimap:SetZoom(zoom)
 end
 
+-- Nudge the map into redrawing (a zoom step out and back): the 1.12 client
+-- can stop drawing a reparented Minimap after UIParent was hidden and shown
+-- again — exactly what the fullscreen world map does (field report v0.6.0,
+-- "the map top right is blacked out"). Cheap; called on world entry and
+-- whenever the world map closes (WorldMap.lua).
+function WM.RefreshMinimap()
+	if not Minimap or not Minimap.GetZoom then return end
+	local z = Minimap:GetZoom()
+	local max = Minimap:GetZoomLevels() - 1
+	if z < max then
+		Minimap:SetZoom(z + 1)
+	elseif z > 0 then
+		Minimap:SetZoom(z - 1)
+	end
+	Minimap:SetZoom(z)
+	Minimap:Show()
+end
+
+WM.On("PLAYER_ENTERING_WORLD", function() WM.RefreshMinimap() end)
+
 WM.OnInit(function()
 	local holder = CreateFrame("Frame", "WowMobileMinimapHolder", WM.WorldSquare)
 	-- Below the target's aura row (it hangs ~44 px under the top HUD).
 	holder:SetPoint("TOPRIGHT", -WM.Px(10), -WM.Px(56))
 	holder:SetSize(WM.Px(MAP_SIZE), WM.Px(MAP_SIZE))
-	-- Opaque backdrop under the whole cluster: the round map leaves its
-	-- corners transparent, and if the 3D world ever fails to render behind
-	-- this region the engine's clear color shows through (bare white on the
-	-- 1.12 field client) — the cluster must never float on a bare region.
-	-- The zoom buttons below carry their own opaque SkinFrame fills, so
-	-- blacking the holder square completes the coverage. BACKGROUND layer:
-	-- the map and badge draw over it.
-	local holderBg = holder:CreateTexture(nil, "BACKGROUND")
-	holderBg:SetAllPoints()
-	holderBg:SetColorTexture(0, 0, 0, 1)
+	-- No backdrop (v0.6.1): the world renders full window behind the map now,
+	-- and an opaque square here is exactly what showed as a "blacked-out
+	-- minimap" whenever the map itself did not draw (field report v0.6.0).
+	-- The holder sits on LOW strata so the reparented map draws above the
+	-- world-square overlays, not under them.
+	holder:SetFrameStrata("LOW")
 
 	-- Minimap itself isn't protected, but reparenting stays queued for the
 	-- log-in-during-combat edge case, like all layout of Blizzard frames.
 	WM.OutOfCombat("minimap", function()
 		Minimap:SetParent(holder)
+		Minimap:SetFrameStrata("LOW")
+		Minimap:SetFrameLevel(holder:GetFrameLevel() + 1)
 		Minimap:ClearAllPoints()
 		Minimap:SetPoint("CENTER")
 		Minimap:SetSize(WM.Px(MAP_SIZE), WM.Px(MAP_SIZE))

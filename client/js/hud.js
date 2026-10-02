@@ -19,8 +19,8 @@ export class Hud {
   #toastTimer = null;
 
   /**
-   * @param actions {onDisconnect, onToggleAudio} — connection-level actions
-   *   the HUD cannot perform itself.
+   * @param actions {onDisconnect, onToggleAudio, onZoom(dir), onConfig} —
+   *   actions the HUD cannot perform itself.
    */
   constructor({ settings, actions }) {
     this.#settings = settings;
@@ -40,8 +40,9 @@ export class Hud {
     };
 
     // The single menu button (v0.6.0): opens/closes the panel holding the
-    // quick keys, Snd/Set/End and the stats line. Any touch on the game
-    // closes it again, so it never stays over the world by accident.
+    // quick keys, Cam+/Cam-, Config, Snd/Set/End and the stats line. It
+    // stays open while you play (run + jump from it) until closed with the
+    // same button (v0.6.1).
     const menuBtn = $('btn-menu');
     const setMenu = (open) => {
       this.#els.hud.classList.toggle('menu-open', open);
@@ -50,7 +51,6 @@ export class Hud {
     menuBtn.addEventListener('click', () => {
       setMenu(!this.#els.hud.classList.contains('menu-open'));
     });
-    $('touch').addEventListener('pointerdown', () => setMenu(false));
     this.closeMenu = () => setMenu(false);
 
     $('btn-settings').addEventListener('click', () => {
@@ -68,6 +68,9 @@ export class Hud {
       this.#els.stats.setAttribute('aria-expanded', String(expanded));
     });
     $('btn-disconnect').addEventListener('click', () => actions.onDisconnect());
+    $('btn-cam-in').addEventListener('click', () => actions.onZoom(1));
+    $('btn-cam-out').addEventListener('click', () => actions.onZoom(-1));
+    $('btn-config').addEventListener('click', () => actions.onConfig());
     this.#els.audio.addEventListener('click', () => actions.onToggleAudio());
 
     this.#bindRange('set-sensitivity', 'cameraSensitivity');

@@ -59,6 +59,15 @@ export class ChatKeyboard {
     }
     const text = this.#input.value;
     this.close();
+    this.sendLine(text);
+  }
+
+  /**
+   * Type one chat line into the game (also used for slash commands such as
+   * the menu's Config = "/wm settings"). Returns false when not connected.
+   */
+  sendLine(text) {
+    if (!this.#sender.ready) return false;
     this.#tapKey(VK.RETURN, MOD.NONE); // open chat box
     for (const ch of text) {
       const key = charToKey(ch);
@@ -66,6 +75,7 @@ export class ChatKeyboard {
       this.#tapKey(key.vk, key.shift ? MOD.SHIFT : MOD.NONE);
     }
     this.#tapKey(VK.RETURN, MOD.NONE); // send the line
+    return true;
   }
 
   #tapKey(vk, mods) {

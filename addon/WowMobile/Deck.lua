@@ -56,8 +56,9 @@ WM.DeckMetrics = {
 	unitRow = WM.PhoneData.topHudPx - 12 - 22,
 	petStrip = 42,
 	castBar = 48,
-	-- Panels / bottom sheets (the deck rect).
-	panel = 860,
+	-- Panels / bottom sheets (the deck rect): exactly the bottom stack, so an
+	-- open panel never reaches the phone's joystick zone above it.
+	panel = WM.PhoneData.deckStackPx,
 	-- Translucency of the bar buttons (fill, border): the world shows through.
 	buttonFill = 0.35,
 	buttonBorder = 0.55,
@@ -224,16 +225,16 @@ function deck.CreateScroller(parent)
 end
 
 --------------------------------------------------------------------------------
--- Bottom row: 8 menu buttons on the left (Spells / Talents / Char / Quests /
--- Social / Raid / Map / Config); Bags.lua fills the right end with its single
--- bags button.
+-- Bottom row: 8 buttons on the left (Spells / Talents / Char / Quests / Map /
+-- Jump / Social / Raid); Bags.lua fills the right end with its single bags
+-- button.
 --------------------------------------------------------------------------------
 
--- 8 menu buttons (110) + 7 gaps (4) = 908 px; the bags button on the right
--- takes 120 px (Bags.lua) — 1028 px total inside the 1064 px row. (Round 3
--- collapsed Bags' five per-bag buttons — all of which toggled the same panel —
--- into one, freeing the width for the Social and Raid entries.)
-local MENU_W = 110
+-- 8 buttons (98) + 7 gaps (4) = 812 px; the bags button on the right takes
+-- 120 px (Bags.lua) — 932 px total inside the 1064 px row. Width and order
+-- match the vanilla row (v0.6.1) so Jump lands in the same slot
+-- (PhoneData.jumpX/jumpW) on every client: the phone has one hotspot for it.
+local MENU_W = 98
 
 WM.OnInit(function()
 	local m = WM.DeckMetrics
@@ -261,15 +262,24 @@ WM.OnInit(function()
 		end },
 		{ label = "Char",    onTap = function() deck.Toggle("character") end },
 		{ label = "Quests",  onTap = function() deck.Toggle("questlog") end },
-		{ label = "Social",  onTap = function() deck.Toggle("social") end },
-		{ label = "Raid",    onTap = function() deck.Toggle("raid") end },
 		{ label = "Map",     onTap = function()
 			-- The map overlays the deck as a reflowed Blizzard frame, not a
 			-- Deck.CreatePanel; WorldMap.lua joins the exclusive system.
 			if WM.WorldMap then WM.WorldMap.Toggle() end
 		end },
-		{ label = "Config",  onTap = function() deck.Toggle("settings") end },
+		-- Jump (v0.6.1; Config moved to the phone menu / /wm settings). Purely
+		-- visual: the phone client turns a tap on this slot into a Space key
+		-- press (PhoneData.jumpX/jumpW — jumping is not callable from addon
+		-- code on the modern clients), so it is mouse-transparent here.
+		{ label = "Jump", passive = true },
+		{ label = "Social",  onTap = function() deck.Toggle("social") end },
+		{ label = "Raid",    onTap = function() deck.Toggle("raid") end },
 	}
+
+	-- The phone client's Jump hotspot is generated from the same numbers.
+	if m.margin + 5 * (MENU_W + 4) ~= WM.PhoneData.jumpX or MENU_W ~= WM.PhoneData.jumpW then
+		WM.ReportError("Deck.lua: bottom-row Jump slot no longer matches PhoneData.jumpX/jumpW")
+	end
 
 	local prev
 	for i = 1, #entries do
@@ -280,7 +290,11 @@ WM.OnInit(function()
 		else
 			b:SetPoint("LEFT", row, "LEFT", 0, 0)
 		end
-		b:SetScript("OnClick", entries[i].onTap)
+		if entries[i].passive then
+			b:EnableMouse(false)
+		else
+			b:SetScript("OnClick", entries[i].onTap)
+		end
 		prev = b
 	end
 end)

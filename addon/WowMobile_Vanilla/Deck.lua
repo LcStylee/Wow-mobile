@@ -56,8 +56,9 @@ WM.DeckMetrics = {
 	unitRow = WM.PhoneData.topHudPx - 12 - 22,
 	petStrip = 42,
 	castBar = 48,
-	-- Panels / bottom sheets (the deck rect).
-	panel = 860,
+	-- Panels / bottom sheets (the deck rect): exactly the bottom stack, so an
+	-- open panel never reaches the phone's joystick zone above it.
+	panel = WM.PhoneData.deckStackPx,
 }
 -- Chat strip: whatever the bottom stack leaves above the main bar.
 WM.DeckMetrics.chat = WM.PhoneData.deckStackPx
@@ -275,8 +276,17 @@ WM.OnInit(function()
 			-- Deck.CreatePanel; WorldMap.lua joins the exclusive system.
 			if WM.WorldMap then WM.WorldMap.Toggle() end
 		end },
-		{ label = "Config",  onTap = function() deck.Toggle("settings") end },
+		-- Jump (v0.6.1; Config moved to the phone menu / /wm settings). Purely
+		-- visual: the phone client turns a tap on this slot into a Space key
+		-- press (PhoneData.jumpX/jumpW — jumping is not callable from addon
+		-- code on the modern clients), so it is mouse-transparent here.
+		{ label = "Jump", passive = true },
 	}
+
+	-- The phone client's Jump hotspot is generated from the same numbers.
+	if m.margin + 5 * (MENU_W + 4) ~= WM.PhoneData.jumpX or MENU_W ~= WM.PhoneData.jumpW then
+		WM.ReportError("Deck.lua: bottom-row Jump slot no longer matches PhoneData.jumpX/jumpW")
+	end
 
 	local prev
 	for i = 1, table.getn(entries) do
@@ -287,15 +297,19 @@ WM.OnInit(function()
 		else
 			b:SetPoint("LEFT", row, "LEFT", 0, 0)
 		end
-		b.onTap, b.onHold = entries[i].onTap, entries[i].onHold
-		b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-		b:SetScript("OnClick", function()
-			if arg1 == "RightButton" and this.onHold then
-				this.onHold()
-			else
-				this.onTap()
-			end
-		end)
+		if entries[i].passive then
+			b:EnableMouse(false)
+		else
+			b.onTap, b.onHold = entries[i].onTap, entries[i].onHold
+			b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+			b:SetScript("OnClick", function()
+				if arg1 == "RightButton" and this.onHold then
+					this.onHold()
+				else
+					this.onTap()
+				end
+			end)
+		end
 		prev = b
 	end
 end)

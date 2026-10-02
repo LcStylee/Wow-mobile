@@ -46,12 +46,14 @@ test('table: 20 most-used first, default present', () => {
   assert.ok(PHONES.slice(20).every((p) => p.popularity === 0));
 });
 
-test('stream fits the phone it was made for with the deck below', () => {
-  // iPhone 17: 402x874 CSS, insets 62/34 — its own stream leaves the deck.
+test('stream fills the phone it was made for, edge to edge (v0.6.1)', () => {
+  // iPhone 17: 402x874 CSS, insets 62/34 — its own stream at full width is
+  // exactly the height between the insets: no black bar, no deck strip.
   const p = PHONES.find((x) => x.id === 'iphone-17');
-  assert.equal(layoutMode(402, 874, 62, 34, undefined, p.streamH / p.streamW), 'deck');
-  // A much taller stream (Galaxy A07's aspect) on a short 16:9 screen: overlay.
-  assert.equal(layoutMode(360, 640, 0, 0, undefined, 1400 / 720), 'overlay');
+  const videoH = 402 * (p.streamH / p.streamW);
+  assert.ok(Math.abs(videoH - (874 - 62 - 34)) < 1, String(videoH));
+  // Nothing is left for a deck: the single floating menu button (overlay).
+  assert.equal(layoutMode(402, 874, 62, 34, undefined, p.streamH / p.streamW), 'overlay');
 });
 
 test('identifyPhones picks same-panel models, most popular first', () => {
@@ -64,13 +66,15 @@ test('identifyPhones picks same-panel models, most popular first', () => {
 
 test('aspect notice only on a real mismatch', () => {
   const p17 = PHONES.find((x) => x.id === 'iphone-17');
-  // Streaming for the iPhone 17 itself (encode is the even frame of that aspect).
-  assert.equal(aspectNotice(1074, 1920, 402, 874, 3), '');
-  assert.ok(aspectMismatch(1074, 1920, p17) < 0.02);
-  // Streaming for a Galaxy A07 (720x1400) on an iPhone 17.
-  const text = aspectNotice(364, 708, 402, 874, 3);
-  assert.match(text, /Galaxy A07/);
-  assert.match(text, /iPhone 17/);
+  // Streaming for the iPhone 17 itself (the 4K vector's encode).
+  const own = CONTRACT_VECTORS.find((v) => v.phone === 'iphone-17' && v.clientW === 3840);
+  assert.equal(aspectNotice(own.encW, own.encH, 402, 874, 3), '');
+  assert.ok(aspectMismatch(own.encW, own.encH, p17) < 0.02);
+  // Streaming for a Galaxy A07 on an iPhone 17.
+  const a07 = CONTRACT_VECTORS.find((v) => v.phone === 'galaxy-a07' && v.clientW === 1280);
+  const text = aspectNotice(a07.encW, a07.encH, 402, 874, 3);
+  // (Several phones share nearly that aspect; the notice names the closest.)
+  assert.match(text, /^Streaming for .+; this phone looks like Apple iPhone 17/);
   // Unknown device: nothing to compare against.
-  assert.equal(aspectNotice(364, 708, 999, 1999, 1.5), '');
+  assert.equal(aspectNotice(a07.encW, a07.encH, 999, 1999, 1.5), '');
 });

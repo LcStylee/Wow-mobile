@@ -14,14 +14,18 @@
 //   letterbox bars — ignored entirely
 
 import { BUTTON, BUTTONS_BIT, WHEEL_NOTCH, norm16 } from './protocol.js';
-import { clamp, fitContain, autoWorldFrac } from './geometry.js';
+import { clamp, fitContain, autoWorldFrac, DESIGN_WIDTH } from './geometry.js';
+import { DECK_STACK_PX, JOY_ZONE_PX, JUMP_SLOT } from './phones.js';
+import { VK } from './vk.js';
 
 const TAP_SLOP_PX = 12; // CSS px of travel that still counts as a tap
 const LONG_PRESS_MS = 450;
 const PINCH_STEP_PX = 30; // finger-distance change per one wheel detent
-// Joystick zone: bottom-left corner of the world square, as fractions of the
-// square's side. Generous on purpose — a miss means the character stops.
-const JOY_ZONE_FRAC = 0.45;
+// Joystick zone (v0.6.1): the left JOY_ZONE_WIDTH of the band JOY_ZONE_PX
+// design px tall right above the addon's bottom stack — never over the
+// bottom UI (or an open panel, which covers exactly the stack), and low
+// enough that the world's middle stays free for tapping enemies.
+const JOY_ZONE_WIDTH = 0.45;
 
 export class TouchLayer {
   #el;
@@ -56,12 +60,6 @@ export class TouchLayer {
     // layout.js announces deck⇄overlay flips that move the #video/#touch
     // boxes without a resize event (e.g. the focusout-held re-evaluation).
     window.addEventListener('wm-layout-change', invalidate);
-    // The world/deck split depends on the configured viewport height
-    // (mirrors the addon's /wm viewport — see #geometry); re-split live when
-    // the user changes it in the settings sheet.
-    settings.onChange((key) => {
-      if (key === 'worldViewportPx') invalidate();
-    });
   }
 
   /** Store the capture geometry from the server hello. */
@@ -108,6 +106,9 @@ export class TouchLayer {
       // v0.6.0 phone layout: the world zone is everything above the addon's
       // bottom stack, derived from the stream size (geometry.autoWorldFrac).
       worldFrac: autoWorldFrac(vw, vh),
+      // Design height of the stream (1080-wide design space), for the
+      // design-px zones below (joystick band, Jump hotspot).
+      designH: (DESIGN_WIDTH * vh) / vw,
       squareSidePx: content.w, // square side on screen = content width
     };
     return this.#geom;
@@ -141,6 +142,12 @@ export class TouchLayer {
     this.#el.setPointerCapture(e.pointerId);
 
     const inWorld = frac.fy <= g.worldFrac;
+    if (!inWorld && this.#inJumpSlot(frac, g)) {
+      // The addon's Jump slot: a real Space press, held while the finger is.
+      this.#pointers.set(e.pointerId, { kind: 'jump' });
+      this.#sender.key(VK.SPACE, true);
+      return;
+    }
     if (inWorld && !this.#joystick.active && this.#inJoystickZone(frac, g)) {
       this.#pointers.set(e.pointerId, { kind: 'joystick' });
       this.#joystick.begin(e.clientX, e.clientY, g.squareSidePx);
@@ -169,10 +176,27 @@ export class TouchLayer {
   }
 
   #inJoystickZone(frac, g) {
-    // Square-local coordinates 0..1.
-    const sx = frac.fx;
-    const sy = frac.fy / g.worldFrac;
-    return sx <= JOY_ZONE_FRAC && sy >= 1 - JOY_ZONE_FRAC;
+    // Design px measured up from the stream's bottom edge.
+    const up = (1 - frac.fy) * g.designH;
+    return frac.fx <= JOY_ZONE_WIDTH && up >= DECK_STACK_PX && up <= DECK_STACK_PX + JOY_ZONE_PX;
+  }
+
+  #inJumpSlot(frac, g) {
+    const x = frac.fx * DESIGN_WIDTH;
+    const up = (1 - frac.fy) * g.designH;
+    return x >= JUMP_SLOT.x && x <= JUMP_SLOT.x + JUMP_SLOT.w &&
+      up >= JUMP_SLOT.bottom && up <= JUMP_SLOT.bottom + JUMP_SLOT.h;
+  }
+
+  /**
+   * Camera zoom from the phone menu (Cam+/Cam-): wheel notches over the
+   * middle of the world zone. dir +1 = zoom in, -1 = zoom out.
+   */
+  zoom(dir) {
+    const g = this.#geometry();
+    if (!g) return;
+    const { x, y } = this.#wire({ fx: 0.5, fy: g.worldFrac / 2 });
+    this.#sender.wheel(x, y, dir * 2 * WHEEL_NOTCH);
   }
 
   #findPinchPartner() {
@@ -336,6 +360,9 @@ export class TouchLayer {
     switch (rec.kind) {
       case 'joystick':
         this.#joystick.end();
+        break;
+      case 'jump':
+        this.#sender.key(VK.SPACE, false);
         break;
       case 'pending':
         // Below both thresholds: a tap. Cancelled touches never click.

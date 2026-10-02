@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- WowMobile (Vanilla 1.12) · Settings
--- Touch settings panel (the "Config" menu button / `/wm settings`): stepper
+-- Touch settings panel (the phone menu's "Config" button / `/wm settings`): stepper
 -- rows for the world-viewport height and UI scale, plus Reset and Reload.
 -- All mutations go through WM.Config so the slash command and this panel
 -- share one code path.
@@ -63,6 +63,12 @@ WM.OnInit(function()
 			WM.Config.SetScale(current + dir * SCALE_STEP)
 		end)
 
+	-- Each UI scale step reloads the UI (Config.SetScale); this undoes any
+	-- override in one tap.
+	local resetScale = WM.CreateTouchButton(panel.content, 480, 110, "Reset UI scale", 32)
+	resetScale:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(160))
+	resetScale:SetScript("OnClick", function() WM.Config.ResetScale() end)
+
 	local reset = WM.CreateTouchButton(panel.content, 480, 110, "Reset to defaults", 32)
 	reset:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(300))
 	reset:SetScript("OnClick", function()
@@ -80,7 +86,7 @@ WM.OnInit(function()
 	note:SetJustifyH("LEFT")
 	note:SetTextColor(0.7, 0.7, 0.75)
 	note:SetText("Touch targets keep their physical size at any UI scale. " ..
-		"After changing UI scale, Reload UI re-lays-out the whole deck. " ..
+		"Changing the UI scale reloads the UI so the layout is rebuilt. " ..
 		"The world area is automatic: everything between the top bars and " ..
 		"the action bars. Slash commands: /wm phone, /wm scale <v>, /wm reset.")
 
