@@ -15,7 +15,7 @@ func TestParseDefaults(t *testing.T) {
 	// (or main's fallback) measures the monitor.
 	if cfg.Addr != ":8443" || !cfg.ResolutionIsFit || cfg.Width != 0 || cfg.Height != 0 ||
 		cfg.FPS != 60 || cfg.BitrateKbps != 8000 || cfg.Encoder != EncoderAuto ||
-		cfg.WindowTitle != "World of Warcraft" || cfg.NoTLS || cfg.Audio || cfg.Setup {
+		cfg.WindowTitle != "World of Warcraft" || cfg.NoTLS || !cfg.Audio || cfg.AudioSource != AudioLoopback || cfg.Setup {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if !cfg.TokenIsGenerated || len(cfg.Token) != 32 {
@@ -32,14 +32,14 @@ func TestParseDefaults(t *testing.T) {
 
 func TestParseExplicit(t *testing.T) {
 	cfg, err := Parse(strings.Fields(
-		"--addr :9000 --token secret --resolution 720x1280 --fps 30 --bitrate-kbps 4000 --encoder x264 --no-tls --audio"),
+		"--addr :9000 --token secret --resolution 720x1280 --fps 30 --bitrate-kbps 4000 --encoder x264 --no-tls --audio=false --audio-source dshow"),
 		io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Addr != ":9000" || cfg.Token != "secret" || cfg.TokenIsGenerated ||
 		cfg.Width != 720 || cfg.Height != 1280 || cfg.ResolutionIsFit || cfg.FPS != 30 ||
-		cfg.BitrateKbps != 4000 || cfg.Encoder != EncoderX264 || !cfg.NoTLS || !cfg.Audio {
+		cfg.BitrateKbps != 4000 || cfg.Encoder != EncoderX264 || !cfg.NoTLS || cfg.Audio || cfg.AudioSource != AudioDShow {
 		t.Fatalf("unexpected parse: %+v", cfg)
 	}
 }

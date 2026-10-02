@@ -31,12 +31,12 @@ export const DEFAULTS = Object.freeze({
   bitrateKbps: 0,
   showRail: true, // quick-keys row visible
   hudVisible: true, // stats expanded (overlay layout: strip shown at all)
-  audio: false, // stream audio unmuted
+  audio: true, // stream audio unmuted (the start-screen tap is the user gesture browsers require)
 });
 
 // What DEFAULTS held before SCHEMA_VERSION 2 — needed to tell "stored because
 // v1 persisted everything" from "stored because the user chose it".
-const V1_DEFAULTS = Object.freeze({ ...DEFAULTS, cameraSensitivity: 1.6 });
+const V1_DEFAULTS = Object.freeze({ ...DEFAULTS, cameraSensitivity: 1.6, audio: false });
 
 export class Settings {
   #values;

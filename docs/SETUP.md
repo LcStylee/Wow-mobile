@@ -390,8 +390,8 @@ rejects it. The settings sheet shows the client build version (so does the
 connect screen), and the served app updates itself on every server release —
 a stale cached client is diagnosable and self-healing.
 
-Video starts muted (browser autoplay rules). If you ran with `--audio`, tap
-**Snd off** in the HUD to unmute.
+Sound is on by default: the tap that starts the stream unmutes it (browser
+autoplay rules need that tap). The phone menu's sound button mutes it.
 
 ## Manual setup (advanced)
 
@@ -528,7 +528,8 @@ The defaults are right for most setups. All flags:
 | `--gui` | auto | Force windowed mode (dialogs + dashboard + tray) even from a terminal (Windows) |
 | `--no-tls` | off | Plain HTTP instead of HTTPS (breaks PWA install; debugging only) |
 | `--ffmpeg` | find in `PATH` | Path to the ffmpeg executable |
-| `--audio` | off | Desktop audio via the `virtual-audio-capturer` DirectShow device (requires [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free)) |
+| `--audio` | on | Stream the PC's sound (`--audio=false` turns it off) |
+| `--audio-source` | `loopback` | `loopback`: built-in WASAPI capture of the default playback device; `dshow`: the `virtual-audio-capturer` DirectShow device from [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free) |
 | `--setup` | — | Print the Config.wtf/addon instructions from step 1–2 and exit |
 | `--version` | — | Print the wowstreamd version and exit |
 
@@ -635,5 +636,5 @@ joystick size, world viewport (keep equal to `/wm viewport`), stream quality
 | Dashboard warning: **"band basis mismatch …"** — or the addon UI is visibly cut/shifted at the stream's left/right edges (a name like "Wowmobile" reading "bile") | Band layout (1.12): the addon's band really disagrees with the one the stream crops from the **live** window — with an up-to-date addon this is rare (the addon auto-compensates for a stale `gxResolution`; see the row above), so first suspect an addon predating the band layout: re-run the wizard (it installs the current addon) and `/reload`. This is **not** a capture offset: window capture grabs the client area exactly (no title bar/borders). Otherwise fix as the warning says: close WoW fully and re-run the wizard, restart WoW so `gxResolution` applies (un-maximize first — a maximized window keeps its own size), or resize the game window to match `gxResolution`. The warning clears on its own at the next capture start once the placements agree. |
 | UI misaligned, taps land in the wrong place | **Band layout** (the 1.12 default): the server recomputes the band from the live window per capture start, so a mismatch usually means the addon laid out against a window size that changed afterwards — `/reload` in-game (or the addon's "Finish setup — reload UI" banner). **Portrait layout**: `gxWindowedResolution` and `--resolution` disagree, or the window got resized — they must match exactly; re-run the wizard (it fixes `Config.wtf` to match `--resolution`) and restart both WoW and the server. |
 | Taps near the world/deck boundary move the character or drag the camera | The addon's `/wm viewport` and the phone's **World viewport** setting disagree (both default 1080). Set them to the same number — [step 5](#5-first-run-in-game). |
-| No sound | Audio is opt-in: install screen-capture-recorder, run with `--audio`, and unmute via the HUD **Snd** button. Verify the device exists: `ffmpeg -list_devices true -f dshow -i dummy` should list `virtual-audio-capturer`. |
+| No sound | Check the phone menu's sound button is on, and that the game plays through Windows' **default** playback device (the loopback captures that one). The dashboard log shows `audio:` warnings when no device can be captured. As a fallback, install screen-capture-recorder and run with `--audio-source dshow`. |
 | PWA won't install / no fullscreen | Installation requires HTTPS — don't use `--no-tls`. On iOS only Safari can Add to Home Screen; on Android use Chrome. |

@@ -272,8 +272,8 @@ func (c Config) filterChain(pixfmt string) string {
 
 // AudioArgs builds the argv for the separate audio pipeline: DirectShow
 // capture of the "virtual-audio-capturer" loopback device (from the
-// screen-capture-recorder project — ffmpeg has no native WASAPI loopback,
-// which is why --audio is opt-in) encoded to low-delay Opus in an Ogg stream
+// screen-capture-recorder project; --audio-source dshow — the default is the
+// built-in loopback, LoopbackArgs) encoded to low-delay Opus in an Ogg stream
 // on stdout. page_duration == frame_duration puts exactly one Opus packet on
 // each Ogg page, so the reader can forward page payloads as RTP samples 1:1.
 func (c Config) AudioArgs() []string {

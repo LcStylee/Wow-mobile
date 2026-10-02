@@ -161,6 +161,7 @@ local function PrintHelp()
 	WM.Print("  /wm phone [name|id|WxH]  — pick the phone the frame is shaped for (no argument: toggle the selector)")
 	WM.Print("  /wm settings  — open the touch settings panel")
 	WM.Print("  /wm status  — viewport/deck/module health")
+	WM.Print("  /wm minimap  — minimap state; /wm minimap blizzard|phone to test its placement")
 	WM.Print("  /wm errors  — list recorded module errors")
 	WM.Print("  /wm reset  — restore defaults")
 	WM.Print("  /wm reload  — reload the UI")
@@ -261,6 +262,8 @@ SlashCmdList["WOWMOBILE"] = function(msg)
 		Config.Reset()
 	elseif cmd == "reload" then
 		ReloadUI()
+	elseif cmd == "minimap" then
+		if WM.MinimapCommand then WM.MinimapCommand(string.lower(cmdArg or "")) end
 	elseif cmd == "settings" then
 		if WM.Deck and WM.Deck.Open then
 			WM.Deck.Open("settings")

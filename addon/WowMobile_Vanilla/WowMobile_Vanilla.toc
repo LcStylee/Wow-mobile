@@ -4,7 +4,7 @@
 ## Title: WoW Mobile (Vanilla)
 ## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone); world square + control deck.
 ## Author: WoW Mobile project
-## Version: 0.6.2
+## Version: 0.6.3
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/timers,
@@ -36,7 +36,7 @@
 # Settings loads after the deck modules
 # because its panel drives Config + Viewport; PhoneSelect (the phone selector
 # beside the outline) needs only Band and loads last. (No Compat.lua in this port: the 1.12 API is
-# called directly.)
+# called directly.) Turtle (Turtle WoW extras, name-guarded) loads last.
 Core.lua
 Phones.lua
 Band.lua
@@ -75,3 +75,4 @@ WorldMap.lua
 Talents.lua
 Settings.lua
 PhoneSelect.lua
+Turtle.lua

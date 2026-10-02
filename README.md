@@ -86,8 +86,8 @@ specified in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
   screen wake lock, live HUD (RTT, bitrate, fps, encode time), on-the-fly
   quality switching (4/8/16 Mbps), and automatic reconnect with backoff after
   Wi-Fi blips.
-- **Optional game audio.** Opt-in low-delay Opus desktop-audio capture
-  (`--audio`, requires the screen-capture-recorder loopback device).
+- **Game audio.** Low-delay Opus capture of what the PC plays (built-in
+  Windows WASAPI loopback, no extra software; `--audio=false` turns it off).
 - **Safe by construction.** LAN-only pairing with a random 128-bit token
   (printed + QR at startup), HTTPS with a persisted self-signed certificate,
   DTLS-SRTP encrypted media, one session at a time, and a dead-man switch: any
@@ -196,10 +196,12 @@ must, a VPN into your home network (e.g. WireGuard/Tailscale) makes the phone
 "local" — latency will follow your tunnel.
 
 **Does sound work?**
-Yes, opt-in: run with `--audio` after installing the
+Yes, on by default: the server captures what the PC's default playback device
+plays (WASAPI loopback, built in) and the phone unmutes on the first tap. The
+menu's sound button mutes it; `--audio=false` turns it off on the PC.
+`--audio-source dshow` switches to the older
 [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free)
-loopback device (FFmpeg cannot tap WASAPI loopback by itself), then unmute with
-the HUD sound button on the phone.
+device instead.
 
 **Why a square world viewport instead of full-portrait 3D?**
 Full-portrait 3D would give an absurdly narrow field of view and waste encoder

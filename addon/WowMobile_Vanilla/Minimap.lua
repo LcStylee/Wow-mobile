@@ -53,6 +53,73 @@ end
 
 WM.On("PLAYER_ENTERING_WORLD", function() WM.RefreshMinimap() end)
 
+-- Field diagnosis (v0.6.3; Turtle WoW report: the map draws one top-down
+-- picture of the terrain and then never moves). `/wm minimap` prints the
+-- map's live state; `/wm minimap blizzard` puts the map back exactly where
+-- and how the client had it (inside MinimapCluster) and `/wm minimap phone`
+-- returns it to the phone layout — if the map moves in Blizzard's spot but
+-- not in ours, the re-homing is the cause; if it is frozen there too, it is
+-- the client or the capture.
+local original -- the client's own placement, captured before the re-home
+local placeInPhone -- set in OnInit
+
+local function SavePlacement()
+	local point, rel, relPoint, x, y = Minimap:GetPoint(1)
+	original = {
+		parent = Minimap:GetParent(), point = point, rel = rel,
+		relPoint = relPoint, x = x, y = y,
+		w = Minimap:GetWidth(), h = Minimap:GetHeight(),
+		scale = Minimap:GetScale(), strata = Minimap:GetFrameStrata(),
+		level = Minimap:GetFrameLevel(),
+	}
+end
+
+local function RestoreBlizzard()
+	if not original then return end
+	if MinimapCluster then
+		-- Blizzard.lua banished the cluster before this module loaded, so
+		-- its own parent is not recorded: on 1.12 it is UIParent.
+		MinimapCluster:SetParent(UIParent)
+		MinimapCluster:Show()
+	end
+	Minimap:SetParent(original.parent)
+	Minimap:SetScale(original.scale or 1)
+	Minimap:SetWidth(original.w)
+	Minimap:SetHeight(original.h)
+	Minimap:SetFrameStrata(original.strata)
+	Minimap:SetFrameLevel(original.level)
+	Minimap:ClearAllPoints()
+	if original.point then
+		Minimap:SetPoint(original.point, original.rel, original.relPoint, original.x, original.y)
+	end
+	Minimap:Show()
+end
+
+local function PrintState()
+	local px, py = GetPlayerMapPosition("player")
+	local parent = Minimap:GetParent()
+	WM.Print(string.format("minimap: visible=%s parent=%s size=%.0fx%.0f scale=%.2f eff=%.2f zoom=%d strata=%s level=%d alpha=%.2f",
+		tostring(Minimap:IsVisible()), (parent and parent:GetName()) or "?",
+		Minimap:GetWidth(), Minimap:GetHeight(), Minimap:GetScale(),
+		Minimap:GetEffectiveScale(), Minimap:GetZoom(), Minimap:GetFrameStrata(),
+		Minimap:GetFrameLevel(), Minimap:GetAlpha()))
+	WM.Print(string.format("minimap: player at %.3f, %.3f on the zone map (walk and run this again: the numbers should change)",
+		px or 0, py or 0))
+end
+
+function WM.MinimapCommand(arg)
+	if arg == "blizzard" then
+		RestoreBlizzard()
+		WM.Print("minimap: back in the client's own spot (top right of the screen, outside the phone frame). Does it move there? /wm minimap phone puts it back.")
+	elseif arg == "phone" then
+		if placeInPhone then placeInPhone() end
+		WM.Print("minimap: back in the phone layout")
+	else
+		PrintState()
+		WM.Print("minimap: /wm minimap blizzard = client's own placement (test), /wm minimap phone = phone layout")
+	end
+end
+
 WM.OnInit(function()
 	local holder = CreateFrame("Frame", "WowMobileMinimapHolder", WM.WorldSquare)
 	-- Below the target's aura row (it hangs ~44 px under the top HUD).
@@ -66,6 +133,19 @@ WM.OnInit(function()
 	-- world-square overlays, not under them.
 	holder:SetFrameStrata("LOW")
 
+	SavePlacement()
+	placeInPhone = function()
+		if MinimapCluster then WM.BanishFrame(MinimapCluster, true) end
+		Minimap:SetParent(holder)
+		Minimap:SetFrameStrata("LOW")
+		Minimap:SetFrameLevel(holder:GetFrameLevel() + 1)
+		Minimap:ClearAllPoints()
+		Minimap:SetWidth(NATIVE_SIZE)
+		Minimap:SetHeight(NATIVE_SIZE)
+		Minimap:SetScale(WM.Px(MAP_SIZE) / NATIVE_SIZE)
+		Minimap:SetPoint("CENTER", holder, "CENTER", 0, 0)
+		Minimap:Show()
+	end
 	Minimap:SetParent(holder)
 	Minimap:SetFrameStrata("LOW")
 	Minimap:SetFrameLevel(holder:GetFrameLevel() + 1)

@@ -16,6 +16,12 @@ import (
 
 // Encoder names accepted by --encoder. EncoderAuto is resolved to a concrete
 // encoder at startup by probing the local ffmpeg build.
+// Audio sources (--audio-source).
+const (
+	AudioLoopback = "loopback"
+	AudioDShow    = "dshow"
+)
+
 const (
 	EncoderAuto  = "auto"
 	EncoderNVENC = "nvenc"
@@ -111,6 +117,7 @@ type Config struct {
 	NoTLS        bool
 	FFmpegPath   string // empty = look up "ffmpeg" in PATH
 	Audio        bool
+	AudioSource  string // AudioLoopback (default) or AudioDShow
 	Setup        bool   // --setup: print WoW configuration help and exit
 	WowDir       string // --wow-dir: WoW game directory (skips wizard auto-detection)
 	GameExe      string // --game-exe: exact game executable (private servers); beats --wow-dir
@@ -144,10 +151,11 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	fs.StringVar(&cfg.ClientDir, "client-dir", "", "serve the phone client PWA from this disk directory instead of the copy embedded in the binary (development)")
 	fs.BoolVar(&cfg.NoTLS, "no-tls", false, "serve plain HTTP instead of HTTPS with a self-signed certificate")
 	fs.StringVar(&cfg.FFmpegPath, "ffmpeg", "", "path to the ffmpeg executable (default: find \"ffmpeg\" in PATH)")
-	// Opt-in, not default-on: robust WASAPI loopback needs the third-party
-	// "virtual-audio-capturer" DirectShow device (screen-capture-recorder
-	// project) — ffmpeg alone cannot tap WASAPI loopback on stock Windows.
-	fs.BoolVar(&cfg.Audio, "audio", false, "capture desktop audio via the DirectShow device \"virtual-audio-capturer\" (requires screen-capture-recorder to be installed)")
+	// On by default since v0.6.3: the built-in WASAPI loopback needs no
+	// third-party driver. --audio=false turns sound off; the old DirectShow
+	// path stays selectable for machines where loopback misbehaves.
+	fs.BoolVar(&cfg.Audio, "audio", true, "stream the PC's sound to the phone (--audio=false to turn it off)")
+	fs.StringVar(&cfg.AudioSource, "audio-source", AudioLoopback, "where the sound comes from: \"loopback\" (default) captures what the default playback device plays (Windows WASAPI, no extra software); \"dshow\" uses the \"virtual-audio-capturer\" DirectShow device from screen-capture-recorder")
 	fs.BoolVar(&cfg.Setup, "setup", false, "print WoW Config.wtf and addon setup instructions, then exit")
 	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW game directory (e.g. the _classic_era_ folder, or a private-server folder containing Wow.exe); skips the wizard's auto-detection")
 	fs.StringVar(&cfg.GameExe, "game-exe", "", "exact game executable to record and launch (private servers, e.g. VanillaFixes.exe); overrides --wow-dir and every auto-detection")
@@ -177,6 +185,9 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.AudioSource != AudioLoopback && cfg.AudioSource != AudioDShow {
+		return nil, fmt.Errorf("--audio-source %q: want %q or %q", cfg.AudioSource, AudioLoopback, AudioDShow)
 	}
 	if cfg.FPS < 1 || cfg.FPS > 240 {
 		return nil, fmt.Errorf("--fps %d out of range 1..240", cfg.FPS)

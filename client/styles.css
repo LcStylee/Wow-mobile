@@ -90,13 +90,18 @@ button {
   height: var(--video-h);
 }
 
-/* The only layout since v0.6.1: from below the top inset (camera cutout /
- * status bar) to the bottom edge. Each phone's stream is shaped to exactly
- * this box (docs/PHONE_FRAME.md §3), so it fills edge to edge. */
+/* The only layout since v0.6.2: from below the top inset (camera cutout /
+ * status bar) to the bottom edge of the SCREEN. Each phone's stream is
+ * shaped to exactly this box (docs/PHONE_FRAME.md §3), so it fills edge to
+ * edge. The height comes from layout.js (--video-box-h, videoBoxHeight):
+ * iOS home-screen apps report a viewport a status bar SHORTER than the
+ * screen while still drawing from its top, so neither "100dvh - safe-top"
+ * nor "bottom: 0" reaches the real bottom (field report v0.6.2). The calc is
+ * the pre-JS fallback. */
 body.layout-overlay #video,
 body.layout-overlay #touch {
   top: var(--safe-top);
-  height: calc(var(--vh100) - var(--safe-top));
+  height: var(--video-box-h, calc(var(--vh100) - var(--safe-top)));
 }
 
 #video {

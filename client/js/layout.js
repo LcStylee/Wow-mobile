@@ -45,6 +45,40 @@ export function videoAspect() {
 }
 
 /**
+ * Height of the video box (CSS px) from below the top safe-area inset to the
+ * bottom of the screen. Pure (unit-tested).
+ *
+ * iOS home-screen apps with the black-translucent status bar draw the page
+ * from the very top of the screen but report a viewport (innerHeight, the
+ * initial containing block, 100vh/dvh) that is a status bar SHORT: page
+ * height + top inset == screen height. Detected exactly that way; then the
+ * box is the whole reported height (it starts below the inset and runs to
+ * the real bottom edge). Everywhere else the viewport is honest and the box
+ * is the viewport minus the inset.
+ * @param innerH   window.innerHeight
+ * @param screenH  screen.height (portrait-locked app: the long side)
+ * @param safeTop  env(safe-area-inset-top) px
+ */
+export function videoBoxHeight(innerH, screenH, safeTop) {
+  if (!(innerH > 0)) return 0;
+  if (safeTop > 0 && screenH > innerH && Math.abs(innerH + safeTop - screenH) <= 2) {
+    return innerH;
+  }
+  return Math.max(0, innerH - safeTop);
+}
+
+function measureSafeTop(doc) {
+  const probe = doc.createElement('div');
+  probe.style.cssText =
+    'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;' +
+    'width:1px;height:env(safe-area-inset-top,0px)';
+  doc.body.appendChild(probe);
+  const h = probe.getBoundingClientRect().height;
+  probe.remove();
+  return h;
+}
+
+/**
  * Apply the (single) layout and run the chrome auto-fade: the floating bar
  * dims after FADE_AFTER_MS idle and wakes on any touch of it or of the game
  * surface (buttons stay tappable while dimmed — opacity only).
@@ -96,6 +130,19 @@ export function initLayout() {
   document.getElementById('touch').addEventListener('pointerdown', wakeFade);
 
   body.classList.add('layout-overlay');
+  const sizeBox = () => {
+    const h = videoBoxHeight(
+      window.innerHeight,
+      Math.max(screen.height || 0, screen.width || 0),
+      measureSafeTop(document),
+    );
+    if (h > 0) document.documentElement.style.setProperty('--video-box-h', `${h}px`);
+    window.dispatchEvent(new Event('wm-layout-change'));
+  };
+  sizeBox();
+  window.addEventListener('resize', sizeBox);
+  window.visualViewport?.addEventListener?.('resize', sizeBox);
+  screen.orientation?.addEventListener?.('change', sizeBox);
   // A new stream aspect moves the letterbox: the touch layer drops its
   // cached geometry like on any other layout change.
   window.addEventListener('wm-video-aspect', () => {

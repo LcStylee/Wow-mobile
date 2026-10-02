@@ -516,6 +516,13 @@ func run(ui *appUI) error {
 		}
 	}
 
+	// The built-in loopback is Windows-only (WASAPI); elsewhere (the test
+	// capture on CI) the stream simply carries no audio track.
+	if cfg.Audio && cfg.AudioSource == config.AudioLoopback && runtime.GOOS != "windows" {
+		log.Info("audio off: the system audio loopback is Windows-only")
+		cfg.Audio = false
+	}
+
 	mgr, err = rtc.NewManager(rtc.Options{
 		VideoWidth:    cfg.Width,
 		VideoHeight:   cfg.Height,
@@ -532,8 +539,28 @@ func run(ui *appUI) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Audio {
+	if cfg.Audio && cfg.AudioSource == config.AudioDShow {
 		audioSup = capture.NewSupervisor("audio", capCfg, capture.Config.AudioArgs, mgr.ConsumeOgg, log)
+	} else if cfg.Audio {
+		// Built-in loopback: each launch probes the default playback
+		// device's mix format, starts ffmpeg for exactly that raw PCM layout
+		// and feeds it from WASAPI. A device switch fails the feeder's format
+		// check and the restart re-probes.
+		var loopFmt atomic.Value
+		argv := func(c capture.Config) []string {
+			f, err := capture.ProbeLoopback()
+			if err != nil {
+				log.Warn("audio: no playback device to capture", "err", err)
+				f = capture.LoopbackFormat{SampleFmt: "f32le", Rate: 48000, Channels: 2}
+			}
+			loopFmt.Store(f)
+			return c.LoopbackArgs(f)
+		}
+		audioSup = capture.NewSupervisor("audio", capCfg, argv, mgr.ConsumeOgg, log)
+		audioSup.SetFeeder(func(ctx context.Context, w io.Writer) error {
+			f, _ := loopFmt.Load().(capture.LoopbackFormat)
+			return capture.StreamLoopback(ctx, w, f)
+		})
 	}
 
 	// Startup self-check: ~2 s of testsrc2 through the SELECTED encoder and

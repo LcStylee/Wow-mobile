@@ -20,6 +20,7 @@ type Consumer func(stdout io.Reader) error
 type Supervisor struct {
 	name    string // for logs: "video" / "audio"
 	consume Consumer
+	feed    Feeder // optional: writes ffmpeg's stdin (system audio loopback)
 	log     *slog.Logger
 
 	mu        sync.Mutex
@@ -49,6 +50,15 @@ func (s *Supervisor) StderrTail() []string {
 // Config to an ffmpeg argument vector (Config.VideoArgs or Config.AudioArgs).
 func NewSupervisor(name string, cfg Config, argv func(Config) []string, consume Consumer, log *slog.Logger) *Supervisor {
 	return &Supervisor{name: name, cfg: cfg, argv: argv, consume: consume, log: log.With("pipeline", name)}
+}
+
+// SetFeeder makes every ffmpeg launch read its input from stdin, written by
+// f (the built-in system audio loopback). Call before Start. A feeder error
+// ends that ffmpeg's lifetime like an ffmpeg death (restart with backoff).
+func (s *Supervisor) SetFeeder(f Feeder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.feed = f
 }
 
 // Start launches the supervision loop. No-op if already running.
@@ -208,6 +218,15 @@ func (s *Supervisor) runOnce(ctx context.Context, cfg Config, gen int) error {
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	feed := s.feed
+	s.mu.Unlock()
+	var stdin io.WriteCloser
+	if feed != nil {
+		if stdin, err = cmd.StdinPipe(); err != nil {
+			return err
+		}
+	}
 	tail := newTailBuffer(30)
 	s.mu.Lock()
 	s.curTail = tail // live view for StderrTail diagnostics
@@ -230,6 +249,20 @@ func (s *Supervisor) runOnce(ctx context.Context, cfg Config, gen int) error {
 	s.mu.Lock()
 	s.procStart = time.Now() // ForceKeyframe's fresh-process exemption
 	s.mu.Unlock()
+	var feedWG sync.WaitGroup
+	var feedErr error
+	if feed != nil {
+		feedWG.Add(1)
+		go func() {
+			defer feedWG.Done()
+			feedErr = feed(pctx, stdin)
+			stdin.Close() // EOF lets ffmpeg flush and exit
+			if feedErr != nil && pctx.Err() == nil {
+				s.log.Warn("input feeder stopped", "err", feedErr)
+				cancelProc()
+			}
+		}()
+	}
 	consumeErr := s.consume(stdout)
 	// Sample "was this a requested stop/restart?" BEFORE the kill below, or
 	// our own cancellation would suppress the post-mortem stderr tail on a
@@ -243,6 +276,10 @@ func (s *Supervisor) runOnce(ctx context.Context, cfg Config, gen int) error {
 	cancelProc()
 	stderrWG.Wait()
 	waitErr := cmd.Wait()
+	feedWG.Wait()
+	if feedErr != nil && !requestedStop && consumeErr == io.EOF {
+		return feedErr
+	}
 	if !requestedStop { // real death, not a requested stop/restart
 		for _, line := range tail.lines() {
 			s.log.Warn("ffmpeg stderr", "line", line)
