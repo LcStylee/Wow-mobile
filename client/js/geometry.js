@@ -1,3 +1,5 @@
+import { DECK_STACK_PX } from './phones.js';
+
 // Pure letterbox / world-square math (DOM-free).
 //
 // The <video> uses object-fit: contain, so the decoded frame is centered in
@@ -34,6 +36,19 @@ export const DESIGN_WIDTH = 1080;
  */
 export function worldSquareFrac(captureW, captureH, viewportPx = DESIGN_WIDTH) {
   return Math.min(1, (viewportPx / DESIGN_WIDTH) * (captureW / captureH));
+}
+
+/**
+ * World-zone fraction for the v0.6.0 phone layout: the addon keeps its bottom
+ * stack (chat + action bars + menu row, DECK_STACK_PX design px) at the
+ * bottom of the stream and the world above it, with the top HUD overlaid on
+ * the world's top edge. So the world zone is everything above the stack —
+ * derived from the stream size alone, nothing to configure or mirror.
+ */
+export function autoWorldFrac(captureW, captureH, stackPx = DECK_STACK_PX) {
+  if (!(captureW > 0) || !(captureH > 0)) return 0.5625;
+  const designH = (DESIGN_WIDTH * captureH) / captureW;
+  return clamp((designH - stackPx) / designH, 0, 1);
 }
 
 export function clamp(v, lo, hi) {

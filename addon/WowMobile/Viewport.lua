@@ -2,10 +2,9 @@
 -- WowMobile · Viewport
 -- The 3D world renders FULL WINDOW, edge to edge — the game is a normal
 -- widescreen game on the PC (docs/PHONE_FRAME.md). Inside the phone frame
--- (Band.lua) this module only defines the "world square": the transparent
--- region at the top of the frame through which the world shows on the
--- phone, and paints a black backdrop over the frame below it — the "control
--- deck" that owns all primary UI (docs/ARCHITECTURE.md §1).
+-- (Band.lua) this module defines the phone layout's top HUD strip and the
+-- "world square": the transparent middle of the frame through which the
+-- world shows on the phone, between the top HUD and the bottom stack.
 --
 -- Publishes:
 --   WM.WorldSquare — insecure frame exactly covering the world region, used as
@@ -26,38 +25,44 @@ local _, WM = ...
 local Viewport = {}
 WM.Viewport = Viewport
 
--- Anchor/overlay for the world region. Mouse-disabled: world taps must reach
--- WorldFrame (targeting, camera) untouched. Anchored to the band frame — NOT
--- UIParent — which is what carries the square (and everything hanging off it)
--- into the centered band in landscape mode; in portrait mode the band frame
--- covers the whole window and this is identical to the pre-band layout.
+-- Phone layout (v0.6.0), top to bottom inside the frame:
+--   WM.TopHud      — thin XP bar + compact player/target frames
+--                    (PhoneData.topHudPx design px tall)
+--   WM.WorldSquare — the world region: everything between the top HUD and
+--                    the bottom stack; auras, minimap, quick bars and
+--                    tooltips anchor to it. No fill — the world shows through.
+--   bottom stack   — chat + action bars + menu row (Deck.lua, PhoneData.
+--                    deckStackPx tall; the square's bottom anchors to it).
+-- Mouse-disabled containers: world taps must reach WorldFrame untouched.
 local bandHost = WM.BandFrame or UIParent -- Band.lua loads first; nil-guard mirrors Core's crash-tolerance style
+
+local topHud = CreateFrame("Frame", "WowMobileTopHud", UIParent)
+topHud:SetPoint("TOPLEFT", bandHost, "TOPLEFT", 0, 0)
+topHud:SetPoint("TOPRIGHT", bandHost, "TOPRIGHT", 0, 0)
+topHud:SetHeight(WM.Px(WM.PhoneData.topHudPx))
+topHud:SetFrameStrata("LOW")
+topHud:EnableMouse(false)
+WM.TopHud = topHud
+
 local square = CreateFrame("Frame", "WowMobileWorldSquare", UIParent)
-square:SetPoint("TOPLEFT", bandHost, "TOPLEFT", 0, 0)
-square:SetPoint("TOPRIGHT", bandHost, "TOPRIGHT", 0, 0)
-square:SetHeight(WM.Px(1080))
+square:SetPoint("TOPLEFT", topHud, "BOTTOMLEFT", 0, 0)
+square:SetPoint("TOPRIGHT", topHud, "BOTTOMRIGHT", 0, 0)
+square:SetHeight(WM.Px(1080)) -- replaced by the bottom-stack anchor (Deck.lua)
 square:SetFrameStrata("BACKGROUND")
 square:EnableMouse(false)
 WM.WorldSquare = square
 
--- Black backdrop behind everything below the square, spanning the band. The
--- deck's flat 2D look is also what keeps the H.264 encoder cheap there.
-local backdrop = CreateFrame("Frame", "WowMobileDeckBackdrop", UIParent)
-backdrop:SetPoint("TOPLEFT", square, "BOTTOMLEFT", 0, 0)
-backdrop:SetPoint("BOTTOMRIGHT", bandHost, "BOTTOMRIGHT", 0, 0)
-backdrop:SetFrameStrata("BACKGROUND")
-backdrop:SetFrameLevel(0)
-backdrop:EnableMouse(false)
-local black = backdrop:CreateTexture(nil, "BACKGROUND")
-black:SetAllPoints()
-black:SetColorTexture(0, 0, 0, 1)
-WM.DeckBackdrop = backdrop
-
--- viewport.height is design px of the 1080-wide window (the saved variable
--- ARCHITECTURE §1 documents, default 1080); as a fraction of the design width
--- it scales to any real capture resolution.
+-- Design height of the world region: the frame's design height (1080-wide
+-- design space, so 1080 * height / width) minus the top HUD and the bottom
+-- stack. Floored so a squat frame still leaves the overlays some room.
 function Viewport.HeightPx()
-	return (WM.db and WM.db.viewport.height) or 1080
+	local band = WM.Band
+	local w = (band and band.width) or WM.UIWidth()
+	local h = (band and band.height) or WM.UIHeight()
+	local d = WM.PhoneData
+	local px = math.floor(1080 * h / w + 0.5) - d.topHudPx - d.deckStackPx
+	if px < 300 then px = 300 end
+	return px
 end
 
 -- World-square overlays whose layout depends on the configurable square
@@ -79,39 +84,11 @@ local function FullWindowWorld()
 	WorldFrame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
 end
 
--- Last height a bounds-clamp notice was printed for: Apply re-runs on every
--- loading screen and scale/size change, so the notice dedupes on the clamped
--- value instead of spamming chat (and the phone screen) each time.
-local warnedClampPx
-
 function Viewport.Apply()
 	WM.OutOfCombat("viewport", function()
-		local heightPx = Viewport.HeightPx()
-		-- Re-clamp against the LIVE frame's bounds (they move with the phone
-		-- shape and window). The saved value is deliberately NOT rewritten —
-		-- a transient resize must not ratchet the user's choice down — and
-		-- the phone's own World viewport setting must track the value
-		-- actually applied, so say so once.
-		if WM.Config and WM.Config.HeightBounds then
-			local lo, hi = WM.Config.HeightBounds()
-			local clamped = heightPx
-			if clamped < lo then clamped = lo end
-			if clamped > hi then clamped = hi end
-			if clamped ~= heightPx then
-				if warnedClampPx ~= clamped then
-					warnedClampPx = clamped
-					WM.Print(string.format(
-						"saved world viewport height %d is outside this phone frame's bounds (%d..%d) — using %d; set the same value in the phone client (Set > World viewport), or /wm viewport to re-save",
-						heightPx, lo, hi, clamped))
-				end
-				heightPx = clamped
-			end
-		end
-		-- Square height in UI units: the frame width at ratio 1.0 (the frame
-		-- IS the 1080-wide design space).
-		local bandWidthUI = (WM.Band and WM.Band.width) or UIParent:GetWidth()
 		FullWindowWorld()
-		square:SetHeight(bandWidthUI * heightPx / 1080)
+		topHud:SetHeight(WM.Px(WM.PhoneData.topHudPx))
+		local heightPx = Viewport.HeightPx()
 		for i = 1, #reflowers do
 			reflowers[i](heightPx)
 		end

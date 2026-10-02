@@ -34,7 +34,8 @@ end
 
 WM.OnInit(function()
 	local holder = CreateFrame("Frame", "WowMobileMinimapHolder", WM.WorldSquare)
-	holder:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT", -WM.Px(10), -WM.Px(10))
+	-- Below the target's aura row (it hangs ~44 px under the top HUD).
+	holder:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT", -WM.Px(10), -WM.Px(56))
 	holder:SetWidth(WM.Px(MAP_SIZE))
 	holder:SetHeight(WM.Px(MAP_SIZE))
 	-- Opaque backdrop under the whole cluster: the round map leaves its

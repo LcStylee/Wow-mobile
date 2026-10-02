@@ -125,7 +125,7 @@ WM.OnInit(function()
 	local function ReflowParty(heightPx)
 		local first = PartyMemberFrame1
 		if not first then return end
-		local scale = (heightPx - 336) / 800
+		local scale = (heightPx - 390) / 800
 		if scale > PARTY_SCALE then scale = PARTY_SCALE end
 		if scale < 0.1 then scale = 0.1 end -- guards a hand-edited SavedVariables height
 		for i = 1, MAX_PARTY_MEMBERS or 4 do
@@ -138,7 +138,7 @@ WM.OnInit(function()
 		-- SetPoint offsets are in the frame's own (scaled) space; divide so
 		-- the offsets stay 120/330 physical px at every scale.
 		first:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
-			-WM.Px(120) / scale, -WM.Px(330) / scale)
+			-WM.Px(120) / scale, -WM.Px(384) / scale)
 	end
 	WM.Viewport.OnApply(ReflowParty)
 	-- This OnInit runs before Viewport's (toc order), i.e. before the first

@@ -32,31 +32,33 @@
        video in deck layout; on screens at most ~16:9 tall (body.
        layout-overlay) the same bar floats along the top edge and auto-fades. -->
   <footer id="hud">
-    <div id="hud-top">
-      <!-- Quick keys: Space/Esc/chat/M/B as one row of true hold-buttons. -->
-      <aside id="rail" hidden></aside>
-      <div id="hud-actions">
-        <!-- Label is just "Snd" — an on/off suffix clips at 320px-wide decks;
-           the state rides the accent color + title/aria-pressed (hud.js). -->
-      <button id="btn-audio" type="button" title="Sound: off"
-              aria-pressed="false">Snd</button>
-        <!-- HUD collapse only matters in overlay layout (deck chrome never
-             covers the game); CSS hides this button in deck layout. -->
-        <button id="btn-hud" type="button" title="Toggle HUD">HUD</button>
-        <button id="btn-settings" type="button" title="Settings">Set</button>
-        <button id="btn-disconnect" type="button" title="Disconnect">End</button>
+    <!-- One button (v0.6.0): everything else lives in the menu it opens, so
+         no chrome covers the game while playing. -->
+    <button id="btn-menu" type="button" title="Menu" aria-expanded="false"
+            aria-controls="hud-menu">☰</button>
+    <div id="hud-menu">
+      <div id="hud-top">
+        <!-- Quick keys: Space/Esc/chat/M/B as one row of true hold-buttons. -->
+        <aside id="rail" hidden></aside>
+        <div id="hud-actions">
+          <!-- Label is just "Snd" — the state rides the accent color +
+               title/aria-pressed (hud.js). -->
+          <button id="btn-audio" type="button" title="Sound: off"
+                  aria-pressed="false">Snd</button>
+          <button id="btn-settings" type="button" title="Settings">Set</button>
+          <button id="btn-disconnect" type="button" title="Disconnect">End</button>
+        </div>
       </div>
+      <button id="hud-stats" type="button" title="Connection stats — tap to expand">
+        <span id="st-state" data-state="idle">offline</span>
+        <span id="st-rtt">– ms</span>
+        <span id="st-bitrate">– kb/s</span>
+        <span id="st-fps">– fps</span>
+        <span id="st-enc">enc –</span>
+        <!-- Shell version (server-stamped js/version.js). -->
+        <span id="st-version" class="st-version"></span>
+      </button>
     </div>
-    <button id="hud-stats" type="button" title="Connection stats — tap to expand">
-      <span id="st-state" data-state="idle">offline</span>
-      <span id="st-rtt">– ms</span>
-      <span id="st-bitrate">– kb/s</span>
-      <span id="st-fps">– fps</span>
-      <span id="st-enc">enc –</span>
-      <!-- Shell version (server-stamped js/version.js): stale-cached-PWA
-           triage at a glance, in the compact line AND the expanded panel. -->
-      <span id="st-version" class="st-version"></span>
-    </button>
     <!-- "Update ready" pill: a new service worker took control mid-play, so
          the automatic once-per-session reload was deferred (app.js); floats
          above the deck, tap = reload into the new shell. -->
@@ -82,16 +84,6 @@
       Joystick size
       <input id="set-joystick" type="range" min="0.7" max="1.6" step="0.05">
       <output for="set-joystick"></output>
-    </label>
-    <label>
-      World viewport (px)
-      <!-- Must match the addon's `/wm viewport` value; min/max mirror the
-           addon's bounds at the standard 1080x1920 window (0.60 x design
-           width up to the deck-preserving RatioMax, ~1130 px). The addon
-           prints the clamped value it applied — enter that printed number
-           here (SETUP.md §6). -->
-      <input id="set-viewport" type="number" inputmode="numeric"
-             min="648" max="1130" step="1">
     </label>
     <label>
       Stream quality

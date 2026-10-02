@@ -34,7 +34,7 @@ WM.Layout = {} -- named anchor frames of the control-deck stack
 -- /wm status (Config.lua): a running game keeps OLD addon code until
 -- /reload even after the wizard updates the files, and this is how a field
 -- report proves which code is live.
-WM.VERSION = "0.5.1"
+WM.VERSION = "0.6.0"
 
 function WM.Version()
 	if GetAddOnMetadata then
@@ -65,6 +65,42 @@ WM.Colors = {
 WM.FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 
 --------------------------------------------------------------------------------
+-- Real UI-space size
+-- UIParent:GetWidth()/GetHeight() can lie: on the OctoWoW 1.12 build (field
+-- report v0.5.1, 4K) they reported 1365x768 while UIParent actually spans
+-- ~1507x843 of its own units on screen, so everything placed from those
+-- numbers was squeezed ~10% toward the top-left (phone frame off-center,
+-- not reaching the bottom). Anchors are resolved by the engine against the
+-- frame's REAL rect, so a probe child anchored to UIParent's corners reads
+-- the true extent back in the same units every UIParent child uses. Falls
+-- back to GetWidth/GetHeight while the rect is unresolved (early load).
+--------------------------------------------------------------------------------
+
+local sizeProbe = CreateFrame("Frame", nil, UIParent)
+sizeProbe:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+sizeProbe:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
+sizeProbe:EnableMouse(false)
+
+local function ProbeSize()
+	local l, r = sizeProbe:GetLeft(), sizeProbe:GetRight()
+	local t, b = sizeProbe:GetTop(), sizeProbe:GetBottom()
+	if l and r and t and b and r - l > 1 and t - b > 1 then
+		return r - l, t - b
+	end
+	return UIParent:GetWidth(), UIParent:GetHeight()
+end
+
+function WM.UIWidth()
+	local w = ProbeSize()
+	return w
+end
+
+function WM.UIHeight()
+	local _, h = ProbeSize()
+	return h
+end
+
+--------------------------------------------------------------------------------
 -- Design-space conversion
 -- All layout constants are written in design px of the 1080x1920 DESIGN
 -- space. That space is the BAND — the full window in portrait mode, the
@@ -90,7 +126,7 @@ WM.FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 -- the "Finish setup — reload UI" banner.
 --------------------------------------------------------------------------------
 
-local pxFactor = UIParent:GetWidth() / 1080
+local pxFactor = WM.UIWidth() / 1080
 local layoutBasisW, layoutBasisH -- UIParent size the current layout was built against
 
 function WM.Px(px)
@@ -102,7 +138,7 @@ function WM.UpdatePxFactor()
 	-- the full-window fallback only runs before Band.lua loads or if it
 	-- failed (then the crash guard has already bannered the failure).
 	local band = WM.Band
-	pxFactor = ((band and band.width) or UIParent:GetWidth()) / 1080
+	pxFactor = ((band and band.width) or WM.UIWidth()) / 1080
 end
 
 -- Re-measure the window and adopt it as the layout baseline. Called right
@@ -271,7 +307,7 @@ local setupBanner
 -- back to the layout basis, without ever dismissing a Viewport.Verify/shape/
 -- band failure it did not raise.
 function WM.ShowSetupBanner(msg, reason)
-	local w = (WM.Band and WM.Band.width) or UIParent:GetWidth()
+	local w = (WM.Band and WM.Band.width) or WM.UIWidth()
 	local function px(v) return v * w / 1080 end
 	if not setupBanner then
 		setupBanner = CreateFrame("Frame", "WowMobileSetupBanner", UIParent)
@@ -513,6 +549,14 @@ function WM.SkinFrame(frame, bg, border)
 	fill:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -WM.Px(2), WM.Px(2))
 	fill:SetTexture(bg[1], bg[2], bg[3], bg[4] or 1)
 	frame.borderTex, frame.fillTex = edge, fill
+	return frame
+end
+
+-- Translucent skin: lets the world show through a SkinFrame'd widget (the
+-- phone layout keeps the world visible behind the bars, v0.6.0).
+function WM.Translucent(frame, fillAlpha, borderAlpha)
+	if frame.fillTex then frame.fillTex:SetAlpha(fillAlpha) end
+	if frame.borderTex then frame.borderTex:SetAlpha(borderAlpha or fillAlpha) end
 	return frame
 end
 

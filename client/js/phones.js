@@ -2,6 +2,8 @@
 
 export const DECK_LOGICAL_PX = 60;
 export const RING_PX = 6;
+export const TOP_HUD_PX = 130;
+export const DECK_STACK_PX = 600;
 export const ENC_MAX_W = 1080;
 export const ENC_MAX_H = 1920;
 export const DEFAULT_PHONE_ID = "iphone-17";

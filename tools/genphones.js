@@ -32,6 +32,13 @@ const RING_PX = RING_OUTER_PX + RING_INNER_PX;
 const ENC_MAX_W = 1080; // encode cap (the design space)
 const ENC_MAX_H = 1920;
 const DEFAULT_PHONE_ID = "iphone-17";
+// Phone UI layout inside the frame, in 1080-wide design px (both addons'
+// Deck/Viewport and the phone client's gesture zones): the top HUD strip
+// (thin XP bar + compact unit frames) and the bottom stack (chat + action
+// bars + menu row). Everything between them is the world; the phone treats
+// the stream from its top down to the bottom stack as the world zone.
+const TOP_HUD_PX = 130;
+const DECK_STACK_PX = 600;
 const MIN_DIM = 16;
 
 // roundHalfToEven(num, den) — integer banker's rounding, the shared snap of
@@ -163,6 +170,8 @@ function genGo(list, vectors) {
   L.push(`\tRingOuterPx   = ${RING_OUTER_PX}`);
   L.push(`\tRingInnerPx   = ${RING_INNER_PX}`);
   L.push(`\tRingPx        = ${RING_PX}`);
+  L.push(`\tTopHudPx      = ${TOP_HUD_PX}`);
+  L.push(`\tDeckStackPx   = ${DECK_STACK_PX}`);
   L.push(`\tEncMaxW       = ${ENC_MAX_W}`);
   L.push(`\tEncMaxH       = ${ENC_MAX_H}`);
   L.push(`\tDefaultID     = ${JSON.stringify(DEFAULT_PHONE_ID)}`);
@@ -188,6 +197,8 @@ function genJS(list, vectors) {
   L.push(`// ${HEADER}`, "");
   L.push(`export const DECK_LOGICAL_PX = ${DECK_LOGICAL_PX};`);
   L.push(`export const RING_PX = ${RING_PX};`);
+  L.push(`export const TOP_HUD_PX = ${TOP_HUD_PX};`);
+  L.push(`export const DECK_STACK_PX = ${DECK_STACK_PX};`);
   L.push(`export const ENC_MAX_W = ${ENC_MAX_W};`);
   L.push(`export const ENC_MAX_H = ${ENC_MAX_H};`);
   L.push(`export const DEFAULT_PHONE_ID = ${JSON.stringify(DEFAULT_PHONE_ID)};`, "");
@@ -218,6 +229,8 @@ function genLua(list, vectors, vanilla) {
   L.push(`\tringOuterPx = ${RING_OUTER_PX},`);
   L.push(`\tringInnerPx = ${RING_INNER_PX},`);
   L.push(`\tringPx = ${RING_PX},`);
+  L.push(`\ttopHudPx = ${TOP_HUD_PX},`);
+  L.push(`\tdeckStackPx = ${DECK_STACK_PX},`);
   L.push(`\tencMaxW = ${ENC_MAX_W},`);
   L.push(`\tencMaxH = ${ENC_MAX_H},`);
   L.push(`\tdefaultId = ${JSON.stringify(DEFAULT_PHONE_ID)},`);

@@ -125,6 +125,7 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx, pageable)
 	b:SetWidth(WM.Px(wPx))
 	b:SetHeight(WM.Px(hPx))
 	WM.SkinFrame(b, { 0.06, 0.06, 0.07, 1 })
+	WM.Translucent(b, WM.DeckMetrics.buttonFill, WM.DeckMetrics.buttonBorder)
 	b.slot = slot
 	b.baseIndex = slot
 	b.pageable = pageable and true or false

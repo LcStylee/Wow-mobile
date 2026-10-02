@@ -39,8 +39,8 @@ local DECK_FIXED_PX = 790 -- 744 fixed stack + 46 chat band (34 px visible strip
 local function RatioMax()
 	-- FRAME aspect in design px: height over width of the phone frame the
 	-- layout lives in (Band.lua). Uniform scale, so UI units suffice.
-	local bandWidth = (WM.Band and WM.Band.width) or UIParent:GetWidth()
-	local bandHeight = (WM.Band and WM.Band.height) or UIParent:GetHeight()
+	local bandWidth = (WM.Band and WM.Band.width) or WM.UIWidth()
+	local bandHeight = (WM.Band and WM.Band.height) or WM.UIHeight()
 	local aspect = bandHeight / bandWidth
 	local maxRatio = aspect - DECK_FIXED_PX / DESIGN_WIDTH
 	if maxRatio > 1.20 then maxRatio = 1.20 end
@@ -93,25 +93,13 @@ end)
 -- Setters
 --------------------------------------------------------------------------------
 
-function Config.SetHeight(px)
-	px = tonumber(px)
-	if not px then
-		-- Mistyped/missing argument: silence would be invisible on the phone —
-		-- every /wm path must produce visible feedback.
-		local lo, hi = Config.HeightBounds()
-		WM.Print(string.format("usage: /wm viewport <%d..%d> — world-square height in design px", lo, hi))
-		return
-	end
-	local lo, hi = Config.HeightBounds()
-	WM.db.viewport.height = Clamp(px, lo, hi)
-	if WM.Viewport then
-		WM.Viewport.Apply()
-	end
-	-- The stream carries no viewport field: the phone client splits its
-	-- gesture zones by its own World viewport setting, which must match.
+function Config.SetHeight()
+	-- v0.6.0 phone layout: the world area is everything between the top HUD
+	-- and the bottom stack, and the phone client derives the same split
+	-- from the stream size — nothing to configure or mirror any more.
 	WM.Print(string.format(
-		"world viewport height set to %d px — set the same value in the phone client (Set > World viewport)",
-		WM.db.viewport.height))
+		"the world area is automatic now: %d design px between the top HUD and the bars",
+		WM.Viewport and WM.Viewport.HeightPx() or 0))
 end
 
 function Config.SetScale(v)
@@ -159,9 +147,7 @@ end)
 --------------------------------------------------------------------------------
 
 local function PrintHelp()
-	local lo, hi = Config.HeightBounds()
 	WM.Print("commands:")
-	WM.Print(string.format("  /wm viewport <%d..%d>  — world-square height in design px (1080 = full-width square)", lo, hi))
 	WM.Print("  /wm scale <0.64..1.0>  — uiScale cvar override")
 	WM.Print("  /wm phone [name|id|WxH]  — pick the phone the frame is shaped for (no argument: toggle the selector)")
 	WM.Print("  /wm settings  — open the touch settings panel")
@@ -191,8 +177,6 @@ local function PrintStatus()
 	-- keeps the old code until /reload — this line is the proof of which
 	-- addon code is actually live (mirror of the phone client's version line).
 	WM.Print("version: " .. WM.DisplayVersion() .. " (a lower version than the installer means the game needs /reload)")
-	local lo, hi = Config.HeightBounds()
-	local vp = (WM.db and WM.db.viewport and WM.db.viewport.height) or 1080
 	local band = WM.Band
 	if not band then
 		WM.Print("mode: UNKNOWN (Band failed) — full-window fallback")
@@ -214,11 +198,11 @@ local function PrintStatus()
 		-- addon/server crop mismatch in one paste: compare the "frame rect" /
 		-- "world rect" px against the server log's crop numbers.
 		if band.client then
-			local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+			local uiW, uiH = WM.UIWidth(), WM.UIHeight()
 			WM.Print(string.format(
-				"basis: %s -> client %dx%d px | live window %.1fx%.1f UI units (aspect %.4f)",
+				"basis: %s -> client %dx%d px | live window %.1fx%.1f UI units (aspect %.4f; UIParent reports %.1fx%.1f)",
 				band.client.basis, band.client.w, band.client.h,
-				uiW, uiH, uiW / uiH))
+				uiW, uiH, uiW / uiH, UIParent:GetWidth(), UIParent:GetHeight()))
 			WM.Print(string.format(
 				"frame rect: x=%d y=%d w=%d h=%d px (left=%.1f top=%.1f width=%.1f UI units)",
 				band.px.x, band.px.y, band.px.width, band.px.height,
@@ -226,17 +210,8 @@ local function PrintStatus()
 			WM.Print("world: renders full window, edge to edge (the phone sees it through the top of the frame)")
 		end
 	end
-	if vp < lo or vp > hi then
-		-- Saved height is legal for some OTHER window mode (bounds move with
-		-- the band/portrait mode) — Viewport.Apply clamps it for use without
-		-- rewriting the saved value, so flag the mismatch instead of printing
-		-- a number the layout is not actually using.
-		WM.Print(string.format(
-			"viewport: %d px saved — OUT OF BOUNDS for this mode (%d..%d), applied as %d; mirror the applied value in the phone's World viewport setting, or /wm viewport to re-save",
-			vp, lo, hi, Clamp(vp, lo, hi)))
-	else
-		WM.Print(string.format("viewport: %d px (bounds %d..%d) — mirror this in the phone's World viewport setting", vp, lo, hi))
-	end
+	WM.Print(string.format("world area: %d design px between the top HUD and the bars (automatic)",
+		WM.Viewport and WM.Viewport.HeightPx() or 0))
 	WM.Print("world square: " .. (WM.WorldSquare and "ok" or "MISSING (Viewport failed)"))
 	WM.Print("deck: " .. (WM.Deck and "ok" or "MISSING (Deck failed)"))
 	local order = WM.GetErrors()

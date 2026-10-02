@@ -92,6 +92,14 @@ WM.OnInit(function()
 		Reflow()
 		PadPinHitRects()
 	end)
+	-- A fullscreen-panel close path can leave UIParent hidden (the v0.5.1
+	-- 1.12 field bug); never let closing the map take the whole UI with it.
+	-- UIParent:Show is protected in combat, hence the lockdown queue.
+	WorldMapFrame:HookScript("OnHide", function()
+		if not UIParent:IsShown() then
+			WM.OutOfCombat("worldmap-uiparent", function() UIParent:Show() end)
+		end
+	end)
 
 	-- Pins are re-acquired from pools whenever the displayed map changes;
 	-- re-pad after Blizzard's own OnMapChanged provider pass has run.

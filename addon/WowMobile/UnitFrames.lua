@@ -10,7 +10,7 @@
 local _, WM = ...
 
 local MAX_TARGET_AURAS = 9
-local AURA_SIZE = 52
+local AURA_SIZE = 40
 
 local player, target -- secure unit buttons
 
@@ -24,32 +24,35 @@ local function MakeBar(parent, hPx, textPx)
 	bar:SetStatusBarTexture(WM.TEX_WHITE)
 	local bg = bar:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints()
-	bg:SetColorTexture(0.05, 0.05, 0.06, 1)
+	bg:SetColorTexture(0.05, 0.05, 0.06, 0.6)
 	bar.text = WM.CreateText(bar, textPx, "OUTLINE")
 	bar.text:SetPoint("CENTER")
 	return bar
 end
 
 local function CreateUnitButton(name, parent, unit)
+	-- Compact (v0.6.0, top HUD): name line + slim health/power bars in
+	-- ~84 design px, translucent so the world shows through.
 	local f = CreateFrame("Button", name, parent, "SecureUnitButtonTemplate")
 	WM.SkinFrame(f, { 0.07, 0.07, 0.09, 1 })
+	WM.Translucent(f, 0.45, 0.6)
 
-	f.name = WM.CreateText(f, 30, "OUTLINE")
-	f.name:SetPoint("TOPLEFT", WM.Px(10), -WM.Px(6))
-	f.name:SetWidth(WM.Px(400))
+	f.name = WM.CreateText(f, 22, "OUTLINE")
+	f.name:SetPoint("TOPLEFT", WM.Px(8), -WM.Px(4))
+	f.name:SetWidth(WM.Px(420))
 	f.name:SetJustifyH("LEFT")
 	f.name:SetWordWrap(false)
 
-	f.level = WM.CreateText(f, 26, "OUTLINE")
-	f.level:SetPoint("TOPRIGHT", -WM.Px(10), -WM.Px(8))
+	f.level = WM.CreateText(f, 20, "OUTLINE")
+	f.level:SetPoint("TOPRIGHT", -WM.Px(8), -WM.Px(5))
 
-	f.health = MakeBar(f, 52, 26)
-	f.health:SetPoint("TOPLEFT", WM.Px(6), -WM.Px(42))
-	f.health:SetPoint("TOPRIGHT", -WM.Px(6), -WM.Px(42))
+	f.health = MakeBar(f, 34, 20)
+	f.health:SetPoint("TOPLEFT", WM.Px(5), -WM.Px(30))
+	f.health:SetPoint("TOPRIGHT", -WM.Px(5), -WM.Px(30))
 
-	f.power = MakeBar(f, 36, 22)
-	f.power:SetPoint("TOPLEFT", f.health, "BOTTOMLEFT", 0, -WM.Px(4))
-	f.power:SetPoint("TOPRIGHT", f.health, "BOTTOMRIGHT", 0, -WM.Px(4))
+	f.power = MakeBar(f, 18, 14)
+	f.power:SetPoint("TOPLEFT", f.health, "BOTTOMLEFT", 0, -WM.Px(3))
+	f.power:SetPoint("TOPRIGHT", f.health, "BOTTOMRIGHT", 0, -WM.Px(3))
 
 	-- Safe here: this factory only runs inside the queued unitframes-build
 	-- closure, i.e. guaranteed out of combat.
@@ -154,7 +157,9 @@ local function GetAuraCell(i)
 	if cell then return cell end
 	cell = CreateFrame("Button", nil, target)
 	cell:SetSize(WM.Px(AURA_SIZE), WM.Px(AURA_SIZE))
-	cell:SetPoint("BOTTOMLEFT", WM.Px(8 + (i - 1) * (AURA_SIZE + 4)), WM.Px(6))
+	-- Below the compact target frame, right-aligned, growing leftward
+	-- (the minimap sits under this row, Minimap.lua).
+	cell:SetPoint("TOPRIGHT", target, "BOTTOMRIGHT", -WM.Px((i - 1) * (AURA_SIZE + 4)), -WM.Px(4))
 	cell.border = cell:CreateTexture(nil, "BACKGROUND")
 	cell.border:SetAllPoints()
 	cell.icon = cell:CreateTexture(nil, "ARTWORK")
@@ -356,9 +361,10 @@ WM.OnInit(function()
 	end
 
 	local m = WM.DeckMetrics
-	local row = CreateFrame("Frame", "WowMobileUnitRow", WM.Deck)
-	row:SetPoint("BOTTOMLEFT", WM.Layout.xpBlock, "TOPLEFT", 0, WM.Px(m.gap))
-	row:SetPoint("BOTTOMRIGHT", WM.Layout.xpBlock, "TOPRIGHT", 0, WM.Px(m.gap))
+	-- Top HUD, right under the thin XP strip (v0.6.0).
+	local row = CreateFrame("Frame", "WowMobileUnitRow", WM.TopHud)
+	row:SetPoint("TOPLEFT", WM.Layout.xpBlock, "BOTTOMLEFT", 0, -WM.Px(m.hudMargin))
+	row:SetPoint("TOPRIGHT", WM.Layout.xpBlock, "BOTTOMRIGHT", 0, -WM.Px(m.hudMargin))
 	row:SetHeight(WM.Px(m.unitRow))
 	WM.Layout.unitRow = row
 
@@ -377,8 +383,8 @@ WM.OnInit(function()
 	target:SetPoint("BOTTOMRIGHT")
 	target:SetWidth(WM.Px(528))
 
-	comboText = WM.CreateText(target, 34, "OUTLINE")
-	comboText:SetPoint("TOP", 0, -WM.Px(6))
+	comboText = WM.CreateText(target, 24, "OUTLINE")
+	comboText:SetPoint("TOP", 0, -WM.Px(3))
 
 	-- Secure show/hide with target existence (combat-safe).
 	RegisterUnitWatch(target)

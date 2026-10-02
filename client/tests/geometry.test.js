@@ -66,3 +66,17 @@ test('clamp pins to the interval bounds', () => {
   assert.equal(clamp(-1, 0, 10), 0);
   assert.equal(clamp(11, 0, 10), 10);
 });
+
+test('autoWorldFrac: the world zone is everything above the bottom stack', async () => {
+  const { autoWorldFrac } = await import('../js/geometry.js');
+  const { DECK_STACK_PX } = await import('../js/phones.js');
+  // A 1080x1920 stream: 1920 design px tall, the stack is the bottom 600.
+  assert.ok(Math.abs(autoWorldFrac(1080, 1920) - (1920 - DECK_STACK_PX) / 1920) < 1e-12);
+  // Scale-free: the encoded size does not matter, only the aspect.
+  assert.ok(Math.abs(autoWorldFrac(540, 960) - autoWorldFrac(1080, 1920)) < 1e-12);
+  // iPhone 17 frame (1206:2154): ~0.69 of the height is world.
+  const f = autoWorldFrac(1074, 1920);
+  assert.ok(f > 0.65 && f < 0.72, String(f));
+  // Degenerate input falls back instead of NaN.
+  assert.equal(autoWorldFrac(0, 0), 0.5625);
+});

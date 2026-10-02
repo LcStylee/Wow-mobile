@@ -8,7 +8,6 @@
 
 local WM = WowMobile
 
-local HEIGHT_STEP = 54 -- 5% of the 1080 design width per tap
 local SCALE_STEP = 0.05
 
 local refreshers = {} -- closures that repaint each row's value text
@@ -54,11 +53,7 @@ end
 WM.OnInit(function()
 	local panel = WM.Deck.CreatePanel("settings", "Settings")
 
-	AddStepper(panel.content, 1, "World viewport height (px)",
-		function() return string.format("%d", WM.db.viewport.height) end,
-		function(dir) WM.Config.SetHeight(WM.db.viewport.height + dir * HEIGHT_STEP) end)
-
-	AddStepper(panel.content, 2, "UI scale (Blizzard text)",
+	AddStepper(panel.content, 1, "UI scale (Blizzard text)",
 		function()
 			-- Show the live cvar when no override is stored yet.
 			return string.format("%.2f", WM.db.uiScale or tonumber(GetCVar("uiScale")) or 1)
@@ -86,9 +81,8 @@ WM.OnInit(function()
 	note:SetTextColor(0.7, 0.7, 0.75)
 	note:SetText("Touch targets keep their physical size at any UI scale. " ..
 		"After changing UI scale, Reload UI re-lays-out the whole deck. " ..
-		"After changing the viewport height, set the same value in the " ..
-		"phone client (Set > World viewport) so its gesture zones match. " ..
-		"Slash commands: /wm viewport <px>, /wm scale <v>, /wm reset.")
+		"The world area is automatic: everything between the top bars and " ..
+		"the action bars. Slash commands: /wm phone, /wm scale <v>, /wm reset.")
 
 	panel.OnOpen = RefreshAll
 end)

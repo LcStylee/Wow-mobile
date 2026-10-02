@@ -9,27 +9,40 @@
 --   * "exclusive" coordination so panels, the NPC bottom sheet and the world
 --     map never stack on top of each other.
 --
--- Deck stack (design px, bottom -> top), each module publishing its frame in
--- WM.Layout for the next one to anchor to:
---   bottomRow(92) · secondBar(84) · mainBar(286 = 2*mainButtonH + 6 gap)
---   · xpBlock(70) · unitRow(180) · chat (remaining space up to the deck top)
+-- Phone layout (v0.6.0): the deck is the BOTTOM region of the phone frame.
+-- Its bottom stack (design px, bottom -> top; PhoneData.deckStackPx total),
+-- each module publishing its frame in WM.Layout for the next to anchor to:
+--   margin(8) · bottomRow(92) · secondBar(84) · mainBar(286 = 2*140 + 6)
+--   · chat(the rest of deckStackPx)
+-- The XP bar and the unit frames live in the top HUD (Viewport.lua). Panels
+-- and bottom sheets fill the deck rect (panelPx tall), covering the lower
+-- part of the world while open. Nothing here paints a backdrop: the world
+-- shows through the translucent bars.
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
 
--- Bottom-right pins to the BAND (Band.lua), not the window: in landscape
--- mode the deck must live inside the centered 9:16 band (the streamed crop);
--- in portrait mode the band frame covers the whole window and this is
--- identical to the pre-band layout. The top-left comes from the world
--- square, which already hangs off the band frame (Viewport.lua).
+-- Pinned to the bottom of the phone frame (Band.lua). Heights are set at
+-- PLAYER_LOGIN (the OnInit below), when the px factor is final.
+local host = WM.BandFrame or UIParent
 local deck = CreateFrame("Frame", "WowMobileDeck", UIParent)
-deck:SetPoint("TOPLEFT", WM.WorldSquare, "BOTTOMLEFT", 0, 0)
-deck:SetPoint("BOTTOMRIGHT", WM.BandFrame or UIParent, "BOTTOMRIGHT", 0, 0)
+deck:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, 0)
+deck:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
+deck:SetHeight(WM.Px(860))
 deck:SetFrameStrata("LOW")
 deck:EnableMouse(false)
 WM.Deck = deck
 
--- Shared deck metrics (design px), consumed by the bar/HUD modules.
+-- The bottom stack: the world square's bottom edge (Viewport.lua).
+local stack = CreateFrame("Frame", "WowMobileBottomStack", deck)
+stack:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, 0)
+stack:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 0, 0)
+stack:SetHeight(WM.Px(WM.PhoneData.deckStackPx))
+stack:EnableMouse(false)
+WM.WorldSquare:SetPoint("BOTTOMLEFT", stack, "TOPLEFT", 0, 0)
+WM.WorldSquare:SetPoint("BOTTOMRIGHT", stack, "TOPRIGHT", 0, 0)
+
+-- Shared layout metrics (design px), consumed by the bar/HUD modules.
 WM.DeckMetrics = {
 	margin = 8,   -- outer margin inside the deck
 	gap = 6,      -- vertical gap between stacked rows
@@ -37,9 +50,21 @@ WM.DeckMetrics = {
 	secondBar = 84,
 	mainButtonH = 140,
 	mainButtonW = 172,
-	xpBlock = 70,
-	unitRow = 180,
+	-- Top HUD (Viewport.lua): 4 + xpBlock + 4 + unitRow + 4 = topHudPx.
+	hudMargin = 4,
+	xpBlock = 22,
+	unitRow = WM.PhoneData.topHudPx - 12 - 22,
+	petStrip = 42,
+	castBar = 48,
+	-- Panels / bottom sheets (the deck rect).
+	panel = 860,
 }
+-- Chat strip: whatever the bottom stack leaves above the main bar.
+WM.DeckMetrics.chat = WM.PhoneData.deckStackPx
+	- (8 + 92 + 6 + 84 + 6 + (140 * 2 + 6) + 6)
+
+-- Translucency of the bar buttons (fill, border): the world shows through.
+WM.DeckMetrics.buttonFill, WM.DeckMetrics.buttonBorder = 0.35, 0.55
 
 --------------------------------------------------------------------------------
 -- Exclusive surfaces (panels / bottom sheet / world map)
@@ -214,6 +239,16 @@ local MENU_W = 98
 
 WM.OnInit(function()
 	local m = WM.DeckMetrics
+	-- Final px factor: size the deck (capped below the top HUD) and stack.
+	local frameDesignH = 1080 * ((WM.Band and WM.Band.height) or WM.UIHeight())
+		/ ((WM.Band and WM.Band.width) or WM.UIWidth())
+	local panel = m.panel
+	if panel > frameDesignH - WM.PhoneData.topHudPx then
+		panel = frameDesignH - WM.PhoneData.topHudPx
+	end
+	deck:SetHeight(WM.Px(panel))
+	stack:SetHeight(WM.Px(WM.PhoneData.deckStackPx))
+
 	local row = CreateFrame("Frame", "WowMobileBottomRow", deck)
 	row:SetPoint("BOTTOMLEFT", deck, "BOTTOMLEFT", WM.Px(m.margin), WM.Px(m.margin))
 	row:SetPoint("BOTTOMRIGHT", deck, "BOTTOMRIGHT", -WM.Px(m.margin), WM.Px(m.margin))
@@ -246,6 +281,7 @@ WM.OnInit(function()
 	local prev
 	for i = 1, table.getn(entries) do
 		local b = WM.CreateTouchButton(row, MENU_W, m.rowBottom, entries[i].label, 24)
+		WM.Translucent(b, m.buttonFill, m.buttonBorder)
 		if prev then
 			b:SetPoint("LEFT", prev, "RIGHT", WM.Px(4), 0)
 		else

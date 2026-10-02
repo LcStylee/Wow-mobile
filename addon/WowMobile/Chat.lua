@@ -125,12 +125,14 @@ WM.OnInit(function()
 	SetupEditBox()
 	BanishDefaultChat()
 
-	-- Compact strip: deck top edge down to the unit row.
+	-- Compact strip: the top of the bottom stack, right above the main bar
+	-- (v0.6.0 phone layout).
+	local m = WM.DeckMetrics
 	local strip = CreateFrame("Frame", "WowMobileChatStrip", WM.Deck)
-	strip:SetPoint("TOPLEFT", WM.Px(8), -WM.Px(6))
-	strip:SetPoint("TOPRIGHT", -WM.Px(8), -WM.Px(6))
-	strip:SetPoint("BOTTOMLEFT", WM.Layout.unitRow, "TOPLEFT", 0, WM.Px(6))
-	WM.SkinFrame(strip, { 0.03, 0.03, 0.04, 0.6 }, { 0.18, 0.18, 0.22, 0.6 })
+	strip:SetPoint("BOTTOMLEFT", WM.Layout.mainBar, "TOPLEFT", 0, WM.Px(m.gap))
+	strip:SetPoint("BOTTOMRIGHT", WM.Layout.mainBar, "TOPRIGHT", 0, WM.Px(m.gap))
+	strip:SetHeight(WM.Px(m.chat))
+	WM.SkinFrame(strip, { 0.03, 0.03, 0.04, 0.45 }, { 0.18, 0.18, 0.22, 0.45 })
 	WM.Layout.chat = strip
 
 	compact = CreateFrame("ScrollingMessageFrame", nil, strip)

@@ -13,7 +13,7 @@ local FIRST_SLOT = 49 -- MultiBarBottomRight slots 49..60; we surface the first 
 local SLOTS = 6
 local SIZE = 96
 local GAP = 8
-local TOP = 336 -- column top, design px from the square's top (budget below)
+local TOP = 390 -- column top, design px from the square's top: clear of the minimap block (v0.6.0)
 
 local buttons = {}
 

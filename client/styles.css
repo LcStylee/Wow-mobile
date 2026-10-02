@@ -239,9 +239,55 @@ body.layout-overlay #rail.collapsed .rail-strip {
   overflow: hidden;
 }
 
-/* HUD collapse is an overlay-layout affordance (deck chrome hides nothing). */
-#btn-hud {
+/* ---- the single menu button (v0.6.0) ----------------------------------- */
+
+/* One small translucent button; everything else (quick keys, Snd/Set/End,
+ * stats) lives in #hud-menu, shown only while .menu-open. */
+#btn-menu {
+  flex: none;
+  align-self: flex-start;
+  width: 44px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+#hud.menu-open #btn-menu {
+  color: var(--accent);
+}
+
+#hud-menu {
   display: none;
+}
+
+/* Open: a panel floating above the deck strip (deck layout) or below the
+ * button (overlay layout, rule further down). */
+#hud.menu-open {
+  overflow: visible;
+}
+
+#hud.menu-open #hud-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: absolute;
+  left: max(8px, var(--safe-left));
+  right: max(8px, var(--safe-right));
+  bottom: calc(100% + 6px);
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
 }
 
 #btn-audio.active {
@@ -447,8 +493,19 @@ body.layout-overlay .rail-key {
   background: var(--panel);
 }
 
-body.layout-overlay #btn-hud {
-  display: block;
+body.layout-overlay #hud.menu-open #hud-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 0;
+  right: 0;
+}
+
+/* Overlay layout: the lone button sits top-centre, over the thin XP strip
+ * between the player and target frames, not over any control. */
+body.layout-overlay #btn-menu {
+  align-self: center;
+  height: 30px;
+  font-size: 16px;
 }
 
 body.layout-overlay #hud-stats {
@@ -466,15 +523,6 @@ body.layout-overlay #hud.expanded #hud-stats {
   left: 0;
   right: auto;
   min-width: 180px;
-}
-
-/* Collapsed HUD (hudVisible=false, only meaningful while chrome floats over
- * the game): everything but the HUD chip goes away so the world square's top
- * edge underneath stays tappable (the addon's buff/target row sits there). */
-body.layout-overlay #hud.collapsed #hud-stats,
-body.layout-overlay #hud.collapsed #rail,
-body.layout-overlay #hud.collapsed #hud-actions button:not(#btn-hud) {
-  display: none;
 }
 
 /* ---- settings sheet ------------------------------------------------------ */

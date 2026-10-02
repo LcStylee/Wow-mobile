@@ -3,8 +3,8 @@
 // pointerId so the joystick and a camera drag work simultaneously.
 //
 // Regions (computed from the letterboxed content rect):
-//   world square  — top captureW x (worldViewportPx/1080 · captureW) of the
-//                   frame; exactly square at the default 1080 viewport
+//   world zone    — everything above the addon's bottom stack (autoWorldFrac) of the
+//                   frame (the top HUD overlays the world zone's top edge)
 //     bottom-left corner        → virtual joystick (WASD, handled by Joystick)
 //     one-finger drag elsewhere → RMB-down + proportional moves + RMB-up
 //     tap                       → LMB click at position
@@ -14,7 +14,7 @@
 //   letterbox bars — ignored entirely
 
 import { BUTTON, BUTTONS_BIT, WHEEL_NOTCH, norm16 } from './protocol.js';
-import { clamp, fitContain, worldSquareFrac } from './geometry.js';
+import { clamp, fitContain, autoWorldFrac } from './geometry.js';
 
 const TAP_SLOP_PX = 12; // CSS px of travel that still counts as a tap
 const LONG_PRESS_MS = 450;
@@ -105,10 +105,9 @@ export class TouchLayer {
       left: box.left,
       top: box.top,
       content,
-      // The addon's viewport height has no protocol field; the user-synced
-      // worldViewportPx setting (default 1080 = square) supplies it so the
-      // world/deck boundary matches the addon's actual layout.
-      worldFrac: worldSquareFrac(vw, vh, this.#settings.get('worldViewportPx')),
+      // v0.6.0 phone layout: the world zone is everything above the addon's
+      // bottom stack, derived from the stream size (geometry.autoWorldFrac).
+      worldFrac: autoWorldFrac(vw, vh),
       squareSidePx: content.w, // square side on screen = content width
     };
     return this.#geom;

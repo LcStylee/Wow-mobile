@@ -8,6 +8,8 @@ const (
 	RingOuterPx   = 4
 	RingInnerPx   = 2
 	RingPx        = 6
+	TopHudPx      = 130
+	DeckStackPx   = 600
 	EncMaxW       = 1080
 	EncMaxH       = 1920
 	DefaultID     = "iphone-17"

@@ -177,7 +177,7 @@ end
 --     exact, so the layout is right; only the printed px are approximate).
 -- Returns pw, ph, basis; Band.px.approx stays true only for "ui".
 local function ClientPixels()
-	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+	local uiW, uiH = WM.UIWidth(), WM.UIHeight()
 	local gw, gh
 	-- Cleared before the read so /wm status always reflects the read that
 	-- produced the CHOSEN basis — never a stale value from an earlier call.
@@ -204,7 +204,7 @@ end
 function Band.Compute()
 	local pw, ph, basis = ClientPixels()
 	local approx = basis == "ui"
-	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+	local uiW, uiH = WM.UIWidth(), WM.UIHeight()
 	Band.client = { w = pw, h = ph, basis = basis }
 	local p = Band.phone
 	local x, y, w, h = FrameRect(pw, ph, p.streamW, p.streamH)
@@ -303,9 +303,9 @@ function Band.Clamp(frame)
 	end
 	local s = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
 	local leftM = Band.left
-	local rightM = UIParent:GetWidth() - Band.right
+	local rightM = WM.UIWidth() - Band.right
 	local topM = Band.top
-	local bottomM = UIParent:GetHeight() - Band.top - Band.height
+	local bottomM = WM.UIHeight() - Band.top - Band.height
 	frame:SetClampRectInsets(leftM * s, -rightM * s, -topM * s, bottomM * s)
 end
 

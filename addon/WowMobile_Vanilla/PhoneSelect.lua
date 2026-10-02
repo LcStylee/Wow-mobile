@@ -183,7 +183,7 @@ end
 local function Place()
 	if not panel then return end
 	local ringUI = Data.ringPx * Band.unit
-	local uiW = UIParent:GetWidth()
+	local uiW = WM.UIWidth()
 	local rightSpace = uiW - Band.right - ringUI
 	local leftSpace = Band.left - ringUI
 	local need = PANEL_W + 2 * GAP

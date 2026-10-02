@@ -131,7 +131,6 @@ WM.OnInit(function()
 	column:SetAlpha(0.92) -- keep the world readable behind the block
 	column:Hide()
 
-	local unitRow = WM.Layout.unitRow
 
 	for i = 1, SLOTS do
 		local b = CreateFrame("Button", "WowMobilePetButton" .. i, column)
@@ -172,14 +171,16 @@ WM.OnInit(function()
 		buttons[i] = b
 	end
 
-	-- Status strip over the free band under the player frame's power bar
-	-- (unit row is 180 px; player bars end 134 px down).
-	strip = CreateFrame("Button", "WowMobilePetStrip", unitRow)
+	-- Status strip just above the chat strip (v0.6.0: the compact top HUD
+	-- has no free band; the cast bar takes the lane above this one).
+	local m = WM.DeckMetrics
+	strip = CreateFrame("Button", "WowMobilePetStrip", WM.Deck)
 	strip:SetWidth(WM.Px(516))
-	strip:SetHeight(WM.Px(42))
-	strip:SetPoint("BOTTOMLEFT", unitRow, "BOTTOMLEFT", WM.Px(6), WM.Px(2))
-	strip:SetFrameLevel(unitRow:GetFrameLevel() + 20) -- above the player button it overlays
+	strip:SetHeight(WM.Px(m.petStrip))
+	strip:SetPoint("BOTTOMLEFT", WM.Layout.mainBar, "TOPLEFT", 0, WM.Px(m.gap + m.chat + m.gap))
+	strip:SetFrameLevel(WM.Deck:GetFrameLevel() + 20)
 	WM.SkinFrame(strip, { 0.05, 0.05, 0.07, 1 })
+	WM.Translucent(strip, 0.5, 0.7)
 	strip:Hide()
 
 	strip.name = WM.CreateText(strip, 24, "OUTLINE")

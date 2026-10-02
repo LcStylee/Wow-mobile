@@ -39,14 +39,26 @@ export class Hud {
       diag: $('diag'),
     };
 
+    // The single menu button (v0.6.0): opens/closes the panel holding the
+    // quick keys, Snd/Set/End and the stats line. Any touch on the game
+    // closes it again, so it never stays over the world by accident.
+    const menuBtn = $('btn-menu');
+    const setMenu = (open) => {
+      this.#els.hud.classList.toggle('menu-open', open);
+      menuBtn.setAttribute('aria-expanded', String(open));
+    };
+    menuBtn.addEventListener('click', () => {
+      setMenu(!this.#els.hud.classList.contains('menu-open'));
+    });
+    $('touch').addEventListener('pointerdown', () => setMenu(false));
+    this.closeMenu = () => setMenu(false);
+
     $('btn-settings').addEventListener('click', () => {
       this.#els.sheet.hidden = !this.#els.sheet.hidden;
+      setMenu(false);
     });
     $('sheet-close').addEventListener('click', () => {
       this.#els.sheet.hidden = true;
-    });
-    $('btn-hud').addEventListener('click', () => {
-      settings.set('hudVisible', !settings.get('hudVisible'));
     });
     // Compact stats line ⇄ expanded readout panel. Pure presentation state
     // (not persisted): the compact line is always the resting default.
@@ -60,21 +72,6 @@ export class Hud {
 
     this.#bindRange('set-sensitivity', 'cameraSensitivity');
     this.#bindRange('set-joystick', 'joystickScale');
-
-    // World viewport height (design px) — must match the addon's
-    // `/wm viewport` value, since the protocol carries no viewport field
-    // (TouchLayer splits world/deck from this). Committed on change, clamped
-    // to the input's min/max (the addon's own bounds), reverted if not a
-    // number.
-    const viewport = $('set-viewport');
-    viewport.value = String(settings.get('worldViewportPx'));
-    viewport.addEventListener('change', () => {
-      let v = Math.round(Number(viewport.value));
-      if (!Number.isFinite(v)) v = settings.get('worldViewportPx');
-      v = Math.min(Number(viewport.max), Math.max(Number(viewport.min), v));
-      viewport.value = String(v);
-      settings.set('worldViewportPx', v);
-    });
 
     // Stream quality: value in kbps, 0 = Auto (don't touch the server's
     // encoder config). App listens for this setting and sends the ctrl
@@ -107,19 +104,6 @@ export class Hud {
     }
     deck.addEventListener('change', () => settings.set('deckLayout', deck.value));
 
-    const applyVisibility = () => {
-      const visible = settings.get('hudVisible');
-      // Collapsed: only meaningful in the overlay layout, where CSS then
-      // keeps just the HUD chip so the top edge of the world square (the
-      // addon's buff/target tap region, which the floating bar overlaps)
-      // stays tappable. In the deck layout chrome covers no game pixels, so
-      // the class has no styled effect there and everything stays reachable.
-      this.#els.hud.classList.toggle('collapsed', !visible);
-    };
-    settings.onChange((key) => {
-      if (key === 'hudVisible') applyVisibility();
-    });
-    applyVisibility();
     this.setAudio(settings.get('audio'));
     this.setState('idle');
 

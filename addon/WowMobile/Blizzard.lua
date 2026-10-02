@@ -150,7 +150,7 @@ WM.OnInit(function()
 	local function ReflowParty(heightPx)
 		local pf = PartyFrame
 		if not pf then return end
-		local scale = (heightPx - 336) / 800
+		local scale = (heightPx - 390) / 800
 		if scale > PARTY_SCALE then scale = PARTY_SCALE end
 		-- Unreachable through Config (bounds floor 648 -> 0.39); guards a
 		-- hand-edited SavedVariables height, where SetScale(<=0) would error.
@@ -164,7 +164,7 @@ WM.OnInit(function()
 		-- so the offsets stay 120/330 physical px (right edge fixed at x=960,
 		-- left of the quick-bar column, at every scale).
 		pf:SetPoint("TOPRIGHT", WM.WorldSquare, "TOPRIGHT",
-			-WM.Px(120) / scale, -WM.Px(330) / scale)
+			-WM.Px(120) / scale, -WM.Px(384) / scale)
 		-- The pooled member template ships HitRectInsets (7,85,6,7) that
 		-- shrink the tappable area to roughly the portrait (~81x90 physical
 		-- px at the 0.9 cap — under the 90 px minimum). Zero them so the

@@ -19,14 +19,14 @@ local WM = WowMobile
 
 local xpBar, repBar
 
-local function MakeBar(parent, hPx)
+local function MakeBar(parent, hPx, textPx)
 	local bar = CreateFrame("StatusBar", nil, parent)
 	bar:SetHeight(WM.Px(hPx))
 	bar:SetStatusBarTexture(WM.TEX_WHITE)
 	local bg = bar:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints(bar)
-	bg:SetTexture(0.05, 0.05, 0.06, 1)
-	bar.text = WM.CreateText(bar, 22, "OUTLINE")
+	bg:SetTexture(0.05, 0.05, 0.06, 0.55)
+	bar.text = WM.CreateText(bar, textPx or 16, "OUTLINE")
 	bar.text:SetPoint("CENTER", bar, "CENTER", 0, 0)
 	return bar
 end
@@ -76,20 +76,22 @@ end
 
 WM.OnInit(function()
 	local m = WM.DeckMetrics
-	local block = CreateFrame("Frame", "WowMobileXPBlock", WM.Deck)
-	block:SetPoint("BOTTOMLEFT", WM.Layout.mainBar, "TOPLEFT", 0, WM.Px(m.gap))
-	block:SetPoint("BOTTOMRIGHT", WM.Layout.mainBar, "TOPRIGHT", 0, WM.Px(m.gap))
+	-- Thin strip at the very top of the phone frame (top HUD, v0.6.0).
+	local block = CreateFrame("Frame", "WowMobileXPBlock", WM.TopHud)
+	block:SetPoint("TOPLEFT", WM.TopHud, "TOPLEFT", WM.Px(m.margin), -WM.Px(m.hudMargin))
+	block:SetPoint("TOPRIGHT", WM.TopHud, "TOPRIGHT", -WM.Px(m.margin), -WM.Px(m.hudMargin))
 	block:SetHeight(WM.Px(m.xpBlock))
 	WM.Layout.xpBlock = block
 
-	xpBar = MakeBar(block, 34)
+	xpBar = MakeBar(block, 16, 14)
 	xpBar:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
 	xpBar:SetPoint("TOPRIGHT", block, "TOPRIGHT", 0, 0)
 
 	-- GetWatchedFactionInfo is genuine 1.12 (see header), so this fires on
 	-- the real client; the guard only covers odd builds lacking the API.
 	if GetWatchedFactionInfo then
-		repBar = MakeBar(block, 30)
+		repBar = MakeBar(block, 5, 1)
+		repBar.text:Hide() -- 5 px: the colour says it; the Char panel has the numbers
 		repBar:SetPoint("BOTTOMLEFT", block, "BOTTOMLEFT", 0, 0)
 		repBar:SetPoint("BOTTOMRIGHT", block, "BOTTOMRIGHT", 0, 0)
 		UpdateRep()

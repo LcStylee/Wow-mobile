@@ -184,14 +184,14 @@ local function ClientPixels()
 			return math.floor(w + 0.5), math.floor(h + 0.5), false, "GetPhysicalScreenSize"
 		end
 	end
-	return math.floor(UIParent:GetWidth() + 0.5),
-		math.floor(UIParent:GetHeight() + 0.5), true, "ui"
+	return math.floor(WM.UIWidth() + 0.5),
+		math.floor(WM.UIHeight() + 0.5), true, "ui"
 end
 
 -- Recompute the published metrics. Pure math, no frame mutation.
 function Band.Compute()
 	local pw, ph, approx, basis = ClientPixels()
-	local uiW, uiH = UIParent:GetWidth(), UIParent:GetHeight()
+	local uiW, uiH = WM.UIWidth(), WM.UIHeight()
 	Band.client = { w = pw, h = ph, basis = basis }
 	local p = Band.phone
 	local x, y, w, h = FrameRect(pw, ph, p.streamW, p.streamH)
@@ -292,9 +292,9 @@ function Band.Clamp(frame)
 	frame:SetClampedToScreen(true)
 	local s = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
 	local leftM = Band.left
-	local rightM = UIParent:GetWidth() - Band.right
+	local rightM = WM.UIWidth() - Band.right
 	local topM = Band.top
-	local bottomM = UIParent:GetHeight() - Band.top - Band.height
+	local bottomM = WM.UIHeight() - Band.top - Band.height
 	frame:SetClampRectInsets(leftM * s, -rightM * s, -topM * s, bottomM * s)
 end
 

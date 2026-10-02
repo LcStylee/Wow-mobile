@@ -122,6 +122,7 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx)
 	local b = CreateFrame("CheckButton", name, parent, "SecureActionButtonTemplate")
 	b:SetSize(WM.Px(wPx), WM.Px(hPx))
 	WM.SkinFrame(b, { 0.06, 0.06, 0.07, 1 })
+	WM.Translucent(b, WM.DeckMetrics.buttonFill, WM.DeckMetrics.buttonBorder)
 
 	b.icon = b:CreateTexture(nil, "ARTWORK")
 	b.icon:SetPoint("TOPLEFT", WM.Px(3), -WM.Px(3))

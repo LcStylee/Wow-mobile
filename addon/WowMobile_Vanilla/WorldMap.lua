@@ -72,11 +72,23 @@ function WorldMap.Toggle()
 	end
 end
 
+-- Field report v0.5.1: closing the map from the phone left the WHOLE UI
+-- gone. On 1.12 ToggleWorldMap opens the map as a FULLSCREEN UI panel, which
+-- hides UIParent (and with it every WowMobile frame) until the panel system
+-- closes it again — a bare WorldMapFrame:Hide() skipped that restore. Close
+-- through the panel system when it exists, and the OnHide hook below brings
+-- UIParent back whatever path closed the map.
 function WorldMap.Close()
 	if WorldMapFrame:IsShown() then
-		-- The 1.12 map is not a managed UIPanel; Hide() is the direct and
-		-- safe close (its OnHide handler does the world-state cleanup).
-		WorldMapFrame:Hide()
+		if HideUIPanel then
+			HideUIPanel(WorldMapFrame)
+		end
+		if WorldMapFrame:IsShown() then
+			WorldMapFrame:Hide()
+		end
+	end
+	if not UIParent:IsShown() then
+		UIParent:Show()
 	end
 end
 
@@ -94,6 +106,15 @@ WM.OnInit(function()
 		WM.Deck.YieldTo("worldmap")
 		Reflow()
 		PadPOIHitRects()
+	end)
+	-- Whatever closed the map (our X, Esc, the M key from the phone), the
+	-- UI must come back: the fullscreen-panel path may have hidden UIParent.
+	local origOnHide = WorldMapFrame:GetScript("OnHide")
+	WorldMapFrame:SetScript("OnHide", function()
+		if origOnHide then origOnHide() end
+		if not UIParent:IsShown() then
+			UIParent:Show()
+		end
 	end)
 
 	-- POIs are re-laid-out whenever the displayed map changes; re-pad after

@@ -80,14 +80,19 @@ local function OnUpdate()
 end
 
 WM.OnInit(function()
-	local row = WM.Layout.unitRow
-	bar = CreateFrame("Frame", "WowMobileCastBar", row)
-	bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, WM.Px(4))
-	bar:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, WM.Px(4))
-	bar:SetHeight(WM.Px(64))
-	bar:SetFrameLevel(row:GetFrameLevel() + 30) -- above both unit buttons
-	bar:EnableMouse(false) -- taps must fall through to the unit frames
+	-- Above the bottom stack (v0.6.0): chat, then the pet strip's lane,
+	-- then the cast bar — close to the thumbs, clear of the world's middle.
+	local m = WM.DeckMetrics
+	local main = WM.Layout.mainBar
+	local lift = m.gap + m.chat + m.gap + m.petStrip + m.gap
+	bar = CreateFrame("Frame", "WowMobileCastBar", WM.Deck)
+	bar:SetPoint("BOTTOMLEFT", main, "TOPLEFT", WM.Px(120), WM.Px(lift))
+	bar:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", -WM.Px(120), WM.Px(lift))
+	bar:SetHeight(WM.Px(m.castBar))
+	bar:SetFrameLevel(WM.Deck:GetFrameLevel() + 30)
+	bar:EnableMouse(false) -- taps must fall through to the world
 	WM.SkinFrame(bar, { 0.04, 0.04, 0.05, 0.95 })
+	WM.Translucent(bar, 0.6, 0.8)
 	bar:Hide()
 
 	bar.fill = CreateFrame("StatusBar", nil, bar)
