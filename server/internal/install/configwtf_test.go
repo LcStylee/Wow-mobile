@@ -176,3 +176,36 @@ func TestBandSettingsFor(t *testing.T) {
 		}
 	}
 }
+
+// Upgrading from the v0.4.x portrait layout: the phone-frame settings clear
+// a leftover PORTRAIT window size (it kept the game rendering tall) but keep
+// a landscape one the user chose.
+func TestStalePortraitSettingsRemoved(t *testing.T) {
+	in := "SET gxWindow \"1\"\r\nSET gxMaximize \"0\"\r\nSET gxWindowedResolution \"590x1048\"\r\nSET gxResolution \"1080x1920\"\r\nSET checkAddonVersion \"0\"\r\n"
+	want := BandSettingsFor(ClientTypeClassicEra, 0, 0, false)
+	want = append(want, StalePortraitSettings([]byte(in), want)...)
+	out, changed := EnsureSettings([]byte(in), want)
+	if !changed {
+		t.Fatal("stale portrait CVars must be an edit")
+	}
+	got := string(out)
+	if strings.Contains(got, "gxWindowedResolution") || strings.Contains(got, "gxResolution") {
+		t.Fatalf("portrait sizes not removed: %q", got)
+	}
+	if !strings.Contains(got, "SET gxMaximize \"1\"\r\n") || !strings.Contains(got, "SET gxWindow \"1\"\r\n") {
+		t.Fatalf("frame settings missing: %q", got)
+	}
+	if !SettingsSatisfied(out, want) {
+		t.Fatal("result must satisfy the settings (no edit loop on the next run)")
+	}
+
+	landscape := "SET gxWindow \"1\"\nSET gxMaximize \"1\"\nSET gxWindowedResolution \"1600x900\"\nSET checkAddonVersion \"0\"\n"
+	if extra := StalePortraitSettings([]byte(landscape), want[:3]); len(extra) != 0 {
+		t.Fatalf("a landscape size is the user's choice, keep it: %+v", extra)
+	}
+	// Legacy with a measured desktop writes gxResolution itself: not removed.
+	legacy := BandSettingsFor(ClientTypeLegacy, 1920, 1080, true)
+	if extra := StalePortraitSettings([]byte("SET gxResolution \"1080x1920\"\n"), legacy); len(extra) != 0 {
+		t.Fatalf("want-owned CVar must not be removed: %+v", extra)
+	}
+}

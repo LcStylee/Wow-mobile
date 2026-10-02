@@ -943,6 +943,11 @@ func stepConfigWTF(opts *Options, gameDir string, ct ClientType) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
+	if opts.Layout == config.LayoutFrame {
+		// Upgrades from the v0.4.x portrait layout: clear its leftover
+		// portrait window size, or the game keeps rendering tall.
+		want = append(want, StalePortraitSettings(content, want)...)
+	}
 
 	if SettingsSatisfied(content, want) {
 		step(opts, 3, StepConfig, label, hoststatus.StateOK, fmt.Sprintf("Config.wtf OK (%s windowed)", desc))

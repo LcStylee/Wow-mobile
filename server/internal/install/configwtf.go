@@ -17,6 +17,32 @@ import (
 type Setting struct {
 	Name  string
 	Value string
+	// Remove deletes every line setting Name instead (Value is ignored):
+	// used to clear stale CVars a previous layout wrote.
+	Remove bool
+}
+
+// StalePortraitSettings returns Remove entries for the window-size CVars in
+// content that still hold a PORTRAIT size (height > width) — the leftover of
+// the v0.4.x portrait layout. Under the phone-frame layout the game must run
+// a normal landscape window; a stale portrait gxWindowedResolution makes
+// every un-maximized window (and the render size) snap back to a tall
+// portrait shape. Names already present in want are skipped (want decides
+// them). Landscape values are the user's own choice and are kept.
+func StalePortraitSettings(content []byte, want []Setting) []Setting {
+	var out []Setting
+	for _, name := range []string{"gxWindowedResolution", "gxResolution"} {
+		taken := false
+		for _, w := range want {
+			if w.Name == name {
+				taken = true
+			}
+		}
+		if w, h, ok := ReadResolutionSetting(content, name); ok && !taken && h > w {
+			out = append(out, Setting{Name: name, Remove: true})
+		}
+	}
+	return out
 }
 
 // checkAddonVersionOff disables the client's out-of-date-addon gate. After
@@ -127,6 +153,27 @@ func EnsureSettings(content []byte, want []Setting) (out []byte, changed bool) {
 	}
 	lines := strings.Split(string(content), "\n")
 	seen := make(map[string]bool, len(want))
+	kept := lines[:0:0]
+	for _, line := range lines {
+		name, ok := settingName(strings.TrimSuffix(line, "\r"))
+		drop := false
+		for _, w := range want {
+			if ok && w.Remove && name == w.Name {
+				drop = true
+			}
+		}
+		if drop {
+			changed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	lines = kept
+	for _, w := range want {
+		if w.Remove {
+			seen[w.Name] = true // nothing to append for a removal
+		}
+	}
 	for i, line := range lines {
 		stripped := strings.TrimSuffix(line, "\r")
 		name, ok := settingName(stripped)
@@ -134,7 +181,7 @@ func EnsureSettings(content []byte, want []Setting) (out []byte, changed bool) {
 			continue
 		}
 		for _, w := range want {
-			if name != w.Name {
+			if name != w.Name || w.Remove {
 				continue
 			}
 			seen[w.Name] = true
@@ -179,6 +226,9 @@ func SettingsSatisfied(content []byte, want []Setting) bool {
 func FreshConfig(want []Setting) []byte {
 	var b strings.Builder
 	for _, w := range want {
+		if w.Remove {
+			continue
+		}
 		b.WriteString(SettingLine(w))
 		b.WriteString("\r\n")
 	}
