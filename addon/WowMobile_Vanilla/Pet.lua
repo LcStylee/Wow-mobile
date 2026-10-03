@@ -165,9 +165,7 @@ WM.OnInit(function()
 				CastPetAction(this.actionIndex)
 			end
 		end)
-		WM.AttachTooltip(b, function(tt, self)
-			tt:SetPetAction(self.actionIndex)
-		end)
+		-- No tooltip: a tap is a cast (see ActionBars.lua).
 		buttons[i] = b
 	end
 

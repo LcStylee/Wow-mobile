@@ -194,9 +194,9 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx)
 		if attr == "action" then UpdateAll(self) end
 	end)
 
-	WM.AttachTooltip(b, function(tt, self)
-		tt:SetAction(GetSlot(self))
-	end)
+	-- No tooltip on ability buttons (field request v0.6.4): a tap is a cast,
+	-- and the tooltip it popped covered the neighbouring buttons. The
+	-- spellbook still shows spell tooltips.
 
 	buttons[#buttons + 1] = b
 	return b

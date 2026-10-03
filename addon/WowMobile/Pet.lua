@@ -206,9 +206,7 @@ WM.OnInit(function()
 		b:SetAttribute("type", "pet")     -- tap = the pet action in this slot
 		b:SetAttribute("action", i)
 		b:SetAttribute("type2", "macro")  -- long-press = autocast toggle (macrotext2 synced below)
-		WM.AttachTooltip(b, function(tt, self)
-			tt:SetPetAction(self:GetAttribute("action"))
-		end)
+		-- No tooltip: a tap is a cast (see ActionBars.lua).
 		buttons[i] = b
 	end
 

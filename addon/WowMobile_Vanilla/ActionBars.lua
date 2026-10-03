@@ -179,9 +179,9 @@ function ActionBars.CreateButton(name, parent, slot, wPx, hPx, pageable)
 	end)
 	WM.MoveMode.MakeTarget(b, "action")
 
-	WM.AttachTooltip(b, function(tt, self)
-		tt:SetAction(GetSlot(self))
-	end)
+	-- No tooltip on ability buttons (field request v0.6.4): a tap is a cast,
+	-- and the tooltip it popped covered the neighbouring buttons. The
+	-- spellbook still shows spell tooltips.
 
 	table.insert(buttons, b)
 	return b
