@@ -45,26 +45,26 @@ export function videoAspect() {
 }
 
 /**
- * Height of the video box (CSS px) from below the top safe-area inset to the
- * bottom of the screen. Pure (unit-tested).
+ * Height of the video box (CSS px): from below the top safe-area inset to
+ * the bottom of the visible viewport. Pure (unit-tested).
  *
- * iOS home-screen apps with the black-translucent status bar draw the page
- * from the very top of the screen but report a viewport (innerHeight, the
- * initial containing block, 100vh/dvh) that is a status bar SHORT: page
- * height + top inset == screen height. Detected exactly that way; then the
- * box is the whole reported height (it starts below the inset and runs to
- * the real bottom edge). Everywhere else the viewport is honest and the box
- * is the viewport minus the inset.
+ * The viewport, not the screen: an iOS home-screen app can report a
+ * viewport shorter than the screen and then cover the rest with a system
+ * strip at the bottom (field report v0.6.3: drawing under it hid the bottom
+ * buttons). Whatever shape that leaves, the fit notice (phonematch.js
+ * fitNotice) offers to reshape the stream to it.
  * @param innerH   window.innerHeight
- * @param screenH  screen.height (portrait-locked app: the long side)
  * @param safeTop  env(safe-area-inset-top) px
  */
-export function videoBoxHeight(innerH, screenH, safeTop) {
+export function videoBoxHeight(innerH, safeTop) {
   if (!(innerH > 0)) return 0;
-  if (safeTop > 0 && screenH > innerH && Math.abs(innerH + safeTop - screenH) <= 2) {
-    return innerH;
-  }
   return Math.max(0, innerH - safeTop);
+}
+
+/** The video box as last applied ({w, h} CSS px). */
+let box = { w: 0, h: 0 };
+export function videoBox() {
+  return box;
 }
 
 function measureSafeTop(doc) {
@@ -131,12 +131,9 @@ export function initLayout() {
 
   body.classList.add('layout-overlay');
   const sizeBox = () => {
-    const h = videoBoxHeight(
-      window.innerHeight,
-      Math.max(screen.height || 0, screen.width || 0),
-      measureSafeTop(document),
-    );
+    const h = videoBoxHeight(window.innerHeight, measureSafeTop(document));
     if (h > 0) document.documentElement.style.setProperty('--video-box-h', `${h}px`);
+    box = { w: window.innerWidth, h };
     window.dispatchEvent(new Event('wm-layout-change'));
   };
   sizeBox();

@@ -28,8 +28,6 @@ var (
 	iidIMMDeviceEnumerator  = windows.GUID{Data1: 0xA95664D2, Data2: 0x9614, Data3: 0x4F35, Data4: [8]byte{0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6}}
 	iidIAudioClient         = windows.GUID{Data1: 0x1CB9AD4C, Data2: 0xDBFA, Data3: 0x4C32, Data4: [8]byte{0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}}
 	iidIAudioCaptureClient  = windows.GUID{Data1: 0xC8ADBD64, Data2: 0xE71E, Data3: 0x48A0, Data4: [8]byte{0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17}}
-	// KSDATAFORMAT_SUBTYPE_IEEE_FLOAT; PCM differs only in Data1 (1).
-	subtypeFloat = windows.GUID{Data1: 0x00000003, Data2: 0x0000, Data3: 0x0010, Data4: [8]byte{0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}}
 )
 
 const (
@@ -39,9 +37,6 @@ const (
 	audclntSharemodeShared   = 0
 	audclntStreamflagsLoop   = 0x00020000
 	audclntBufferflagsSilent = 0x2
-	waveFormatPCM            = 1
-	waveFormatIEEEFloat      = 3
-	waveFormatExtensible     = 0xFFFE
 
 	// vtable slots (IUnknown takes 0..2)
 	slotRelease                 = 2
@@ -56,23 +51,6 @@ const (
 	slotReleaseBuffer           = 4
 	slotGetNextPacketSize       = 5
 )
-
-type waveFormatEx struct {
-	FormatTag      uint16
-	Channels       uint16
-	SamplesPerSec  uint32
-	AvgBytesPerSec uint32
-	BlockAlign     uint16
-	BitsPerSample  uint16
-	CbSize         uint16
-}
-
-type waveFormatExtensibleT struct {
-	waveFormatEx
-	ValidBits   uint16
-	ChannelMask uint32
-	SubFormat   windows.GUID
-}
 
 // comCall invokes vtable slot `slot` of the COM object obj. The directive
 // keeps pointers passed as uintptr(unsafe.Pointer(&x)) valid for the call
@@ -136,30 +114,16 @@ func openLoopback() (*loopbackClient, error) {
 		c.close()
 		return nil, fmt.Errorf("reading the mix format: %w", err)
 	}
-	wf := (*waveFormatEx)(c.wfx)
-	isFloat := wf.FormatTag == waveFormatIEEEFloat
-	if wf.FormatTag == waveFormatExtensible && wf.CbSize >= 22 {
-		ext := (*waveFormatExtensibleT)(c.wfx)
-		isFloat = ext.SubFormat == subtypeFloat
-	}
-	sampleFmt := ""
-	switch {
-	case isFloat && wf.BitsPerSample == 32:
-		sampleFmt = "f32le"
-	case isFloat && wf.BitsPerSample == 64:
-		sampleFmt = "f64le"
-	case !isFloat && wf.BitsPerSample == 16:
-		sampleFmt = "s16le"
-	case !isFloat && wf.BitsPerSample == 24:
-		sampleFmt = "s24le"
-	case !isFloat && wf.BitsPerSample == 32:
-		sampleFmt = "s32le"
-	default:
+	// WAVEFORMATEX: cbSize (offset 16) counts the extension bytes after the
+	// 18-byte header; parseMixFormat reads the packed layout byte by byte.
+	cb := *(*uint16)(unsafe.Add(c.wfx, 16))
+	f, blockAlign, err := parseMixFormat(unsafe.Slice((*byte)(c.wfx), 18+int(cb)))
+	if err != nil {
 		c.close()
-		return nil, fmt.Errorf("unsupported mix format: tag %#x, %d bits", wf.FormatTag, wf.BitsPerSample)
+		return nil, err
 	}
-	c.format = LoopbackFormat{SampleFmt: sampleFmt, Rate: int(wf.SamplesPerSec), Channels: int(wf.Channels)}
-	c.blockAlign = int(wf.BlockAlign)
+	c.format = f
+	c.blockAlign = blockAlign
 	return c, nil
 }
 
@@ -199,7 +163,8 @@ func ProbeLoopback() (LoopbackFormat, error) {
 // or switched: the supervisor restarts the pipeline, which re-probes the new
 // default device). want is the format the ffmpeg reading w was started for;
 // a mismatch (device changed between probe and start) is an error so the
-// restart picks the new one up. Silence is padded in while nothing plays.
+// restart picks the new one up. Silence is padded in while nothing plays
+// (silencePad).
 func StreamLoopback(ctx context.Context, w io.Writer, want LoopbackFormat) error {
 	return withCOM(func() error {
 		c, err := openLoopback()
@@ -224,10 +189,8 @@ func StreamLoopback(ctx context.Context, w io.Writer, want LoopbackFormat) error
 		}
 		defer comCall(c.client, slotStop) //nolint:errcheck
 
-		rate := int64(c.format.Rate)
-		slack := rate / 20 // 50 ms of tolerated lag before silence is padded
-		start := time.Now()
-		var written int64
+		lastData := time.Now() // capture just started: give it idleAfter
+		mark := lastData
 		silence := make([]byte, 0)
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
@@ -266,10 +229,12 @@ func StreamLoopback(ctx context.Context, w io.Writer, want LoopbackFormat) error
 				if werr != nil {
 					return werr
 				}
-				written += int64(frames)
+				lastData = time.Now()
+				mark = lastData
 			}
-			expected := int64(time.Since(start).Seconds() * float64(rate))
-			if pad := silenceFill(written, expected, slack); pad > 0 {
+			pad, newMark := silencePad(time.Now(), lastData, mark, c.format.Rate)
+			mark = newMark
+			if pad > 0 {
 				n := int(pad) * c.blockAlign
 				if cap(silence) < n {
 					silence = make([]byte, n)
@@ -277,7 +242,6 @@ func StreamLoopback(ctx context.Context, w io.Writer, want LoopbackFormat) error
 				if _, err := w.Write(silence[:n]); err != nil {
 					return err
 				}
-				written += pad
 			}
 		}
 	})

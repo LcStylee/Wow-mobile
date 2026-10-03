@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PHONES, CONTRACT_VECTORS, RING_PX, DEFAULT_PHONE_ID } from '../js/phones.js';
-import { identifyPhones, aspectMismatch, aspectNotice } from '../js/phonematch.js';
+import { fitNotice } from '../js/phonematch.js';
 
 function rhe(num, den) {
   const q = Math.floor(num / den);
@@ -59,25 +59,17 @@ test('stream fills the phone it was made for, edge to edge (v0.6.2)', () => {
   }
 });
 
-test('identifyPhones picks same-panel models, most popular first', () => {
-  const hits = identifyPhones(402, 874, 3); // 1206x2622
-  assert.equal(hits[0].id, 'iphone-17');
-  assert.ok(hits.some((p) => p.id === 'iphone-17-pro'));
-  assert.deepEqual(identifyPhones(874, 402, 3).map((p) => p.id), hits.map((p) => p.id), 'landscape screen');
-  assert.deepEqual(identifyPhones(1000, 1000, 1), []);
-});
-
-test('aspect notice only on a real mismatch', () => {
-  const p17 = PHONES.find((x) => x.id === 'iphone-17');
-  // Streaming for the iPhone 17 itself (the 4K vector's encode).
-  const own = CONTRACT_VECTORS.find((v) => v.phone === 'iphone-17' && v.clientW === 3840);
-  assert.equal(aspectNotice(own.encW, own.encH, 402, 874, 3), '');
-  assert.ok(aspectMismatch(own.encW, own.encH, p17) < 0.02);
-  // Streaming for a Galaxy A07 on an iPhone 17.
-  const a07 = CONTRACT_VECTORS.find((v) => v.phone === 'galaxy-a07' && v.clientW === 1280);
-  const text = aspectNotice(a07.encW, a07.encH, 402, 874, 3);
-  // (Several phones share nearly that aspect; the notice names the closest.)
-  assert.match(text, /^Streaming for .+; this phone looks like Apple iPhone 17/);
-  // Unknown device: nothing to compare against.
-  assert.equal(aspectNotice(a07.encW, a07.encH, 999, 1999, 1.5), '');
+test('fit notice: only when the stream shape differs from the visible box', () => {
+  const p16 = PHONES.find((x) => x.id === 'iphone-16');
+  // iPhone 16 with the full screen below the island: the table stream fits.
+  assert.equal(fitNotice(p16.streamW, p16.streamH, 393, 852 - 59, 3), null);
+  // iOS home-screen app that loses a bottom strip (field report v0.6.3):
+  // 393 x 734 visible -> offer exactly that box.
+  const n = fitNotice(p16.streamW, p16.streamH, 393, 734, 3);
+  assert.equal(n.cmd, '/wm phone 1179x2202');
+  assert.match(n.text, /Tap here to fit it/);
+  // After the reshape the stream matches: no notice.
+  assert.equal(fitNotice(1179, 2202, 393, 734, 3), null);
+  // Landscape box (desktop debugging): nothing the addon could take.
+  assert.equal(fitNotice(1080, 1920, 1280, 720, 1), null);
 });

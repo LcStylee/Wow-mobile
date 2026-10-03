@@ -147,14 +147,15 @@ beta has been seen dropping SavedVariables. The panel hides in combat.
 
 ## 7. Phone client
 
-The video box height is `width * encodedH / encodedW` from the hello (CSS
-`--video-ratio`, `layout.js setVideoAspect`) — no 16/9 constant anywhere; the
-deck/overlay decision uses the same ratio. The client identifies its own phone
-from `screen.width/height x devicePixelRatio` against the same table
-(`phonematch.js`) and shows a one-line notice when the stream's aspect differs
-from its own entry by more than 2% ("Streaming for Samsung Galaxy A07; this
-phone looks like iPhone 17 — pick your phone in-game (/wm phone) for a
-perfect fit."). Everything else stays as in v0.4.x.
+The video box runs from below the top safe-area inset to the bottom of the
+visible viewport (`layout.js videoBoxHeight`, CSS `--video-box-h`); the
+stream is letterboxed into it (`object-fit: contain`) with no 16/9 constant
+anywhere. The client compares the stream's aspect (hello, then the decoded
+size whenever it changes) with that box (`phonematch.js fitNotice`); beyond
+1% it shows a notice whose tap types `/wm phone WxH` — the box in physical
+px — into the game, reshaping the red frame to exactly this screen. That
+covers what no table can know, such as the strip an iOS home-screen app
+loses at the bottom (field report v0.6.3).
 
 ## 8. Layouts
 

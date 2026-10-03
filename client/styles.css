@@ -91,13 +91,11 @@ button {
 }
 
 /* The only layout since v0.6.2: from below the top inset (camera cutout /
- * status bar) to the bottom edge of the SCREEN. Each phone's stream is
- * shaped to exactly this box (docs/PHONE_FRAME.md §3), so it fills edge to
- * edge. The height comes from layout.js (--video-box-h, videoBoxHeight):
- * iOS home-screen apps report a viewport a status bar SHORTER than the
- * screen while still drawing from its top, so neither "100dvh - safe-top"
- * nor "bottom: 0" reaches the real bottom (field report v0.6.2). The calc is
- * the pre-JS fallback. */
+ * status bar) to the bottom of the visible viewport. Each phone's stream is
+ * shaped to exactly this box (docs/PHONE_FRAME.md §3), and where the device
+ * leaves a different shape (iOS home-screen apps lose a bottom strip) the
+ * fit notice reshapes the stream to it. Height from layout.js
+ * (--video-box-h); the calc is the pre-JS fallback. */
 body.layout-overlay #video,
 body.layout-overlay #touch {
   top: var(--safe-top);

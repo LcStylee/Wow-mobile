@@ -10,21 +10,59 @@ import (
 	"time"
 )
 
-func TestSilenceFill(t *testing.T) {
-	// Keeping pace (or ahead): nothing to pad.
-	if got := silenceFill(48000, 48000, 2400); got != 0 {
-		t.Fatalf("on pace: %d", got)
+func TestSilencePad(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	// Audio flowing (last packet 10 ms ago): never pad, whatever the clock.
+	if n, _ := silencePad(t0.Add(10*time.Millisecond), t0, t0, 48000); n != 0 {
+		t.Fatalf("pad during playback: %d", n)
 	}
-	if got := silenceFill(50000, 48000, 2400); got != 0 {
-		t.Fatalf("ahead: %d", got)
+	// Idle 100 ms: pad the whole gap since the last data, move the mark.
+	n, mark := silencePad(t0.Add(100*time.Millisecond), t0, t0, 48000)
+	if n != 4800 || !mark.Equal(t0.Add(100*time.Millisecond)) {
+		t.Fatalf("idle pad: %d %v", n, mark)
 	}
-	// Lag inside the slack (a burst still in flight): wait.
-	if got := silenceFill(46000, 48000, 2400); got != 0 {
-		t.Fatalf("inside slack: %d", got)
+	// Still idle 15 ms later: only the new 15 ms.
+	if n, _ := silencePad(mark.Add(15*time.Millisecond), t0, mark, 48000); n != 720 {
+		t.Fatalf("continued pad: %d", n)
 	}
-	// Nothing playing for a second: pad up to the slack line only.
-	if got := silenceFill(0, 48000, 2400); got != 45600 {
-		t.Fatalf("silence: %d", got)
+}
+
+func TestParseMixFormat(t *testing.T) {
+	// The usual shared-mode mix format: WAVEFORMATEXTENSIBLE, 32-bit IEEE
+	// float, stereo 48 kHz — exactly as Windows lays out the bytes (packed).
+	ext := []byte{
+		0xFE, 0xFF, // wFormatTag = WAVE_FORMAT_EXTENSIBLE
+		0x02, 0x00, // nChannels = 2
+		0x80, 0xBB, 0x00, 0x00, // nSamplesPerSec = 48000
+		0x00, 0xDC, 0x05, 0x00, // nAvgBytesPerSec = 384000
+		0x08, 0x00, // nBlockAlign = 8
+		0x20, 0x00, // wBitsPerSample = 32
+		0x16, 0x00, // cbSize = 22
+		0x20, 0x00, // wValidBitsPerSample = 32 (offset 18)
+		0x03, 0x00, 0x00, 0x00, // dwChannelMask (offset 20)
+		// SubFormat (offset 24) = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+		0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+	}
+	f, ba, err := parseMixFormat(ext)
+	if err != nil || f != (LoopbackFormat{SampleFmt: "f32le", Rate: 48000, Channels: 2}) || ba != 8 {
+		t.Fatalf("float mix: %+v %d %v", f, ba, err)
+	}
+	// Same header, PCM sub-format: integer samples.
+	pcm := append([]byte(nil), ext...)
+	pcm[24] = 0x01
+	if f, _, err := parseMixFormat(pcm); err != nil || f.SampleFmt != "s32le" {
+		t.Fatalf("pcm mix: %+v %v", f, err)
+	}
+	// Plain WAVEFORMATEX, 16-bit PCM.
+	plain := []byte{0x01, 0x00, 0x02, 0x00, 0x44, 0xAC, 0x00, 0x00, 0x10, 0xB1, 0x02, 0x00, 0x04, 0x00, 0x10, 0x00, 0x00, 0x00}
+	if f, ba, err := parseMixFormat(plain); err != nil || f != (LoopbackFormat{SampleFmt: "s16le", Rate: 44100, Channels: 2}) || ba != 4 {
+		t.Fatalf("plain pcm: %+v %d %v", f, ba, err)
+	}
+	// Unknown sub-format: refuse rather than guess (guessing made noise).
+	odd := append([]byte(nil), ext...)
+	odd[24] = 0x07
+	if _, _, err := parseMixFormat(odd); err == nil {
+		t.Fatal("unknown sub-format accepted")
 	}
 }
 

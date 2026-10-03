@@ -17,13 +17,10 @@ test('the aspect starts at 16:9 and follows portrait hellos only', () => {
   assert.equal(videoAspect(), 2379 / 1179);
 });
 
-test('video box reaches the real screen bottom on iOS home-screen apps', () => {
-  // iPhone 16 PWA (black-translucent): viewport reported 793 = 852 - 59.
-  assert.equal(videoBoxHeight(793, 852, 59), 793);
-  // An honest full-height viewport (Android fullscreen with a cutout inset,
-  // or a fixed iOS): minus the inset.
-  assert.equal(videoBoxHeight(891, 891, 24), 867);
-  // Browser tab: no inset, the viewport is the box.
-  assert.equal(videoBoxHeight(659, 852, 0), 659);
-  assert.equal(videoBoxHeight(0, 852, 59), 0);
+test('video box: below the top inset to the bottom of the visible viewport', () => {
+  // iPhone 16 home-screen app reporting a short viewport: 793 - 59.
+  assert.equal(videoBoxHeight(793, 59), 734);
+  assert.equal(videoBoxHeight(891, 24), 867);
+  assert.equal(videoBoxHeight(659, 0), 659);
+  assert.equal(videoBoxHeight(0, 59), 0);
 });
