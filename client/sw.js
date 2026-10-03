@@ -26,7 +26,6 @@ const SHELL = [
   './js/keyboard.js',
   './js/layout.js',
   './js/net.js',
-  './js/phonematch.js',
   './js/phones.js',
   './js/protocol.js',
   './js/qrscan.js',

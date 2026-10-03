@@ -5,8 +5,7 @@
 --            rows colored by difficulty,
 --   detail — objectives (GetNumQuestLeaderBoards/GetQuestLogLeaderBoard),
 --            description, Track toggle, two-tap Abandon, Back.
--- Also re-homes the Blizzard quest tracker (QuestWatchFrame) into the world
--- square.
+-- The on-screen tracker (one quest) lives in QuestTracker.lua.
 --
 -- 1.12's GetQuestLogTitle returns 6 values — title, level, questTag,
 -- isHeader, isCollapsed, isComplete — and NO questID, so the detail view must
@@ -276,19 +275,4 @@ WM.OnInit(function()
 	end
 
 	WM.On("QUEST_LOG_UPDATE", Render)
-
-	-- Blizzard's on-screen quest tracker: keep it, but move it into the world
-	-- square's left edge, clear of aura rows, stance column and minimap. 1.12
-	-- has no UIParent frame-position manager, so a one-time anchor sticks.
-	local tracker = getglobal("QuestWatchFrame")
-	if tracker then
-		tracker:ClearAllPoints()
-		-- x=210 clears the stance column (x<=96, ActionBars.lua) AND the wider
-		-- pet action block (x<=190, Pet.lua) for hunter/warlock players;
-		-- y=240 clears the aura rows above.
-		tracker:SetPoint("TOPLEFT", WM.WorldSquare, "TOPLEFT", WM.Px(210), -WM.Px(240))
-		if tracker.SetClampedToScreen then
-			tracker:SetClampedToScreen(true)
-		end
-	end
 end)

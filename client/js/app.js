@@ -14,8 +14,7 @@ import { TouchLayer } from './input.js';
 import { QuickRail } from './quickbar.js';
 import { ChatKeyboard } from './keyboard.js';
 import { Hud } from './hud.js';
-import { initLayout, setVideoAspect, videoBox } from './layout.js';
-import { fitNotice } from './phonematch.js';
+import { initLayout, setVideoAspect } from './layout.js';
 
 const TOKEN_KEY = 'wowmobile.token';
 const CLIENT_ID = 'wowmobile-pwa/1.0';
@@ -33,8 +32,6 @@ class App {
   #touch;
   #rail;
   #keyboard;
-  #lastVideo = null; // hello's encoded size, for the fit notice
-  #fitCmd = '';
   #video = document.getElementById('video');
 
   // Connection state. #wanted gates every async continuation: it is true
@@ -126,7 +123,7 @@ class App {
     this.#wireConnectScreen();
     this.#wireScanner();
     this.#wireStartOverlay();
-    this.#wireFitNotice();
+    this.#wireVideoResize();
 
     // Build identity, stamped by the server into js/version.js: what THIS
     // cached shell actually is, verifiable at a glance (stale-PWA triage).
@@ -353,8 +350,7 @@ class App {
         if (msg.video) {
           this.#touch.setVideoGeometry(msg.video);
           setVideoAspect(msg.video.w, msg.video.h);
-          this.#lastVideo = { w: msg.video.w, h: msg.video.h };
-          this.#showFitNotice();
+
         }
         // Persist the token only now that the server accepted it: the QR-scan
         // path deliberately defers persistence to this point so a mis-scanned
@@ -885,47 +881,13 @@ class App {
     });
   }
 
-  // Fit notice: the stream's shape differs from the video box this screen
-  // can show — one tap types the /wm phone command that reshapes the red
-  // frame on the PC to exactly this box (phonematch.js fitNotice). Hidden
-  // again as soon as a hello brings a matching stream.
-  #showFitNotice() {
-    const el = document.getElementById('phone-notice');
-    if (!el || !this.#lastVideo) return;
-    const b = videoBox();
-    const fit = fitNotice(this.#lastVideo.w, this.#lastVideo.h, b.w, b.h, window.devicePixelRatio || 1);
-    if (!fit) {
-      el.hidden = true;
-      this.#fitCmd = '';
-      return;
-    }
-    if (fit.cmd === this.#fitCmd && !el.hidden) return;
-    this.#fitCmd = fit.cmd;
-    el.textContent = fit.text;
-    el.hidden = false;
-  }
-
-  #wireFitNotice() {
-    const el = document.getElementById('phone-notice');
-    el?.addEventListener('click', () => {
-      el.hidden = true;
-      if (!this.#fitCmd) return;
-      if (this.#keyboard.sendLine(this.#fitCmd)) {
-        this.#hud.toast('Sent — the frame on the PC reshapes in a moment');
-      } else {
-        this.#hud.toast('Not connected');
-      }
-    });
-    window.addEventListener('wm-layout-change', () => this.#showFitNotice());
-    // A reshaped frame on the PC restarts the encoder at the new size
-    // without a new hello: the decoded size is the live truth.
+  // A reshaped frame on the PC restarts the encoder at the new size
+  // without a new hello: the decoded size is the live truth for the layout.
+  #wireVideoResize() {
     this.#video.addEventListener('resize', () => {
       const w = this.#video.videoWidth;
       const h = this.#video.videoHeight;
-      if (!(w > 0) || !(h > 0)) return;
-      setVideoAspect(w, h);
-      this.#lastVideo = { w, h };
-      this.#showFitNotice();
+      if (w > 0 && h > 0) setVideoAspect(w, h);
     });
   }
 

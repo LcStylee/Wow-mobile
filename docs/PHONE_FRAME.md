@@ -150,12 +150,11 @@ beta has been seen dropping SavedVariables. The panel hides in combat.
 The video box runs from below the top safe-area inset to the bottom of the
 visible viewport (`layout.js videoBoxHeight`, CSS `--video-box-h`); the
 stream is letterboxed into it (`object-fit: contain`) with no 16/9 constant
-anywhere. The client compares the stream's aspect (hello, then the decoded
-size whenever it changes) with that box (`phonematch.js fitNotice`); beyond
-1% it shows a notice whose tap types `/wm phone WxH` — the box in physical
-px — into the game, reshaping the red frame to exactly this screen. That
-covers what no table can know, such as the strip an iOS home-screen app
-loses at the bottom (field report v0.6.3).
+anywhere, and its aspect follows the hello and then the decoded size. An
+iOS home-screen app loses a strip at the bottom that no phone table knows
+about; the stream is letterboxed above it. (v0.6.4 offered a one-tap
+`/wm phone WxH` reshape for that; it broke the addon layout in the field
+and was removed in v0.6.5 — `/wm phone <id>` restores a table phone.)
 
 ## 8. Layouts
 

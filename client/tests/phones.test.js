@@ -7,7 +7,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { PHONES, CONTRACT_VECTORS, RING_PX, DEFAULT_PHONE_ID } from '../js/phones.js';
-import { fitNotice } from '../js/phonematch.js';
 
 function rhe(num, den) {
   const q = Math.floor(num / den);
@@ -59,17 +58,3 @@ test('stream fills the phone it was made for, edge to edge (v0.6.2)', () => {
   }
 });
 
-test('fit notice: only when the stream shape differs from the visible box', () => {
-  const p16 = PHONES.find((x) => x.id === 'iphone-16');
-  // iPhone 16 with the full screen below the island: the table stream fits.
-  assert.equal(fitNotice(p16.streamW, p16.streamH, 393, 852 - 59, 3), null);
-  // iOS home-screen app that loses a bottom strip (field report v0.6.3):
-  // 393 x 734 visible -> offer exactly that box.
-  const n = fitNotice(p16.streamW, p16.streamH, 393, 734, 3);
-  assert.equal(n.cmd, '/wm phone 1179x2202');
-  assert.match(n.text, /Tap here to fit it/);
-  // After the reshape the stream matches: no notice.
-  assert.equal(fitNotice(1179, 2202, 393, 734, 3), null);
-  // Landscape box (desktop debugging): nothing the addon could take.
-  assert.equal(fitNotice(1080, 1920, 1280, 720, 1), null);
-});

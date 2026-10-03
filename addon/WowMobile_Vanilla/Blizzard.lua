@@ -57,11 +57,12 @@ WM.OnInit(function()
 	WM.BanishFrame(PetActionBarFrame)     -- replaced by Pet.lua's action block
 	WM.BanishFrame(ShapeshiftBarFrame)    -- 1.12 name for the stance bar
 
-	-- HUD pieces replaced by Auras.lua / CastBar.lua / Minimap.lua.
+	-- HUD pieces replaced by Auras.lua / CastBar.lua.
 	WM.BanishFrame(BuffFrame)
 	WM.BanishFrame(TemporaryEnchantFrame)
 	WM.BanishFrame(CastingBarFrame)
-	WM.BanishFrame(MinimapCluster, true) -- keep events: Minimap.lua reparents the map itself out of it
+	-- (MinimapCluster stays: Minimap.lua moves and scales the client's own
+	-- minimap cluster into the phone frame since v0.6.5.)
 	WM.BanishFrame(DurabilityFrame)      -- durability lives in the character panel
 
 	-- NPC interaction frames replaced by BottomSheet.lua. Unregistering their

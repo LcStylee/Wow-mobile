@@ -92,9 +92,9 @@ button {
 
 /* The only layout since v0.6.2: from below the top inset (camera cutout /
  * status bar) to the bottom of the visible viewport. Each phone's stream is
- * shaped to exactly this box (docs/PHONE_FRAME.md §3), and where the device
- * leaves a different shape (iOS home-screen apps lose a bottom strip) the
- * fit notice reshapes the stream to it. Height from layout.js
+ * shaped to this box (docs/PHONE_FRAME.md §3); where the device leaves a
+ * different shape (iOS home-screen apps lose a bottom strip) the stream is
+ * letterboxed. Height from layout.js
  * (--video-box-h); the calc is the pre-JS fallback. */
 body.layout-overlay #video,
 body.layout-overlay #touch {
@@ -863,23 +863,4 @@ body.layout-overlay #hud.expanded #hud-stats {
   #st-enc {
     display: none;
   }
-}
-
-/* Phone-aspect notice (phonematch.js): the stream is shaped for another
- * phone model. One line under the top inset; tap to dismiss. */
-#phone-notice {
-  position: fixed;
-  top: calc(var(--safe-top) + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: calc(100vw - 24px);
-  padding: 8px 12px;
-  border: 1px solid #ff3b3b;
-  border-radius: 10px;
-  background: rgba(20, 8, 8, 0.92);
-  color: var(--text, #e8e6df);
-  font-size: 12px;
-  line-height: 1.35;
-  text-align: center;
-  z-index: 60;
 }

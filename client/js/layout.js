@@ -51,20 +51,13 @@ export function videoAspect() {
  * The viewport, not the screen: an iOS home-screen app can report a
  * viewport shorter than the screen and then cover the rest with a system
  * strip at the bottom (field report v0.6.3: drawing under it hid the bottom
- * buttons). Whatever shape that leaves, the fit notice (phonematch.js
- * fitNotice) offers to reshape the stream to it.
+ * buttons); the stream is letterboxed into what is left.
  * @param innerH   window.innerHeight
  * @param safeTop  env(safe-area-inset-top) px
  */
 export function videoBoxHeight(innerH, safeTop) {
   if (!(innerH > 0)) return 0;
   return Math.max(0, innerH - safeTop);
-}
-
-/** The video box as last applied ({w, h} CSS px). */
-let box = { w: 0, h: 0 };
-export function videoBox() {
-  return box;
 }
 
 function measureSafeTop(doc) {
@@ -133,7 +126,6 @@ export function initLayout() {
   const sizeBox = () => {
     const h = videoBoxHeight(window.innerHeight, measureSafeTop(document));
     if (h > 0) document.documentElement.style.setProperty('--video-box-h', `${h}px`);
-    box = { w: window.innerWidth, h };
     window.dispatchEvent(new Event('wm-layout-change'));
   };
   sizeBox();
