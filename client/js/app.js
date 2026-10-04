@@ -7,7 +7,7 @@ import { AuthError, SignalError, createSession, deleteSession, sendOffer } from 
 import { PROTO_VERSION } from './protocol.js';
 import { QrScanner, tokenFromScan } from './qrscan.js';
 import { displayVersion } from './version.js';
-import { InputSender } from './net.js';
+import { InputSender, ctrlStalled } from './net.js';
 import { Settings } from './settings.js';
 import { Joystick } from './joystick.js';
 import { TouchLayer } from './input.js';
@@ -64,6 +64,7 @@ class App {
   #stalledDecodeSecs = 0;
   #noDataSecs = 0;
   #reconnectTimer = null;
+  #lastEcho = 0; // performance.now() of the last latency-probe echo (or hello)
   #disconnectGraceTimer = null;
   #backoffIndex = 0;
   #probeId = 0;
@@ -371,6 +372,9 @@ class App {
         break;
       }
       case 'latencyProbe':
+        // A round trip proves BOTH directions — the server's own stats only
+        // prove server -> phone, and taps travel phone -> server.
+        this.#lastEcho = performance.now();
         this.#hud.setRtt(performance.now() - msg.tSent);
         break;
       case 'stats':
@@ -421,9 +425,17 @@ class App {
     this.#lastStats = null;
     this.#stalledDecodeSecs = 0;
     this.#noDataSecs = 0;
+    this.#lastEcho = performance.now(); // started from the hello
     this.#statsTimer = setInterval(async () => {
       const pc = this.#pc;
       if (!pc || pc.connectionState !== 'connected') return;
+      if (ctrlStalled(this.#lastEcho, performance.now(), document.visibilityState)) {
+        // Video can keep flowing on its own transport while the data
+        // channels are dead: rebuild the whole session, straight away.
+        this.#backoffIndex = 0;
+        this.#scheduleReconnect('controls stopped responding');
+        return;
+      }
       let report;
       try {
         report = await pc.getStats();
@@ -574,6 +586,9 @@ class App {
         this.#touch.reset();
         this.#rail.reset();
       } else {
+        // Timers were frozen in the background: give the channel a fresh
+        // watchdog window rather than declaring it dead on the stale clock.
+        this.#lastEcho = performance.now();
         if (this.#wanted) this.#acquireWakeLock();
         if (this.#started) this.#video.play().catch(() => {});
       }

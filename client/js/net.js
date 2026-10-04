@@ -25,6 +25,22 @@ import {
 // self-heals instead of going silently dead.
 const REASSERT_INTERVAL_MS = 1000;
 
+// Control-channel watchdog: the server echoes the 2 s latency probe, so no
+// echo for this long while connected means the data-channel transport (input
+// rides it too) is dead in at least one direction even though video may
+// still play — field report v0.6.5 after roaming between Wi-Fi access points:
+// "the game streams but my input is no longer doing anything".
+export const CTRL_STALL_MS = 5000;
+
+/**
+ * Whether the latency-probe round trip has been missing long enough to call
+ * the session dead. Only while the page is visible: background timers are throttled and
+ * the server's messages queue up. Pure (unit-tested).
+ */
+export function ctrlStalled(lastRx, now, visibility) {
+  return visibility === 'visible' && lastRx > 0 && now - lastRx > CTRL_STALL_MS;
+}
+
 export class InputSender {
   #input = null; // reliable/ordered: every state-changing event
   #move = null; // unordered/maxRetransmits 0: high-rate POINTER_MOVE only

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { InputSender } from '../js/net.js';
+import { InputSender, ctrlStalled, CTRL_STALL_MS } from '../js/net.js';
 import { BUTTON, MOD } from '../js/protocol.js';
 
 const VK_W = 0x57;
@@ -101,4 +101,13 @@ test('detach and re-attach start from an empty ledger', (t) => {
   sender.attach(input2, move2);
   t.mock.timers.tick(5000);
   assert.equal(input2.sent.length, 0); // stale hold must not leak into a new session
+});
+
+test('ctrl watchdog: dead only after CTRL_STALL_MS of silence while visible', () => {
+  assert.equal(ctrlStalled(1000, 1000 + CTRL_STALL_MS, 'visible'), false);
+  assert.equal(ctrlStalled(1000, 1001 + CTRL_STALL_MS, 'visible'), true);
+  // Background: timers are throttled, never judge then.
+  assert.equal(ctrlStalled(1000, 60000, 'hidden'), false);
+  // Not started yet.
+  assert.equal(ctrlStalled(0, 60000, 'visible'), false);
 });

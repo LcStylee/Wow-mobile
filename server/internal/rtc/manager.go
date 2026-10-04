@@ -81,6 +81,9 @@ type Manager struct {
 	framesSent atomic.Uint64
 }
 
+// sctpRTOMax caps SCTP's retransmission backoff (see NewManager).
+const sctpRTOMax = 2 * time.Second
+
 // ErrNoSession is returned for operations on an unknown/replaced session id.
 var ErrNoSession = errors.New("rtc: no such session")
 
@@ -144,7 +147,15 @@ func NewManager(opts Options) (*Manager, error) {
 	if err := webrtc.RegisterDefaultInterceptors(engine, registry); err != nil {
 		return nil, fmt.Errorf("registering interceptors: %w", err)
 	}
-	m.api = webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry))
+	// SCTP (every data channel: input, move, ctrl) backs its retransmission
+	// timer off exponentially up to 60 s by default. After a Wi-Fi gap —
+	// roaming between access points — that left the server answering
+	// nothing for up to a minute while video (SRTP, not SCTP) played on
+	// (field report v0.6.5). On a LAN, 2 s is still far above any real RTT.
+	var se webrtc.SettingEngine
+	se.SetSCTPRTOMax(sctpRTOMax)
+	m.api = webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry),
+		webrtc.WithSettingEngine(se))
 
 	var err error
 	m.videoTrack, err = webrtc.NewTrackLocalStaticSample(
