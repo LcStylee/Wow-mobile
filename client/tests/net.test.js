@@ -6,7 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { InputSender, ctrlStalled, CTRL_STALL_MS } from '../js/net.js';
+import {
+  InputSender, ctrlStalled, CTRL_STALL_MS, freezeAction, FREEZE_PLAY_S, FREEZE_RECONNECT_S,
+} from '../js/net.js';
 import { BUTTON, MOD } from '../js/protocol.js';
 
 const VK_W = 0x57;
@@ -110,4 +112,12 @@ test('ctrl watchdog: dead only after CTRL_STALL_MS of silence while visible', ()
   assert.equal(ctrlStalled(1000, 60000, 'hidden'), false);
   // Not started yet.
   assert.equal(ctrlStalled(0, 60000, 'visible'), false);
+});
+
+test('freeze recovery: nudge playback, then reconnect — never before a first frame', () => {
+  assert.equal(freezeAction(1, true), 'none');
+  assert.equal(freezeAction(FREEZE_PLAY_S, true), 'play');
+  assert.equal(freezeAction(FREEZE_RECONNECT_S, true), 'reconnect');
+  // A stream that never decoded is a codec/capture problem: banner, no loop.
+  assert.equal(freezeAction(60, false), 'none');
 });

@@ -41,6 +41,31 @@ export function ctrlStalled(lastRx, now, visibility) {
   return visibility === 'visible' && lastRx > 0 && now - lastRx > CTRL_STALL_MS;
 }
 
+// Frozen-picture recovery (field report v0.6.6: after a Wi-Fi switch the
+// picture froze until the app was backgrounded and reopened). A healthy
+// stream decodes new frames every second even on a static scene (the encoder
+// runs at a fixed rate), so a session that HAS decoded before and then stops:
+// after FREEZE_PLAY_S nudge the video element (what reopening the app did),
+// after FREEZE_RECONNECT_S rebuild the session.
+export const FREEZE_PLAY_S = 2;
+export const FREEZE_RECONNECT_S = 5;
+// Connection stuck outside "connected" this long while visible: rebuild.
+export const NOT_CONNECTED_RECONNECT_S = 8;
+
+/**
+ * What to do about a picture that has not advanced for frozenSecs whole
+ * seconds. Never acts before the session decoded its first frame — a stream
+ * that never decoded is a codec/capture problem the diagnostic banner
+ * explains, and reconnecting in a loop would hide it. Pure (unit-tested).
+ * @returns 'none' | 'play' | 'reconnect'
+ */
+export function freezeAction(frozenSecs, everDecoded) {
+  if (!everDecoded) return 'none';
+  if (frozenSecs >= FREEZE_RECONNECT_S) return 'reconnect';
+  if (frozenSecs >= FREEZE_PLAY_S) return 'play';
+  return 'none';
+}
+
 export class InputSender {
   #input = null; // reliable/ordered: every state-changing event
   #move = null; // unordered/maxRetransmits 0: high-rate POINTER_MOVE only

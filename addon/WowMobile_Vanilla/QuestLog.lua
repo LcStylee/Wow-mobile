@@ -214,7 +214,11 @@ local function RenderDetail()
 			return
 		end
 		if IsQuestWatched(idx) then
-			RemoveQuestWatch(idx)
+			if WM.QuestTracker then
+				WM.QuestTracker.Untrack(idx)
+			else
+				RemoveQuestWatch(idx)
+			end
 		else
 			AddQuestWatch(idx)
 		end

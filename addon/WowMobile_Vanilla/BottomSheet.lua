@@ -17,9 +17,11 @@
 -- 1.12 gossip return shapes (flat multi-returns, selection by 1-based entry
 -- index):
 --   GetGossipOptions()          -> text1, gossipType1, ...   (stride 2)
---   GetGossipAvailableQuests()  -> title1, title2, ...       (stride 1)
---   GetGossipActiveQuests()     -> title1, title2, ...       (stride 1)
--- (levels/trivial flags in these returns are later-client additions.)
+--   GetGossipAvailableQuests()  -> title1, level1, title2, ... (stride 2)
+--   GetGossipActiveQuests()     -> title1, level1, title2, ... (stride 2)
+-- Parsed by TYPE (QuestTitles), not by a fixed stride: a string starts a
+-- quest, anything else belongs to the quest before it — v0.6.5 assumed
+-- stride 1 and listed every level as a phantom quest ("1", "3").
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
@@ -29,6 +31,19 @@ local CELL_H = 116
 local GAP = 10
 
 local RETRIEVING = "Retrieving item information"
+
+-- Quest titles out of a gossip quest list, whatever the stride: each string
+-- starts a quest, the numbers/flags after it (level, trivial, ...) belong to
+-- it. Lua 5.0: varargs arrive as `arg` (arg.n counts trailing nils).
+function WM.QuestTitles(...)
+	local titles = {}
+	for i = 1, arg.n do
+		if type(arg[i]) == "string" then
+			table.insert(titles, arg[i])
+		end
+	end
+	return titles
+end
 
 local ICON_GOSSIP    = "Interface\\GossipFrame\\GossipGossipIcon"
 local ICON_AVAILABLE = "Interface\\GossipFrame\\AvailableQuestIcon"
@@ -277,16 +292,16 @@ local function ShowGossip()
 	AddText(GetGossipText() or "")
 
 	-- 1.12 stride-1 title lists; selection is by 1-based position.
-	local available = { GetGossipAvailableQuests() }
+	local available = WM.QuestTitles(GetGossipAvailableQuests())
 	for i = 1, table.getn(available) do
 		local index = i
-		AddButton(available[i] or "", ICON_AVAILABLE,
+		AddButton(available[i], ICON_AVAILABLE,
 			function() SelectGossipAvailableQuest(index) end)
 	end
-	local active = { GetGossipActiveQuests() }
+	local active = WM.QuestTitles(GetGossipActiveQuests())
 	for i = 1, table.getn(active) do
 		local index = i
-		AddButton(active[i] or "", ICON_ACTIVE,
+		AddButton(active[i], ICON_ACTIVE,
 			function() SelectGossipActiveQuest(index) end)
 	end
 	-- 1.12 stride-2 options: text, gossipType pairs.

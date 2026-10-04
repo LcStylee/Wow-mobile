@@ -19,7 +19,7 @@ export class Hud {
   #toastTimer = null;
 
   /**
-   * @param actions {onDisconnect, onToggleAudio, onZoom(dir), onConfig} —
+   * @param actions {onDisconnect, onReconnect, onToggleAudio, onZoom(dir), onConfig} —
    *   actions the HUD cannot perform itself.
    */
   constructor({ settings, actions }) {
@@ -68,6 +68,7 @@ export class Hud {
       this.#els.stats.setAttribute('aria-expanded', String(expanded));
     });
     $('btn-disconnect').addEventListener('click', () => actions.onDisconnect());
+    $('btn-reconnect').addEventListener('click', () => actions.onReconnect());
     $('btn-cam-in').addEventListener('click', () => actions.onZoom(1));
     $('btn-cam-out').addEventListener('click', () => actions.onZoom(-1));
     $('btn-config').addEventListener('click', () => actions.onConfig());

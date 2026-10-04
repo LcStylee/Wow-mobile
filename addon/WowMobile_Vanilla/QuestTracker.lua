@@ -6,26 +6,51 @@
 -- mouse size somewhere the phone never showed.
 --
 -- The tracked quest is Blizzard's own watch list (Track in the deck quest
--- log, shift-click, auto-watch), held to ONE entry: tracking a quest replaces
--- the previous one, and MAX_WATCHABLE_QUESTS = 1 makes Blizzard's auto-watch
--- (a quest that progresses) only kick in when nothing is tracked, never
--- steal the slot. Tap the tracker to open the quest log.
+-- log, shift-click), held to ONE entry: tracking a quest replaces the
+-- previous one. The quest the player picked is PINNED by title: the 1.12
+-- client's auto-watch (AutoQuestWatch_Update) adds progressing quests and
+-- drops them again on a timer, which untracked the pinned quest the moment
+-- an objective progressed (field report v0.6.6). Auto-watch only fills an
+-- empty slot now, and a pinned quest that vanished from the watch list is
+-- re-added — until the player untracks it (WM.QuestTracker.Untrack, the
+-- quest log's button) or it leaves the log (turned in / abandoned). Tap the
+-- tracker to open the quest log.
 --
--- Placement (design px in the world square): x 210..680, from y 220 down —
--- right of the stance column / pet block (x <= 190, ActionBars.lua /
--- Pet.lua), below the target debuff row (y 124..208, Auras.lua), left of the
--- party frames (x >= ~690, Blizzard.lua) and far above the phone's joystick
--- band (bottom of the world area).
+-- Placement (design px in the world square): x 210..680, right under the
+-- buff row (y 130) — right of the stance column / pet block (x <= 190,
+-- ActionBars.lua / Pet.lua), left of the party frames (x >= ~690,
+-- Blizzard.lua). The target debuff row shares x 210 at y 124..208
+-- (Auras.lua): while the target HAS debuffs the tracker slides below it
+-- (y 214).
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
 
-local X, Y, W = 210, 220, 470
+local X, Y, Y_BELOW_DEBUFFS, W = 210, 130, 214, 470
 local PAD, TITLE_H, LINE_H = 10, 34, 30
 local MAX_LINES = 6
 
 local frame, title
 local lines = {}
+local pinned -- title of the quest the player chose to track
+local origAdd, origRemove
+
+local Tracker = {}
+WM.QuestTracker = Tracker
+
+local function FindByTitle(t)
+	for i = 1, GetNumQuestLogEntries() do
+		local name, _, _, isHeader = GetQuestLogTitle(i)
+		if name == t and not isHeader then return i end
+	end
+	return nil
+end
+
+-- Explicit untrack (the quest log's button): clears the pin.
+function Tracker.Untrack(index)
+	pinned = nil
+	RemoveQuestWatch(index)
+end
 
 local function TrackedIndex()
 	if (GetNumQuestWatches() or 0) == 0 then return nil end
@@ -35,6 +60,16 @@ end
 local function Update()
 	if not frame then return end
 	local idx = TrackedIndex()
+	if not idx and pinned and origAdd then
+		-- Something other than the player dropped the pinned quest.
+		local again = FindByTitle(pinned)
+		if again then
+			origAdd(again)
+			idx = TrackedIndex()
+		else
+			pinned = nil -- turned in or abandoned
+		end
+	end
 	local name, level, _, isHeader, _, isComplete
 	if idx then
 		name, level, _, isHeader, _, isComplete = GetQuestLogTitle(idx)
@@ -102,16 +137,30 @@ WM.OnInit(function()
 	end
 	frame:Hide()
 
-	-- One quest at a time: tracking replaces the tracked quest.
-	MAX_WATCHABLE_QUESTS = 1
-	local origAdd, origRemove = AddQuestWatch, RemoveQuestWatch
+	-- One quest at a time: tracking replaces the tracked quest (and pins it).
+	origAdd, origRemove = AddQuestWatch, RemoveQuestWatch
 	AddQuestWatch = function(index)
 		for i = GetNumQuestWatches(), 1, -1 do
 			local w = GetQuestIndexForWatch(i)
 			if w and w ~= index then origRemove(w) end
 		end
-		origAdd(index)
+		if not IsQuestWatched(index) then origAdd(index) end
+		pinned = GetQuestLogTitle(index)
 		Update()
+	end
+	-- 1.12 auto-watch: only ever fills an EMPTY slot, never through the
+	-- timed list that later removes its entries again.
+	if AutoQuestWatch_Update then
+		AutoQuestWatch_Update = function(index)
+			if GetNumQuestWatches() == 0 and index then
+				origAdd(index)
+				pinned = GetQuestLogTitle(index)
+				Update()
+			end
+		end
+	end
+	if type(QUEST_WATCH_LIST) == "table" then
+		for k in pairs(QUEST_WATCH_LIST) do QUEST_WATCH_LIST[k] = nil end
 	end
 	RemoveQuestWatch = function(index)
 		origRemove(index)
@@ -123,7 +172,22 @@ WM.OnInit(function()
 		if w then origRemove(w) end
 	end
 
+	-- Pin whatever is tracked at login.
+	local first = TrackedIndex()
+	if first then pinned = GetQuestLogTitle(first) end
+
 	Update()
+
+	-- Slide below the target's debuff row while it is in use.
+	local below = nil
+	WM.Ticker(0.25, function()
+		local want = UnitExists("target") and UnitDebuff("target", 1) and true or false
+		if want == below then return end
+		below = want
+		frame:ClearAllPoints()
+		frame:SetPoint("TOPLEFT", WM.WorldSquare, "TOPLEFT", WM.Px(X),
+			-WM.Px(want and Y_BELOW_DEBUFFS or Y))
+	end)
 end)
 
 WM.On("QUEST_LOG_UPDATE", Update)

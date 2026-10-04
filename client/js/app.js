@@ -7,7 +7,9 @@ import { AuthError, SignalError, createSession, deleteSession, sendOffer } from 
 import { PROTO_VERSION } from './protocol.js';
 import { QrScanner, tokenFromScan } from './qrscan.js';
 import { displayVersion } from './version.js';
-import { InputSender, ctrlStalled } from './net.js';
+import {
+  InputSender, ctrlStalled, freezeAction, NOT_CONNECTED_RECONNECT_S,
+} from './net.js';
 import { Settings } from './settings.js';
 import { Joystick } from './joystick.js';
 import { TouchLayer } from './input.js';
@@ -65,6 +67,10 @@ class App {
   #noDataSecs = 0;
   #reconnectTimer = null;
   #lastEcho = 0; // performance.now() of the last latency-probe echo (or hello)
+  #frozenSecs = 0; // whole seconds the picture has not advanced
+  #everDecoded = false; // this session decoded at least one frame
+  #lastVideoTime = -1; // video.currentTime at the previous stats tick
+  #notConnectedSecs = 0; // whole seconds outside "connected" while visible
   #disconnectGraceTimer = null;
   #backoffIndex = 0;
   #probeId = 0;
@@ -81,6 +87,7 @@ class App {
         // No message: a user-initiated End is not an error, and the connect
         // screen's note element renders in the danger style.
         onDisconnect: () => this.stop(),
+        onReconnect: () => this.#reconnectNow('reconnect requested'),
         onToggleAudio: () => this.#toggleAudio(),
         onZoom: (dir) => this.#touch.zoom(dir),
         // The addon's settings panel (moved off the in-game bottom row).
@@ -426,14 +433,27 @@ class App {
     this.#stalledDecodeSecs = 0;
     this.#noDataSecs = 0;
     this.#lastEcho = performance.now(); // started from the hello
+    this.#frozenSecs = 0;
+    this.#everDecoded = false;
+    this.#lastVideoTime = -1;
+    this.#notConnectedSecs = 0;
     this.#statsTimer = setInterval(async () => {
       const pc = this.#pc;
-      if (!pc || pc.connectionState !== 'connected') return;
+      if (!pc) return;
+      if (pc.connectionState !== 'connected') {
+        // A connection that never comes back (or never reports a state
+        // change at all after a network switch) must not idle forever.
+        if (document.visibilityState === 'visible') this.#notConnectedSecs += 1;
+        if (this.#notConnectedSecs >= NOT_CONNECTED_RECONNECT_S) {
+          this.#reconnectNow('connection did not come back');
+        }
+        return;
+      }
+      this.#notConnectedSecs = 0;
       if (ctrlStalled(this.#lastEcho, performance.now(), document.visibilityState)) {
         // Video can keep flowing on its own transport while the data
         // channels are dead: rebuild the whole session, straight away.
-        this.#backoffIndex = 0;
-        this.#scheduleReconnect('controls stopped responding');
+        this.#reconnectNow('controls stopped responding');
         return;
       }
       let report;
@@ -455,6 +475,7 @@ class App {
             fps: framesDelta / dtSec,
           });
           this.#updateVideoDiagnostic(bytesDelta, framesDelta);
+          if (this.#watchFreeze(framesDelta)) return;
         }
         this.#lastStats = {
           timestamp: stat.timestamp,
@@ -464,6 +485,41 @@ class App {
         break;
       }
     }, STATS_INTERVAL_MS);
+  }
+
+  /**
+   * Frozen-picture recovery, once per stats tick (freezeAction). Frozen =
+   * no newly decoded frame, or (once playing) the video element's clock
+   * standing still — iOS can leave a decoding stream paused after a network
+   * switch. Returns true when it started a reconnect.
+   */
+  #watchFreeze(framesDelta) {
+    if (framesDelta > 0) this.#everDecoded = true;
+    const t = this.#video.currentTime;
+    const clockStuck = this.#started && t === this.#lastVideoTime;
+    this.#lastVideoTime = t;
+    if (document.visibilityState !== 'visible') {
+      this.#frozenSecs = 0;
+      return false;
+    }
+    this.#frozenSecs = framesDelta > 0 && !clockStuck ? 0 : this.#frozenSecs + 1;
+    switch (freezeAction(this.#frozenSecs, this.#everDecoded)) {
+      case 'play':
+        if (this.#started) this.#video.play().catch(() => {});
+        return false;
+      case 'reconnect':
+        this.#reconnectNow('picture froze');
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Rebuild the session right away (watchdogs, the menu's Re button). */
+  #reconnectNow(reason) {
+    if (!this.#wanted) return;
+    this.#backoffIndex = 0;
+    this.#scheduleReconnect(reason);
   }
 
   /**
@@ -589,6 +645,8 @@ class App {
         // Timers were frozen in the background: give the channel a fresh
         // watchdog window rather than declaring it dead on the stale clock.
         this.#lastEcho = performance.now();
+        this.#frozenSecs = 0;
+        this.#notConnectedSecs = 0;
         if (this.#wanted) this.#acquireWakeLock();
         if (this.#started) this.#video.play().catch(() => {});
       }

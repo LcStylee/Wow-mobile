@@ -4,8 +4,9 @@
 ## Title: WoW Mobile (Vanilla)
 ## Notes: Portrait touch UI overhaul for streaming WoW 1.12 to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone); world square + control deck.
 ## Author: WoW Mobile project
-## Version: 0.6.6
+## Version: 0.6.7
 ## SavedVariables: WowMobileDB
+## OptionalDeps: pfQuest
 
 # Load order is the dependency order: Core provides the namespace/bus/timers,
 # Phones the generated phone table (tools/genphones.js), Band the phone frame
@@ -61,6 +62,7 @@ Spellbook.lua
 CharacterPanel.lua
 QuestLog.lua
 QuestTracker.lua
+PfQuest.lua
 Bags.lua
 Bank.lua
 Mail.lua
