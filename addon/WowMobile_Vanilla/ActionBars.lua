@@ -25,6 +25,11 @@
 --
 -- Exposes WM.ActionBars.CreateButton for QuickBar.lua so all action buttons
 -- share one visual/update pipeline.
+--
+-- Page toggle (v0.6.8): a "123" button on the right edge just above the
+-- bottom stack steps the main bar through action pages 1 > 2 > .. > N > 1,
+-- N = the "Action bar pages" setting (WM.db.barPages, 1..5, default 2).
+-- Page 6 is not offered: its slots 61..72 are the second bar's.
 --------------------------------------------------------------------------------
 
 local WM = WowMobile
@@ -33,6 +38,47 @@ local ActionBars = {}
 WM.ActionBars = ActionBars
 
 local buttons = {} -- every WowMobile action button, for event fan-out
+
+local MAX_PAGES = 5
+local pageToggle -- the "123" button
+
+function ActionBars.PageCount()
+	local n = (WM.db and WM.db.barPages) or 2
+	if n < 1 then n = 1 end
+	if n > MAX_PAGES then n = MAX_PAGES end
+	return n
+end
+
+local function SetPage(page)
+	CURRENT_ACTIONBAR_PAGE = page
+	-- 1.12's ChangeActionBarPage reads the global and fires
+	-- ACTIONBAR_PAGE_CHANGED, which repaints every paged button.
+	if ChangeActionBarPage then ChangeActionBarPage(page) end
+end
+
+local function RefreshToggle()
+	if not pageToggle then return end
+	local n = ActionBars.PageCount()
+	WM.SetShown(pageToggle, n > 1)
+	pageToggle.page:SetText((CURRENT_ACTIONBAR_PAGE or 1) .. "/" .. n)
+end
+
+-- 1 > 2 > .. > N > 1.
+function ActionBars.NextPage()
+	local page = (CURRENT_ACTIONBAR_PAGE or 1) + 1
+	if page > ActionBars.PageCount() then page = 1 end
+	SetPage(page)
+	RefreshToggle()
+end
+
+-- Settings stepper: change N; a page beyond the new N falls back to 1.
+function ActionBars.SetPageCount(n)
+	if n < 1 then n = 1 end
+	if n > MAX_PAGES then n = MAX_PAGES end
+	WM.db.barPages = n
+	if (CURRENT_ACTIONBAR_PAGE or 1) > n then SetPage(1) end
+	RefreshToggle()
+end
 
 local function PagedSlot(i)
 	local page = CURRENT_ACTIONBAR_PAGE or 1
@@ -223,6 +269,19 @@ local function BuildBars()
 			WM.Px(row * (m.mainButtonH + gap)))
 	end
 
+	-- Page toggle: right edge, just above the bottom stack (clear of the
+	-- quick-bar column above it and of the joystick band, which is left).
+	pageToggle = WM.CreateTouchButton(WM.Deck, 104, 92, "123", 34)
+	pageToggle:SetPoint("BOTTOMRIGHT", WowMobileBottomStack, "TOPRIGHT", -WM.Px(8), WM.Px(8))
+	WM.Translucent(pageToggle, m.buttonFill, m.buttonBorder)
+	pageToggle.label:ClearAllPoints()
+	pageToggle.label:SetPoint("CENTER", pageToggle, "CENTER", 0, WM.Px(10))
+	pageToggle.page = WM.CreateText(pageToggle, 22)
+	pageToggle.page:SetPoint("BOTTOM", pageToggle, "BOTTOM", 0, WM.Px(8))
+	pageToggle.page:SetTextColor(1, 0.82, 0)
+	pageToggle:SetScript("OnClick", ActionBars.NextPage)
+	RefreshToggle()
+
 	-- Second bar buttons: MultiBarBottomLeft's slots.
 	local sw = 84
 	local sRowW = sw * 12 + 4 * 11
@@ -332,7 +391,10 @@ WM.OnInit(function()
 	WM.TryOn("STOP_AUTOREPEAT_SPELL", function() ForAll(UpdateChecked) end)
 	WM.On("ACTIONBAR_UPDATE_USABLE", function() ForAll(UpdateUsable) end)
 	-- Page/bonus-bar changes remap the 12 pageable buttons' slots.
-	WM.On("ACTIONBAR_PAGE_CHANGED", function() ForAll(UpdateAll) end)
+	WM.On("ACTIONBAR_PAGE_CHANGED", function()
+		ForAll(UpdateAll)
+		RefreshToggle() -- key bindings (shift+1..6) page too
+	end)
 	WM.On("UPDATE_BONUS_ACTIONBAR", function() ForAll(UpdateAll) end)
 	WM.On("PLAYER_TARGET_CHANGED", function() ForAll(UpdateUsable) end)
 	WM.On("BAG_UPDATE", function() ForAll(UpdateCount) end)

@@ -5,7 +5,7 @@
 ## Title: WoW Mobile
 ## Notes: Portrait touch UI overhaul for streaming WoW Classic Era / WoW: Forever to a phone — lives in a red-outlined phone frame inside your normal game window, shaped for the phone you pick (/wm phone).
 ## Author: WoW Mobile project
-## Version: 0.6.7
+## Version: 0.6.8
 ## SavedVariables: WowMobileDB
 
 # Load order is the dependency order: Core provides the namespace/bus/queue,

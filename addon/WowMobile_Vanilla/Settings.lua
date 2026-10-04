@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- WowMobile (Vanilla 1.12) · Settings
 -- Touch settings panel (the phone menu's "Config" button / `/wm settings`): stepper
--- rows for the world-viewport height and UI scale, plus Reset and Reload.
+-- rows for the UI scale and the action bar page count, plus Reset and Reload.
 -- All mutations go through WM.Config so the slash command and this panel
 -- share one code path.
 --------------------------------------------------------------------------------
@@ -19,10 +19,10 @@ local function RefreshAll()
 end
 
 -- A stepper row: label left, [-] value [+] right.
-local function AddStepper(parent, index, label, getText, onDelta)
+local function AddStepper(parent, yPx, label, getText, onDelta)
 	local row = CreateFrame("Frame", nil, parent)
-	row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -WM.Px((index - 1) * 130))
-	row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, -WM.Px((index - 1) * 130))
+	row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -WM.Px(yPx))
+	row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, -WM.Px(yPx))
 	row:SetHeight(WM.Px(120))
 	WM.SkinFrame(row, { 0.07, 0.07, 0.09, 1 })
 
@@ -53,7 +53,7 @@ end
 WM.OnInit(function()
 	local panel = WM.Deck.CreatePanel("settings", "Settings")
 
-	AddStepper(panel.content, 1, "UI scale (Blizzard text)",
+	AddStepper(panel.content, 0, "UI scale (Blizzard text)",
 		function()
 			-- Show the live cvar when no override is stored yet.
 			return string.format("%.2f", WM.db.uiScale or tonumber(GetCVar("uiScale")) or 1)
@@ -69,19 +69,24 @@ WM.OnInit(function()
 	resetScale:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(160))
 	resetScale:SetScript("OnClick", function() WM.Config.ResetScale() end)
 
+	-- How many action pages the "123" toggle cycles through (ActionBars.lua).
+	AddStepper(panel.content, 300, "Action bar pages (123 button)",
+		function() return tostring(WM.ActionBars.PageCount()) end,
+		function(dir) WM.ActionBars.SetPageCount(WM.ActionBars.PageCount() + dir) end)
+
 	local reset = WM.CreateTouchButton(panel.content, 480, 110, "Reset to defaults", 32)
-	reset:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(300))
+	reset:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(440))
 	reset:SetScript("OnClick", function()
 		WM.Config.Reset()
 		RefreshAll()
 	end)
 
 	local reload = WM.CreateTouchButton(panel.content, 480, 110, "Reload UI", 32)
-	reload:SetPoint("TOPRIGHT", panel.content, "TOPRIGHT", 0, -WM.Px(300))
+	reload:SetPoint("TOPRIGHT", panel.content, "TOPRIGHT", 0, -WM.Px(440))
 	reload:SetScript("OnClick", ReloadUI)
 
 	local note = WM.CreateText(panel.content, 24)
-	note:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(440))
+	note:SetPoint("TOPLEFT", panel.content, "TOPLEFT", 0, -WM.Px(580))
 	note:SetWidth(WM.Px(940))
 	note:SetJustifyH("LEFT")
 	note:SetTextColor(0.7, 0.7, 0.75)
