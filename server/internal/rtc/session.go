@@ -60,7 +60,7 @@ func (s *session) negotiate(offerSDP string) (_ string, retErr error) {
 	}
 
 	// LAN-only by design: host candidates suffice, no STUN/TURN.
-	pc, err := s.mgr.api.NewPeerConnection(webrtc.Configuration{})
+	pc, err := s.mgr.newPeerConnection()
 	if err != nil {
 		return "", fmt.Errorf("creating peer connection: %w", err)
 	}

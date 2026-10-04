@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/LcStylee/Wow-mobile/server/internal/phones"
+	"github.com/LcStylee/Wow-mobile/server/internal/remote"
 )
 
 // registerHostRoutes mounts the /host tree when EnableHostUI configured it.
@@ -30,6 +31,9 @@ func (s *Server) registerHostRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /host/api/quit", LoopbackOnly(http.HandlerFunc(s.handleHostQuit)))
 	mux.Handle("GET /host/api/phones", LoopbackOnly(http.HandlerFunc(s.handleHostPhones)))
 	mux.Handle("POST /host/api/phone", LoopbackOnly(http.HandlerFunc(s.handleHostSetPhone)))
+	mux.Handle("GET /host/api/remote", LoopbackOnly(http.HandlerFunc(s.handleHostRemote)))
+	mux.Handle("POST /host/api/remote", LoopbackOnly(http.HandlerFunc(s.handleHostSetRemote)))
+	mux.Handle("GET /host/qr-away.svg", LoopbackOnly(http.HandlerFunc(s.handleHostAwayQR)))
 }
 
 // LoopbackOnly rejects with 403 any request whose peer address is not a
@@ -181,4 +185,76 @@ func (s *Server) handleHostSetPhone(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("dashboard phone changed", "phone", body.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoteHeader is the dashboard's proof-of-intent header on POST
+// /host/api/remote (see QuitHeader: no cross-origin no-cors posts).
+const RemoteHeader = "X-Wowmobile-Remote"
+
+// remoteJSON is the dashboard's remote-play view: the controller status plus
+// the away link built from the public address.
+type remoteJSON struct {
+	remote.Status
+	Available bool   `json:"available"`
+	AwayURL   string `json:"awayUrl,omitempty"`
+}
+
+func (s *Server) remoteView() remoteJSON {
+	if s.host.RemoteStatus == nil {
+		return remoteJSON{}
+	}
+	st := s.host.RemoteStatus()
+	v := remoteJSON{Status: st, Available: true}
+	if st.State == remote.StateOpen || st.State == remote.StateManual {
+		v.AwayURL = s.AwayURL(st.PublicIP)
+	}
+	return v
+}
+
+// handleHostRemote serves the remote-play status.
+func (s *Server) handleHostRemote(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(s.remoteView()) //nolint:errcheck
+}
+
+// handleHostSetRemote turns remote play on/off: body {"enabled": bool}.
+func (s *Server) handleHostSetRemote(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(RemoteHeader) == "" {
+		http.Error(w, "remote play requires the dashboard's "+RemoteHeader+" header", http.StatusForbidden)
+		return
+	}
+	if s.host.SetRemote == nil {
+		http.Error(w, "remote play is not available in this mode", http.StatusConflict)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "bad request body", http.StatusBadRequest)
+		return
+	}
+	s.log.Info("remote play toggled from the dashboard", "enabled", body.Enabled)
+	// Turning off waits for the router to close the port; keep the
+	// request snappy and let the 1 s status poll show the outcome.
+	go s.host.SetRemote(body.Enabled)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleHostAwayQR serves the away link as a QR code.
+func (s *Server) handleHostAwayQR(w http.ResponseWriter, r *http.Request) {
+	url := s.remoteView().AwayURL
+	if url == "" {
+		http.Error(w, "no away link yet", http.StatusServiceUnavailable)
+		return
+	}
+	svg, err := qrSVG(url)
+	if err != nil {
+		http.Error(w, "QR encoding failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(svg) //nolint:errcheck
 }

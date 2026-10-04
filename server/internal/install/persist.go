@@ -62,6 +62,9 @@ const (
 	// KeyPhone records the phone model id picked on the dashboard (frame
 	// layout's fallback framing when the addon's outline is not visible).
 	KeyPhone = "phone"
+	// KeyRemote records the dashboard's "play over mobile data" toggle
+	// ("1" on, "0" off).
+	KeyRemote = "remote"
 )
 
 // StoreFileName is the persisted settings file inside the wowstreamd config

@@ -256,6 +256,51 @@
     $("offline").hidden = false;
   }
 
+  // ---- remote play ------------------------------------------------------
+  let awayShown = "";
+  async function pollRemote() {
+    let st;
+    try {
+      const res = await fetch("/host/api/remote", { cache: "no-store" });
+      if (!res.ok) return;
+      st = await res.json();
+    } catch {
+      return;
+    }
+    if (!st.available) return;
+    $("away").hidden = false;
+    const toggle = $("remote-toggle");
+    if (document.activeElement !== toggle) toggle.checked = !!st.enabled;
+    $("remote-msg").textContent = st.enabled ? (st.message || "") : "Off — the phone only works on the same Wi-Fi.";
+    const url = st.awayUrl || "";
+    $("away-qr-wrap").hidden = !url;
+    $("away-url-row").hidden = !url;
+    $("away-howto").hidden = !url;
+    if (url !== awayShown) {
+      awayShown = url;
+      $("away-url").textContent = url;
+      if (url) $("away-qr").src = "qr-away.svg?u=" + encodeURIComponent(url);
+    }
+  }
+
+  async function setRemote(on) {
+    $("remote-msg").textContent = on ? "Opening the port on your router…" : "Turning off…";
+    try {
+      await fetch("/host/api/remote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Wowmobile-Remote": "1" },
+        body: JSON.stringify({ enabled: on }),
+      });
+    } catch {
+      /* the next poll shows the real state */
+    }
+    pollRemote();
+  }
+
+  $("remote-toggle").addEventListener("change", (e) => setRemote(e.target.checked));
+  pollRemote();
+  setInterval(pollRemote, 2000);
+
   $("copy").addEventListener("click", copyPairingURL);
   $("quit").addEventListener("click", quit);
   $("phone-search").addEventListener("input", renderPhones);

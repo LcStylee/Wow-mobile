@@ -402,3 +402,32 @@ footer .hint {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- remote play ----------------------------------------------------------- */
+
+#remote-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#remote-toggle {
+  width: 20px;
+  height: 20px;
+}
+
+#away-qr-wrap {
+  margin: 12px 0 8px;
+}
+
+#away-qr-wrap img {
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+#away-url-row code {
+  word-break: break-all;
+}

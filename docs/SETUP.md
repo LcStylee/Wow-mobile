@@ -246,6 +246,32 @@ The streaming host finds the outline on its own. If the addon is not loaded
 yet (character select, a very old addon), the dashboard's **Phone model** list
 decides the frame instead and the warning row says so.
 
+## Play away from home (mobile data)
+
+1. On the PC dashboard, tick **Play over mobile data**. The PC asks your
+   router (UPnP) to forward TCP port 8443 (pairing) and UDP port 8443 (the
+   stream) to itself, and looks up your home's public address. The message
+   under the toggle says how it went:
+   - *Your router forwards …* — done.
+   - *Your router did not open the ports automatically …* — UPnP is off in
+     the router. Either switch UPnP on in the router's settings, or forward
+     TCP 8443 and UDP 8443 to the PC's address shown in the message.
+   - *Your internet connection has no public address of its own …* — your
+     provider uses carrier-grade NAT (or a second router sits in front of
+     yours). Nothing on the PC can fix that: ask the provider for a public
+     IPv4 address, or use a VPN app such as Tailscale on both devices.
+2. An **away** QR code appears. Scan it once on the phone, accept the
+   certificate warning, and add it to the Home Screen — a second app next to
+   the home one. At home, keep using the home app (or the away app, if your
+   router lets devices reach the public address from inside).
+3. On mobile data pick the **2 Mbps** quality (menu → Set → Quality): about
+   1 GB of data per hour, against 3.5 GB at 8 Mbps.
+
+The toggle is remembered. Unticking it closes the router ports again (they
+also expire by themselves within an hour if the PC app is closed). Your
+public address can change now and then (most home connections keep it for
+weeks); the dashboard then shows a new away QR code.
+
 ## Private servers (1.12 clients)
 
 WoW Mobile also hosts 1.12-era private-server clients (launched through
@@ -528,6 +554,8 @@ The defaults are right for most setups. All flags:
 | `--gui` | auto | Force windowed mode (dialogs + dashboard + tray) even from a terminal (Windows) |
 | `--no-tls` | off | Plain HTTP instead of HTTPS (breaks PWA install; debugging only) |
 | `--ffmpeg` | find in `PATH` | Path to the ffmpeg executable |
+| `--remote` | dashboard choice | Play over mobile data: forward the ports on the router (UPnP) and advertise the public address; the dashboard toggle sets and remembers it |
+| `--ice-port` | `8443` | The one UDP port all WebRTC traffic uses (needed for remote play); `0` = random ports per session |
 | `--audio` | on | Stream the PC's sound (`--audio=false` turns it off) |
 | `--audio-source` | `loopback` | `loopback`: built-in WASAPI capture of the default playback device; `dshow`: the `virtual-audio-capturer` DirectShow device from [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free) |
 | `--setup` | — | Print the Config.wtf/addon instructions from step 1–2 and exit |

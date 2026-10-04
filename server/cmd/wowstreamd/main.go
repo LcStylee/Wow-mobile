@@ -49,6 +49,7 @@ import (
 	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
 	"github.com/LcStylee/Wow-mobile/server/internal/input"
 	"github.com/LcStylee/Wow-mobile/server/internal/install"
+	"github.com/LcStylee/Wow-mobile/server/internal/remote"
 	"github.com/LcStylee/Wow-mobile/server/internal/rtc"
 	sig "github.com/LcStylee/Wow-mobile/server/internal/signal"
 	"github.com/LcStylee/Wow-mobile/server/internal/window"
@@ -534,6 +535,7 @@ func run(ui *appUI) error {
 		SetBitrate:    videoSup.SetBitrate,
 		ForceKeyframe: videoSup.ForceKeyframe,
 		VideoStats:    meter.Snapshot,
+		ICEUDPPort:    cfg.ICEPort,
 		Logger:        log,
 	})
 	if err != nil {
@@ -636,6 +638,24 @@ func run(ui *appUI) error {
 			return nil
 		}
 	}
+	// Remote play ("play over mobile data"): created once the signaling port
+	// is bound (below); the dashboard closures read it then.
+	var remoteCtl *remote.Controller
+	if cfg.ICEPort > 0 {
+		hostUI.RemoteStatus = func() remote.Status {
+			if remoteCtl == nil {
+				return remote.Status{State: remote.StateOff, Port: server.Port(), UDPPort: cfg.ICEPort}
+			}
+			return remoteCtl.Status()
+		}
+		hostUI.SetRemote = func(on bool) {
+			if remoteCtl == nil {
+				return
+			}
+			remoteCtl.SetEnabled(on)
+			persistRemote(on, log)
+		}
+	}
 	server.EnableHostUI(hostUI)
 
 	// Bind before the banner: a port-in-use failure must surface as the error,
@@ -672,6 +692,13 @@ func run(ui *appUI) error {
 		}
 	}
 	log.Info("listening", "port", server.Port())
+	if cfg.ICEPort > 0 {
+		remoteCtl = remote.New(server.Port(), cfg.ICEPort, log, mgr.SetPublicIP)
+		if initialRemote(cfg) {
+			go remoteCtl.SetEnabled(true)
+		}
+		defer remoteCtl.SetEnabled(false) // close the router ports on exit
+	}
 	status.SetPairingURL(server.PairingURL(cfg.Token))
 	status.SetConnectedFunc(mgr.SessionConnected)
 	status.SetStatsFunc(func() hoststatus.Stream {

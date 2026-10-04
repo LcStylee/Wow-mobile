@@ -118,6 +118,9 @@ type Config struct {
 	FFmpegPath   string // empty = look up "ffmpeg" in PATH
 	Audio        bool
 	AudioSource  string // AudioLoopback (default) or AudioDShow
+	ICEPort      int    // --ice-port: the one UDP port for WebRTC (0 = random ports)
+	Remote       bool   // --remote: play over mobile data (router port + public address)
+	RemoteSet    bool   // --remote was given explicitly (else the dashboard's remembered choice)
 	Setup        bool   // --setup: print WoW configuration help and exit
 	WowDir       string // --wow-dir: WoW game directory (skips wizard auto-detection)
 	GameExe      string // --game-exe: exact game executable (private servers); beats --wow-dir
@@ -156,6 +159,8 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 	// path stays selectable for machines where loopback misbehaves.
 	fs.BoolVar(&cfg.Audio, "audio", true, "stream the PC's sound to the phone (--audio=false to turn it off)")
 	fs.StringVar(&cfg.AudioSource, "audio-source", AudioLoopback, "where the sound comes from: \"loopback\" (default) captures what the default playback device plays (Windows WASAPI, no extra software); \"dshow\" uses the \"virtual-audio-capturer\" DirectShow device from screen-capture-recorder")
+	fs.IntVar(&cfg.ICEPort, "ice-port", 8443, "UDP port that carries all WebRTC traffic (video, sound, input); a fixed port is what lets remote play forward it through the router. 0 = random ports per session (remote play off)")
+	fs.BoolVar(&cfg.Remote, "remote", false, "play over mobile data: open the ports on the router (UPnP) and advertise the home's public address; also a toggle on the host dashboard, which remembers it")
 	fs.BoolVar(&cfg.Setup, "setup", false, "print WoW Config.wtf and addon setup instructions, then exit")
 	fs.StringVar(&cfg.WowDir, "wow-dir", "", "path to the WoW game directory (e.g. the _classic_era_ folder, or a private-server folder containing Wow.exe); skips the wizard's auto-detection")
 	fs.StringVar(&cfg.GameExe, "game-exe", "", "exact game executable to record and launch (private servers, e.g. VanillaFixes.exe); overrides --wow-dir and every auto-detection")
@@ -172,6 +177,14 @@ func Parse(args []string, errOut io.Writer) (*Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "remote" {
+			cfg.RemoteSet = true
+		}
+	})
+	if cfg.ICEPort < 0 || cfg.ICEPort > 65535 {
+		return nil, fmt.Errorf("--ice-port %d out of range 0..65535", cfg.ICEPort)
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected positional arguments: %v", fs.Args())

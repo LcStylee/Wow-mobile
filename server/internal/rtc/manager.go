@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -58,13 +60,24 @@ type Options struct {
 	// VideoStats feeds the 1 Hz stats message.
 	VideoStats func() capture.Stats
 
+	// ICEUDPPort, when > 0, carries ALL WebRTC media and data over this one
+	// UDP port (an ICE UDP mux) instead of a random port per session — the
+	// precondition for remote play, where the router forwards exactly this
+	// port. 0 keeps pion's ephemeral ports. If the port cannot be bound the
+	// manager logs it and falls back to ephemeral ports.
+	ICEUDPPort int
+
 	Logger *slog.Logger
 }
 
 // Manager holds the single current session and the shared media tracks.
 type Manager struct {
 	opts Options
-	api  *webrtc.API
+
+	apiMu    sync.Mutex
+	api      *webrtc.API
+	udpMux   ice.UDPMux // nil: ephemeral ports
+	publicIP string     // advertised in addition to the LAN addresses (remote play)
 
 	videoTrack *webrtc.TrackLocalStaticSample
 	audioTrack *webrtc.TrackLocalStaticSample // nil when audio is disabled
@@ -114,6 +127,46 @@ func (m *Manager) requestKeyframe(reason string) {
 func NewManager(opts Options) (*Manager, error) {
 	m := &Manager{opts: opts, frameDur: time.Second / time.Duration(opts.FPS)}
 
+	if opts.ICEUDPPort > 0 {
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: opts.ICEUDPPort})
+		if err != nil {
+			opts.Logger.Warn("WebRTC UDP port unavailable; using random ports (remote play needs it)",
+				"port", opts.ICEUDPPort, "err", err)
+		} else {
+			m.udpMux = webrtc.NewICEUDPMux(nil, conn)
+		}
+	}
+	api, err := m.buildAPI("")
+	if err != nil {
+		return nil, err
+	}
+	m.api = api
+
+	m.videoTrack, err = webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
+		"video", "wowstream")
+	if err != nil {
+		return nil, fmt.Errorf("creating video track: %w", err)
+	}
+	if opts.Audio {
+		m.audioTrack, err = webrtc.NewTrackLocalStaticSample(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+			"audio", "wowstream")
+		if err != nil {
+			return nil, fmt.Errorf("creating audio track: %w", err)
+		}
+	}
+	return m, nil
+}
+
+// buildAPI assembles the pion API: codecs, interceptors, SCTP tuning, the
+// shared UDP port and — when publicIP is set — that public address
+// advertised NEXT TO every LAN host candidate on the same port (remote
+// play: the router forwards the port to this PC, so the phone on mobile data
+// reaches it there, while a phone at home still pairs on the LAN address).
+// A fresh MediaEngine per API: pion does not share them between APIs.
+func (m *Manager) buildAPI(publicIP string) (*webrtc.API, error) {
+	opts := m.opts
 	// Register exactly what we send. H.264 constrained baseline with
 	// packetization-mode=1 per the protocol; the ffmpeg pipelines are built
 	// to emit matching bitstreams.
@@ -154,25 +207,49 @@ func NewManager(opts Options) (*Manager, error) {
 	// (field report v0.6.5). On a LAN, 2 s is still far above any real RTT.
 	var se webrtc.SettingEngine
 	se.SetSCTPRTOMax(sctpRTOMax)
-	m.api = webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry),
-		webrtc.WithSettingEngine(se))
-
-	var err error
-	m.videoTrack, err = webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
-		"video", "wowstream")
-	if err != nil {
-		return nil, fmt.Errorf("creating video track: %w", err)
-	}
-	if opts.Audio {
-		m.audioTrack, err = webrtc.NewTrackLocalStaticSample(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
-			"audio", "wowstream")
-		if err != nil {
-			return nil, fmt.Errorf("creating audio track: %w", err)
+	if m.udpMux != nil {
+		se.SetICEUDPMux(m.udpMux)
+		if publicIP != "" {
+			if err := se.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+				External:        []string{publicIP},
+				AsCandidateType: webrtc.ICECandidateTypeHost,
+				Mode:            webrtc.ICEAddressRewriteAppend,
+			}); err != nil {
+				return nil, fmt.Errorf("advertising the public address: %w", err)
+			}
 		}
 	}
-	return m, nil
+	return webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry),
+		webrtc.WithSettingEngine(se)), nil
+}
+
+// SetPublicIP advertises ip (remote play) to every session created from now
+// on; "" stops advertising it. Running sessions keep what they negotiated.
+// No-op without the shared UDP port: a public address is only reachable
+// through the one port the router forwards.
+func (m *Manager) SetPublicIP(ip string) error {
+	if m.udpMux == nil && ip != "" {
+		return errors.New("remote play needs the fixed WebRTC UDP port, which could not be opened")
+	}
+	m.apiMu.Lock()
+	defer m.apiMu.Unlock()
+	if ip == m.publicIP {
+		return nil
+	}
+	api, err := m.buildAPI(ip)
+	if err != nil {
+		return err
+	}
+	m.api, m.publicIP = api, ip
+	return nil
+}
+
+// newPeerConnection creates a peer connection from the current API.
+func (m *Manager) newPeerConnection() (*webrtc.PeerConnection, error) {
+	m.apiMu.Lock()
+	api := m.api
+	m.apiMu.Unlock()
+	return api.NewPeerConnection(webrtc.Configuration{})
 }
 
 // WriteVideoAU feeds one H.264 access unit to the connected client (no-op

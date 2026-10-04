@@ -29,6 +29,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/LcStylee/Wow-mobile/server/internal/hoststatus"
+	"github.com/LcStylee/Wow-mobile/server/internal/remote"
 	"github.com/LcStylee/Wow-mobile/server/internal/rtc"
 )
 
@@ -95,6 +96,10 @@ type HostUI struct {
 	// SetPhone (optional; frame layout) is invoked by POST /host/api/phone
 	// with a phone-model id; it returns an error for unknown ids.
 	SetPhone func(id string) error
+	// RemoteStatus / SetRemote (optional): "play over mobile data" — the
+	// dashboard's toggle, status and away link (GET/POST /host/api/remote).
+	RemoteStatus func() remote.Status
+	SetRemote    func(on bool)
 }
 
 // EnableHostUI turns on the /host dashboard routes. Must be called before
@@ -323,6 +328,19 @@ func (s *Server) PairingURL(token string) string {
 		scheme = "http"
 	}
 	return fmt.Sprintf("%s://%s:%s/?token=%s", scheme, ips[0], s.port(), token)
+}
+
+// AwayURL is the pairing URL through the home's public address (remote
+// play), "" while none is known.
+func (s *Server) AwayURL(publicIP string) string {
+	if publicIP == "" {
+		return ""
+	}
+	scheme := "https"
+	if s.noTLS {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://%s:%s/?token=%s", scheme, publicIP, s.port(), s.token)
 }
 
 // terminalQR renders content as a half-block-character QR code, two modules

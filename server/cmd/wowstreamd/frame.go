@@ -214,3 +214,39 @@ func persistPhone(log *slog.Logger) func(string) {
 		}
 	}
 }
+
+// initialRemote decides whether remote play starts on: --remote when given,
+// else the dashboard's remembered toggle (Windows store, like the phone).
+func initialRemote(cfg *config.Config) bool {
+	if cfg.RemoteSet {
+		return cfg.Remote
+	}
+	if runtime.GOOS != "windows" || cfg.Capture == config.CaptureTest {
+		return false
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return false
+	}
+	return install.LoadStore(filepath.Join(dir, "wowstreamd")).Get(install.KeyRemote) == "1"
+}
+
+// persistRemote remembers the dashboard's remote-play toggle (best-effort).
+func persistRemote(on bool, log *slog.Logger) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	store := install.LoadStore(filepath.Join(dir, "wowstreamd"))
+	v := "0"
+	if on {
+		v = "1"
+	}
+	store.Set(install.KeyRemote, v)
+	if err := store.Save(); err != nil {
+		log.Warn("could not remember the remote-play setting", "err", err)
+	}
+}

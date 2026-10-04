@@ -190,10 +190,18 @@ character select. Details:
 [docs/SETUP.md → Private servers](docs/SETUP.md#private-servers-112-clients).
 
 **Can I play over the internet / on mobile data?**
-Not out of the box, and on purpose. The signaling server binds to your LAN,
-WebRTC uses host candidates only, and the latency budget assumes a LAN. If you
-must, a VPN into your home network (e.g. WireGuard/Tailscale) makes the phone
-"local" — latency will follow your tunnel.
+Yes, since v0.7.0: tick **Play over mobile data** on the PC dashboard. The PC
+asks your router to forward its streaming port (UPnP; TCP for pairing and
+UDP for the stream, both 8443 by default) and finds your home's public
+address; the dashboard then shows an "away" QR code — scan it once on the
+phone and add it to the Home Screen as a second app. If the router does not
+do UPnP, the dashboard tells you which two ports to forward by hand. It
+cannot work when your provider gives your router no public address of its
+own (carrier-grade NAT) — the dashboard says so; a VPN such as Tailscale is
+the way round that. Latency follows your mobile connection, and video uses
+about 1 GB per hour at the 2 Mbps quality. What becomes reachable is the same
+server the phone uses at home: HTTPS, every phone route behind the 128-bit
+pairing token, the dashboard loopback-only.
 
 **Does sound work?**
 Yes, on by default: the server captures what the PC's default playback device

@@ -48,6 +48,28 @@
           <code id="pair-url">waiting for server…</code>
           <button id="copy" type="button" title="Copy the pairing URL">Copy</button>
         </div>
+
+        <!-- Remote play (server/internal/remote): router port + public
+             address, toggled here and remembered. -->
+        <div id="away" hidden>
+          <h2 class="mt">Play away from home</h2>
+          <label id="remote-label">
+            <input id="remote-toggle" type="checkbox">
+            Play over mobile data
+          </label>
+          <p class="hint" id="remote-msg" aria-live="polite"></p>
+          <div id="away-qr-wrap" hidden>
+            <img id="away-qr" alt="Away-from-home QR code" width="220" height="220">
+          </div>
+          <div id="away-url-row" hidden>
+            <code id="away-url"></code>
+          </div>
+          <p class="hint" id="away-howto" hidden>Scan this once on the phone (on
+            mobile data, or on Wi-Fi if your router allows it), accept the
+            certificate warning, and add it to the Home Screen as a second app —
+            your "away" app. Video uses about 1&nbsp;GB per hour at the 2&nbsp;Mbps
+            quality (phone menu → Set → Quality) and 3.5&nbsp;GB at 8&nbsp;Mbps.</p>
+        </div>
       </section>
 
       <section class="card" id="setup-card">
